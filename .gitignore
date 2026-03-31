@@ -1,0 +1,31 @@
+# ─── Environnement ────────────────────────────────────────
+.env
+*.env.local
+
+# ─── Dépendances ──────────────────────────────────────────
+vendor/
+node_modules/
+
+# ─── Uploads (conserver la structure, ignorer le contenu) ─
+uploads/logos/*
+!uploads/logos/.gitkeep
+uploads/pdf/*
+!uploads/pdf/.gitkeep
+
+# ─── Logs ─────────────────────────────────────────────────
+*.log
+logs/
+
+# ─── Cache ────────────────────────────────────────────────
+cache/
+tmp/
+
+# ─── IDE ──────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*~
+
+# ─── OS ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

@@ -1,0 +1,195 @@
+/* ============================================================
+   Système CSI AMA Maradi – Charte graphique VERT #2e7d32
+   ============================================================ */
+
+:root {
+    --csi-green:       #2e7d32;
+    --csi-green-dark:  #1b5e20;
+    --csi-green-light: #e8f5e9;
+    --csi-green-mid:   #4caf50;
+    --csi-accent:      #81c784;
+}
+
+/* ── Global ───────────────────────────────────────────────── */
+body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background-color: #f5f7fa;
+    color: #212529;
+    font-size: 0.92rem;
+}
+
+/* ── Navbar ───────────────────────────────────────────────── */
+.bg-csi { background-color: var(--csi-green) !important; }
+.text-csi { color: var(--csi-green) !important; }
+
+.navbar-dark.bg-csi .navbar-nav .nav-link {
+    color: rgba(255,255,255,0.85);
+    transition: color .15s;
+    border-radius: 6px;
+    padding: .4rem .75rem;
+}
+.navbar-dark.bg-csi .navbar-nav .nav-link:hover,
+.navbar-dark.bg-csi .navbar-nav .nav-link.active {
+    color: #fff;
+    background: rgba(255,255,255,0.15);
+}
+.navbar-brand { font-size: 1.1rem; letter-spacing: .02em; }
+
+/* ── Cards & Panels ───────────────────────────────────────── */
+.card {
+    border: none;
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.06);
+    transition: box-shadow .2s;
+}
+.card:hover { box-shadow: 0 4px 20px rgba(0,0,0,.1); }
+
+.card-header.bg-csi-light {
+    background: var(--csi-green-light) !important;
+    border-bottom: 2px solid var(--csi-green);
+    color: var(--csi-green-dark);
+    font-weight: 600;
+}
+
+/* ── KPI Widgets ──────────────────────────────────────────── */
+.kpi-card {
+    border-radius: 14px;
+    border-left: 5px solid var(--csi-green);
+    transition: transform .2s;
+}
+.kpi-card:hover { transform: translateY(-3px); }
+.kpi-card .kpi-icon {
+    width: 52px; height: 52px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.5rem;
+    background: var(--csi-green-light);
+    color: var(--csi-green-dark);
+}
+.kpi-value { font-size: 1.8rem; font-weight: 700; color: var(--csi-green-dark); }
+.kpi-label { font-size: .78rem; text-transform: uppercase; letter-spacing: .05em; color: #6c757d; }
+
+/* ── Boutons percepteur ────────────────────────────────────── */
+.btn-percepteur {
+    border-radius: 16px;
+    padding: 1.2rem 1.8rem;
+    font-size: 1rem;
+    font-weight: 600;
+    transition: transform .15s, box-shadow .15s;
+    box-shadow: 0 4px 12px rgba(0,0,0,.12);
+}
+.btn-percepteur:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 20px rgba(0,0,0,.18);
+}
+.btn-percepteur i { font-size: 2rem; display: block; margin-bottom: .4rem; }
+
+.btn-normal   { background: var(--csi-green); color: #fff; border: none; }
+.btn-orphelin { background: #7b1fa2; color: #fff; border: none; }
+.btn-gratuit  { background: #1565c0; color: #fff; border: none; }
+
+.btn-normal:hover   { background: var(--csi-green-dark); color: #fff; }
+.btn-orphelin:hover { background: #4a148c; color: #fff; }
+.btn-gratuit:hover  { background: #0d47a1; color: #fff; }
+
+/* ── DataTable ─────────────────────────────────────────────── */
+.dataTables_wrapper .dataTables_filter input,
+.dataTables_wrapper .dataTables_length select {
+    border-radius: 8px;
+    border: 1px solid #ced4da;
+    padding: .25rem .5rem;
+}
+table.dataTable tbody tr:hover { background: var(--csi-green-light); }
+
+/* ── Formulaires ─────────────────────────────────────────── */
+.form-control:focus, .form-select:focus {
+    border-color: var(--csi-green);
+    box-shadow: 0 0 0 .2rem rgba(46,125,50,.25);
+}
+.form-label { font-weight: 500; color: #495057; }
+
+/* ── Badges de statut ─────────────────────────────────────── */
+.badge-normal    { background: var(--csi-green); }
+.badge-orphelin  { background: #7b1fa2; }
+.badge-gratuit   { background: #1565c0; }
+.badge-examen    { background: #e65100; }
+.badge-pharmacie { background: #006064; }
+
+/* ── Modaux ──────────────────────────────────────────────── */
+.modal-header { background: var(--csi-green); color: #fff; border-radius: 12px 12px 0 0; }
+.modal-header .btn-close { filter: brightness(0) invert(1); }
+.modal-content { border-radius: 12px; border: none; }
+
+/* ── Alertes stock ────────────────────────────────────────── */
+.stock-alerte { background: #ffebee; border-left: 4px solid #d32f2f; }
+.stock-ok     { background: var(--csi-green-light); border-left: 4px solid var(--csi-green); }
+
+/* ── Page de connexion ────────────────────────────────────── */
+.login-wrapper {
+    min-height: 100vh;
+    background: linear-gradient(135deg, var(--csi-green-dark) 0%, var(--csi-green-mid) 100%);
+    display: flex; align-items: center; justify-content: center;
+}
+.login-card {
+    width: 420px;
+    border-radius: 20px;
+    padding: 2.5rem;
+    box-shadow: 0 20px 60px rgba(0,0,0,.25);
+}
+.login-card .login-brand {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--csi-green-dark);
+}
+
+/* ── Spinner loading ──────────────────────────────────────── */
+.spinner-overlay {
+    position: fixed; inset: 0;
+    background: rgba(255,255,255,.7);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 9999;
+}
+
+/* ── PDF watermark (pour indication visuelle) ─────────────── */
+.recu-gratuit-badge {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%,-50%) rotate(-30deg);
+    font-size: 4rem;
+    font-weight: 900;
+    color: rgba(211,47,47,.18);
+    pointer-events: none;
+    user-select: none;
+    white-space: nowrap;
+    z-index: 10;
+}
+
+/* ── Autocomplete téléphone ───────────────────────────────── */
+.autocomplete-list {
+    position: absolute;
+    z-index: 1050;
+    background: #fff;
+    border: 1px solid #ced4da;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.12);
+    max-height: 220px;
+    overflow-y: auto;
+    width: 100%;
+}
+.autocomplete-list .ac-item {
+    padding: .5rem .9rem;
+    cursor: pointer;
+    transition: background .1s;
+}
+.autocomplete-list .ac-item:hover { background: var(--csi-green-light); }
+
+/* ── Responsive ───────────────────────────────────────────── */
+@media (max-width: 768px) {
+    .btn-percepteur { padding: .8rem 1rem; font-size: .9rem; }
+    .kpi-value { font-size: 1.4rem; }
+}
+
+/* ── Print ────────────────────────────────────────────────── */
+@media print {
+    .navbar, .footer, .no-print { display: none !important; }
+}
