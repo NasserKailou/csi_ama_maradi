@@ -623,11 +623,15 @@ initPhoneAutocomplete('fTelAG', function(p) {
 document.getElementById('btnEnregistrerPatient').addEventListener('click', function() {
     const form  = document.getElementById('formPatient');
     const data  = Object.fromEntries(new FormData(form));
-    if (!data.telephone || !data.nom || !data.age) {
-        showToast('warning', 'Veuillez remplir tous les champs obligatoires.'); return;
+    // age peut être 0 (nourrisson) → vérifier la chaîne vide, pas la valeur falsy
+    if (!data.telephone || !data.nom || data.age === '' || data.age === undefined) {
+        showToast('warning', 'Veuillez remplir tous les champs obligatoires (téléphone, nom, âge).'); return;
+    }
+    if (data.telephone.replace(/\D/g, '').length !== 8) {
+        showToast('warning', 'Le numéro de téléphone doit contenir exactement 8 chiffres.'); return;
     }
     ajaxPost(SAVE_CONSULT_URL, data, function(res) {
-        bootstrap.Modal.getInstance(document.getElementById('modalPatient')).hide();
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPatient')).hide();
         if (res.pdf_url) window.open(res.pdf_url, '_blank');
         setTimeout(() => location.reload(), 1000);
     });
@@ -638,10 +642,13 @@ function saveActeGratuit() {
     const form = document.getElementById('formActeGratuit');
     const data = Object.fromEntries(new FormData(form));
     if (!data.telephone || !data.nom || !data.acte_id) {
-        showToast('warning', 'Champs obligatoires manquants.'); return;
+        showToast('warning', 'Champs obligatoires manquants (téléphone, nom, acte).'); return;
+    }
+    if (data.telephone.replace(/\D/g, '').length !== 8) {
+        showToast('warning', 'Le numéro de téléphone doit contenir exactement 8 chiffres.'); return;
     }
     ajaxPost(SAVE_ACTE_GRAT_URL, data, function(res) {
-        bootstrap.Modal.getInstance(document.getElementById('modalActeGratuit')).hide();
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalActeGratuit')).hide();
         if (res.pdf_url) window.open(res.pdf_url, '_blank');
         setTimeout(() => location.reload(), 1000);
     });
@@ -670,8 +677,9 @@ function saveExamens() {
     const ids = [...document.querySelectorAll('.examen-chk:checked')].map(c => c.value);
     if (!ids.length) { showToast('warning', 'Veuillez sélectionner au moins un examen.'); return; }
     const recuId = document.getElementById('examRecuId').value;
+    if (!recuId) { showToast('warning', 'Aucun reçu de consultation lié.'); return; }
     ajaxPost(SAVE_EXAMENS_URL, { recu_id: recuId, examens: ids.join(',') }, function(res) {
-        bootstrap.Modal.getInstance(document.getElementById('modalExamens')).hide();
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalExamens')).hide();
         if (res.pdf_url) window.open(res.pdf_url, '_blank');
         setTimeout(() => location.reload(), 1000);
     });
@@ -707,10 +715,11 @@ function savePharmacie() {
     if (!items.length) { showToast('warning', 'Aucun produit sélectionné.'); return; }
     if (items.length > 15) { showToast('danger', 'Maximum 15 produits par reçu.'); return; }
     const recuId = document.getElementById('pharmaRecuId').value;
+    if (!recuId) { showToast('warning', 'Aucun reçu de consultation lié.'); return; }
     ajaxPost(SAVE_PHARMA_URL, {
         recu_id: recuId, produits: JSON.stringify(items)
     }, function(res) {
-        bootstrap.Modal.getInstance(document.getElementById('modalPharmacie')).hide();
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPharmacie')).hide();
         if (res.pdf_url) window.open(res.pdf_url, '_blank');
         setTimeout(() => location.reload(), 1000);
     });

@@ -253,7 +253,7 @@ function saveUser() {
     const form = document.getElementById('formUser');
     const data = Object.fromEntries(new FormData(form));
     if (!data.nom || !data.prenom || !data.login) { showToast('warning', 'Champs obligatoires manquants.'); return; }
-    ajaxPost(USERS_URL, data, () => { bootstrap.Modal.getInstance(document.getElementById('modalUser')).hide(); setTimeout(() => location.reload(), 800); });
+    ajaxPost(USERS_URL, data, () => { bootstrap.Modal.getOrCreateInstance(document.getElementById('modalUser')).hide(); setTimeout(() => location.reload(), 800); });
 }
 
 function toggleActif(id, nom) {

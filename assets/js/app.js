@@ -179,15 +179,34 @@ function formatMontant(n) {
 // ─── Submit AJAX générique ────────────────────────────────────────────────────
 function ajaxPost(url, data, onSuccess) {
     showLoader();
-    $.post(url, { ...data, csrf_token: CSRF_TOKEN })
-        .done(res => {
-            hideLoader();
-            if (res.success) {
-                showToast('success', res.message || 'Opération réussie');
-                if (typeof onSuccess === 'function') onSuccess(res);
-            } else {
-                showToast('danger', res.message || 'Une erreur est survenue');
-            }
-        })
-        .fail(() => { hideLoader(); showToast('danger', 'Erreur de connexion'); });
+    $.ajax({
+        url:      url,
+        type:     'POST',
+        data:     Object.assign({}, data, { csrf_token: CSRF_TOKEN }),
+        dataType: 'json',          // forcer le parsing JSON
+        headers:  { 'X-CSRF-TOKEN': CSRF_TOKEN }
+    })
+    .done(res => {
+        hideLoader();
+        if (res && res.success) {
+            showToast('success', res.message || 'Opération réussie');
+            if (typeof onSuccess === 'function') onSuccess(res);
+        } else {
+            showToast('danger', (res && res.message) || 'Une erreur est survenue');
+        }
+    })
+    .fail(function(xhr) {
+        hideLoader();
+        let msg = 'Erreur de connexion';
+        try {
+            const r = JSON.parse(xhr.responseText);
+            if (r && r.message) msg = r.message;
+        } catch(e) {
+            // réponse non-JSON (ex: page HTML d'erreur)
+            if (xhr.status === 403) msg = 'Session expirée – veuillez vous reconnecter.';
+            else if (xhr.status === 0)  msg = 'Impossible de joindre le serveur.';
+            else msg = 'Erreur serveur (' + xhr.status + ')';
+        }
+        showToast('danger', msg);
+    });
 }
