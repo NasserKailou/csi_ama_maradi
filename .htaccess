@@ -1,36 +1,48 @@
-# ============================================================
-# Système CSI AMA – Configuration Apache
-# ============================================================
+# Apache – Système CSI AMA Maradi
+# Redirige tout vers index.php (Front Controller)
+
 Options -Indexes
 
-# ── Réécriture d'URL ───────────────────────────────────────
-RewriteEngine On
-
-# Rediriger vers HTTPS (décommenter en production)
-# RewriteCond %{HTTPS} off
-# RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
-
-# Servir les fichiers statiques directement
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-
-# Tout le reste vers index.php
-RewriteRule ^(.*)$ index.php [QSA,L]
-
-# ── Sécurité headers ───────────────────────────────────────
-<IfModule mod_headers.c>
-    Header always set X-Content-Type-Options "nosniff"
-    Header always set X-Frame-Options "SAMEORIGIN"
-    Header always set X-XSS-Protection "1; mode=block"
-    Header always set Referrer-Policy "strict-origin-when-cross-origin"
-</IfModule>
-
-# ── Protéger les dossiers sensibles ─────────────────────────
-<FilesMatch "\.(env|sql|log|bak|sh)$">
-    Require all denied
+# ── Sécurité ────────────────────────────────────────────────
+<FilesMatch "\.(sql|env|log|bak|git|md|json|lock)$">
+    Order Allow,Deny
+    Deny from all
 </FilesMatch>
 
-# ── Cache fichiers statiques ────────────────────────────────
+# ── Front Controller ────────────────────────────────────────
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+
+    # Autoriser les assets et uploads
+    RewriteCond %{REQUEST_URI} ^/assets/ [OR]
+    RewriteCond %{REQUEST_URI} ^/uploads/ [OR]
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # Rediriger les API modules
+    RewriteCond %{REQUEST_URI} ^/modules/
+    RewriteRule ^ - [L]
+
+    # Tout le reste vers index.php
+    RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+# ── Headers de sécurité ──────────────────────────────────────
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "SAMEORIGIN"
+    Header set X-XSS-Protection "1; mode=block"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# ── Compression gzip ────────────────────────────────────────
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/css application/javascript
+</IfModule>
+
+# ── Cache assets statiques ───────────────────────────────────
 <IfModule mod_expires.c>
     ExpiresActive On
     ExpiresByType text/css "access plus 7 days"

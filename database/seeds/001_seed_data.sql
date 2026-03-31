@@ -24,7 +24,7 @@ INSERT IGNORE INTO config_systeme (cle, valeur, whodone) VALUES
 ('nom_centre',      'Centre de Santé Intégré AMA Maradi', 0),
 ('adresse',         'B.P. XXX, Maradi – Niger', 0),
 ('telephone',       '+227 XX XX XX XX', 0),
-('logo_filename',   '', 0),
+('logo_filename',   'logo_csi.png', 0),
 ('pied_de_page',    'Merci de votre visite. Votre santé est notre priorité.', 0);
 
 -- ─────────────────────────────────────────────────────────────

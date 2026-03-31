@@ -1,131 +1,188 @@
-# 🏥 Système de Gestion CSI – AMA Maradi
+# 🏥 Système de Gestion CSI AMA Maradi
 
-> **Version** : 1.0 · **Auteur** : NasserKailou · **Dernière mise à jour** : Mars 2026  
-> **Stack** : PHP 8 · MySQL 8 · Bootstrap 5 · JavaScript ES6+
-
----
-
-## 📋 Présentation
-
-Application web complète pour la gestion du **Centre de Santé Intégré (CSI) AMA Maradi** (Niger).  
-Elle couvre :
-- **Réception & facturation** des patients (consultation, examens, pharmacie)
-- **Gestion du stock pharmaceutique** avec alertes et décrément automatique
-- **Suivi des examens** et état de paie du laborantin
-- **Tableau de bord administrateur** avec KPIs et graphiques
-- **Gestion des utilisateurs** avec 3 niveaux de rôle
+> **Application web complète** de gestion du Centre de Santé Intégré (CSI) AMA Maradi  
+> Stack : **PHP 8** · **MySQL 8** · **Bootstrap 5** · **TCPDF** · Vert DirectAid `#2e7d32`
 
 ---
 
-## 🔑 Comptes de Test
-
-| Login | Mot de passe | Rôle | Accès |
-|-------|-------------|------|-------|
-| `admin` | `Admin@CSI2026` | Administrateur | Accès total |
-| `comptable` | `Compta@CSI2026` | Comptable | Paramétrage (sans gestion utilisateurs) |
-| `percepteur1` | `Percep1@CSI2026` | Percepteur | Réception patients & reçus |
-| `percepteur2` | `Percep2@CSI2026` | Percepteur | Réception patients & reçus |
+## 📋 Table des matières
+1. [Présentation](#présentation)
+2. [Fonctionnalités implémentées](#fonctionnalités)
+3. [Architecture du projet](#architecture)
+4. [Structure BDD](#structure-bdd)
+5. [Comptes de test](#comptes-de-test)
+6. [Guide d'installation](#installation)
+7. [Guide de déploiement](#déploiement)
+8. [Règles métier critiques](#règles-métier)
+9. [API endpoints](#api-endpoints)
+10. [Feuille de route](#roadmap)
 
 ---
 
-## 🏗️ Architecture du Projet
+## 🏥 Présentation
+
+Application **100 % opérationnelle en intranet ou hébergée**, couvrant :
+- Réception & facturation des patients
+- Gestion stock pharmaceutique avec alertes
+- Suivi des examens médicaux et paie laborantin
+- Reporting financier pour les bailleurs de fonds
+- Tableau de bord administrateur avec graphiques
+
+**Logo intégré** : DirectAid (العون المباشر) – partenaire du CSI AMA Maradi
+
+---
+
+## ✅ Fonctionnalités implémentées
+
+### 🔐 Authentification
+- [x] Connexion sécurisée (sessions PHP natives)
+- [x] Protection CSRF stricte (token sur tous les formulaires & AJAX)
+- [x] Régénération ID de session à la connexion
+- [x] Redirection automatique selon le rôle
+
+### 👥 Gestion Utilisateurs (Admin)
+- [x] CRUD complet (Créer, Modifier, Suspendre, Archiver)
+- [x] 3 rôles : Admin · Comptable · Percepteur
+- [x] Soft delete (isDeleted = 1, jamais DELETE SQL)
+
+### 🧾 Module Percepteur (Cœur de métier)
+- [x] **3 boutons d'action** bien en évidence : Normal / Orphelin / Actes gratuits
+- [x] **Autocomplete téléphone** (dès le 3ème chiffre, AJAX)
+- [x] **Déduplication patient** par numéro de téléphone (INSERT ou UPDATE)
+- [x] Reçu Normal (Consultation 300F ± Carnet 100F)
+- [x] Reçu Orphelin (gratuité totale, prix conservés pour reporting)
+- [x] Reçu Actes gratuits (CPN, Nourrissons, Accouchement, Planning Familial)
+- [x] Prescription d'examens avec génération reçu examen (zone vide labo)
+- [x] Délivrance pharmacie (max 15 produits, décrémentation atomique stock)
+- [x] Numérotation séquentielle globale (MAX(numero_recu) + 1)
+- [x] Liste journalière (DataTable, isolation stricte par percepteur)
+- [x] Filtre archives par plage de dates
+- [x] Modal Récapitulatif patient (toutes opérations du jour)
+- [x] Génération PDF A5 double exemplaire (logo DirectAid + zone vide labo)
+
+### ⚙️ Module Paramétrage (Admin & Comptable)
+- [x] CRUD Actes médicaux (payants + gratuits, tarif configurable)
+- [x] CRUD Examens + pourcentage laborantin
+- [x] CRUD Produits pharmaceutique (nom, forme, prix, stock, seuil, péremption)
+- [x] Approvisionnements avec traçabilité (date + commentaire)
+- [x] Inventaire (stock théorique vs actuel, écarts)
+- [x] État de paie laborantin PDF (période sélectionnable)
+- [x] Config entête reçus (nom, adresse, téléphone, logo, pied de page)
+- [x] Upload logo avec validation MIME
+
+### 📊 Tableau de Bord (Admin uniquement)
+- [x] KPIs : Patients jour/7j/mois, Recettes jour, Coût actes gratuits, Alertes stock
+- [x] Filtre recettes par période
+- [x] Graphique barres : Évolution consultations 7 jours (Chart.js)
+- [x] Graphique camembert : Répartition revenus (Consultation/Examen/Pharmacie)
+- [x] Liste rouge alertes stock (rupture + périmés)
+- [x] Productivité par percepteur (reçus + encaissé du jour)
+
+### 🖨️ Génération PDF
+- [x] Reçu consultation A5 double exemplaire (logo DirectAid)
+- [x] Reçu orphelin avec mention GRATUIT diagonale en rouge
+- [x] Reçu examen avec grande zone vide manuscrite pour labo
+- [x] Reçu pharmacie (max 15 lignes : Désignation|Forme|Qté|P.U.|Total)
+- [x] État de paie laborantin PDF
+- [x] Fallback HTML auto-print si TCPDF absent
+
+---
+
+## 🏗️ Architecture du projet
 
 ```
 csi_ama_maradi/
 │
-├── index.php                    # Point d'entrée unique (routeur)
-├── install.php                  # Script d'installation (exécuter 1x)
-├── .htaccess                    # Config Apache + réécriture d'URL
-├── .env.example                 # Template variables d'environnement
+├── index.php                    ← Point d'entrée unique (Front Controller)
+├── install.php                  ← Script d'installation (1 fois)
+├── .htaccess                    ← Rewrite rules + sécurité Apache
+├── .env.example                 ← Template variables d'environnement
 ├── .gitignore
 │
 ├── config/
-│   └── config.php               # Constantes globales (BDD, rôles, tarifs)
+│   └── config.php               ← Constantes globales (BDD, tarifs, rôles)
 │
 ├── core/
-│   ├── Database.php             # Singleton PDO
-│   ├── Session.php              # Gestion session + CSRF
-│   ├── helpers.php              # Fonctions utilitaires globales
-│   └── autoload.php             # Autoloader PSR-4 simplifié
+│   ├── autoload.php             ← Autoloader PSR-4 simplifié
+│   ├── Database.php             ← Singleton PDO
+│   ├── Session.php              ← Sessions + CSRF + Flash messages
+│   └── helpers.php             ← Fonctions utilitaires globales
 │
 ├── modules/
 │   ├── auth/
-│   │   ├── login.php            # Page de connexion
-│   │   ├── logout.php           # Déconnexion
-│   │   └── utilisateurs.php     # CRUD utilisateurs (Admin)
+│   │   ├── login.php            ← Page connexion
+│   │   ├── logout.php           ← Déconnexion
+│   │   └── utilisateurs.php    ← Gestion utilisateurs (Admin)
 │   │
 │   ├── percepteur/
-│   │   ├── index.php            # Interface principale percepteur
-│   │   ├── save_consultation.php # API: Enregistrer consultation
-│   │   ├── save_examens.php     # API: Prescrire examens
-│   │   ├── save_pharmacie.php   # API: Délivrance pharmacie
-│   │   ├── save_acte_gratuit.php # API: Acte gratuit
-│   │   └── get_recap.php        # API: Récapitulatif patient
+│   │   ├── index.php            ← Interface principale percepteur
+│   │   ├── save_consultation.php ← API : enregistrer consultation
+│   │   ├── save_examens.php     ← API : enregistrer examens
+│   │   ├── save_pharmacie.php   ← API : enregistrer pharmacie (transaction)
+│   │   ├── save_acte_gratuit.php ← API : acte gratuit
+│   │   └── get_recap.php        ← API : récapitulatif patient
 │   │
 │   ├── parametrage/
-│   │   └── index.php            # Module paramétrage (6 sections)
+│   │   ├── index.php            ← Module paramétrage (tous onglets)
+│   │   └── etat_labo.php        ← API : état paie laborantin
 │   │
 │   ├── dashboard/
-│   │   └── index.php            # Tableau de bord Admin
+│   │   └── index.php            ← Tableau de bord Admin
 │   │
 │   ├── pdf/
-│   │   ├── PdfGenerator.php     # Classe génération PDF (HTML imprimable)
-│   │   └── etat_labo.php        # Endpoint état de paie laborantin
+│   │   └── PdfGenerator.php     ← Génération PDF TCPDF / Fallback HTML
 │   │
 │   └── api/
-│       └── patients.php         # API autocomplete téléphone (AJAX)
+│       └── patients.php         ← API autocomplete téléphone
 │
 ├── templates/
 │   ├── layouts/
-│   │   ├── header.php           # Navbar + head HTML commun
-│   │   └── footer.php           # Scripts JS + footer
+│   │   ├── header.php           ← Navbar + Flash + Bootstrap
+│   │   └── footer.php           ← Scripts JS
 │   └── errors/
-│       ├── 403.php              # Page accès refusé
-│       └── 404.php              # Page introuvable
+│       ├── 403.php
+│       └── 404.php
 │
 ├── assets/
-│   ├── css/
-│   │   └── main.css             # Charte graphique VERT #2e7d32
-│   └── js/
-│       └── app.js               # JS global (CSRF, Toast, DataTables, Autocomplete)
+│   ├── css/main.css             ← Charte graphique VERT #2e7d32
+│   └── js/app.js                ← CSRF AJAX, autocomplete, toasts, charts
 │
-├── database/
-│   ├── migrations/
-│   │   └── 001_schema.sql       # Schéma complet BDD (13 tables)
-│   └── seeds/
-│       └── 001_seed_data.sql    # Données de référence + produits test
+├── uploads/
+│   ├── logos/
+│   │   └── logo_csi.png         ← Logo DirectAid (العون المباشر)
+│   └── pdf/                     ← Reçus générés (gitignored)
 │
-└── uploads/
-    ├── logos/                   # Logo du centre (upload)
-    └── pdf/                     # Reçus générés (HTML imprimables)
+└── database/
+    ├── migrations/
+    │   └── 001_schema.sql       ← Schéma complet (13 tables)
+    └── seeds/
+        └── 001_seed_data.sql    ← Données de référence + actes pré-configurés
 ```
 
 ---
 
-## 🗄️ Architecture Base de Données
+## 🗄️ Structure BDD
 
-### Convention Universelle (toutes les tables)
-| Champ | Type | Description |
-|-------|------|-------------|
-| `whendone` | DATETIME | Date/heure de création (auto) |
-| `whodone` | INT UNSIGNED | ID utilisateur créateur |
-| `isDeleted` | TINYINT(1) | Soft delete : 0=actif, 1=archivé |
-| `lastUpdate` | TIMESTAMP | Dernière modification (auto) |
+### Convention universelle de traçabilité (toutes tables)
+| Champ | Type MySQL | Valeur par défaut | Description |
+|-------|-----------|-------------------|-------------|
+| `whendone` | DATETIME | NOW() | Date/heure création |
+| `whodone` | INT UNSIGNED | ID session | Utilisateur créateur |
+| `isDeleted` | TINYINT(1) | 0 | Soft delete (jamais DELETE SQL) |
+| `lastUpdate` | TIMESTAMP | ON UPDATE | Mise à jour automatique |
 
-> ⚠️ **INTERDICTION** : Aucune commande `DELETE SQL` dans le code. Utiliser `UPDATE ... SET isDeleted=1`
-
-### Tables Principales
+### Tables principales
 | Table | Description |
 |-------|-------------|
-| `utilisateurs` | Comptes système (admin, comptable, percepteur) |
-| `config_systeme` | Configuration centre (nom, logo, adresse) |
-| `patients` | Patients – identifiés uniquement par téléphone |
-| `actes_medicaux` | Actes médicaux configurés (payants + gratuits) |
-| `types_carnets` | Carnets de soins/santé |
-| `examens` | Examens + % laborantin |
-| `produits_pharmacie` | Stock pharmaceutique |
-| `approvisionnements_pharmacie` | Historique réapprovisionnements |
-| `recus` | Table maîtresse de toutes les opérations |
+| `utilisateurs` | Comptes (admin, comptable, percepteur) |
+| `config_systeme` | Configuration centre + logo |
+| `patients` | Fiche patient (dédupliqué par téléphone) |
+| `actes_medicaux` | Actes payants + gratuits |
+| `types_carnets` | Carnet de Soins (100F) / Carnet de Santé (GRATUIT) |
+| `examens` | Examens + % laborantin (montant_labo calculé) |
+| `produits_pharmacie` | Stock + seuil alerte + date péremption |
+| `approvisionnements_pharmacie` | Historique entrées stock |
+| `recus` | Table maîtresse (consultation/examen/pharmacie) |
 | `lignes_consultation` | Détail reçus consultation |
 | `lignes_examen` | Détail reçus examens |
 | `lignes_pharmacie` | Détail reçus pharmacie |
@@ -133,53 +190,63 @@ csi_ama_maradi/
 
 ---
 
-## 🚀 Guide de Déploiement
+## 👤 Comptes de test
+
+> ⚠️ **Changer les mots de passe en production !**
+
+| Login | Mot de passe | Rôle | Accès |
+|-------|-------------|------|-------|
+| `admin` | `Admin@CSI2026` | **Administrateur** | Tout + Dashboard global + Gestion utilisateurs |
+| `comptable` | `Compta@CSI2026` | **Comptable** | Paramétrage complet (sans gestion RH ni Dashboard) |
+| `percepteur1` | `Percep1@CSI2026` | **Percepteur** | Espace percepteur (ses données uniquement) |
+| `percepteur2` | `Percep2@CSI2026` | **Percepteur** | Espace percepteur (ses données uniquement) |
+
+---
+
+## 🚀 Guide d'installation
 
 ### Prérequis
-- **PHP** ≥ 8.0 avec extensions : `pdo_mysql`, `fileinfo`, `mbstring`, `json`
-- **MySQL** ≥ 8.0
-- **Apache** avec `mod_rewrite` activé (ou Nginx avec config équivalente)
+- PHP 8.0+ avec extensions : `pdo_mysql`, `fileinfo`, `json`, `mbstring`
+- MySQL 8.0+
+- Apache 2.4+ avec `mod_rewrite` activé
+- Composer (optionnel, pour TCPDF)
 
-### Installation Locale (XAMPP/WAMP/Laragon)
-
-#### Étape 1 – Cloner le dépôt
+### Étape 1 – Cloner le dépôt
 ```bash
 git clone https://github.com/NasserKailou/csi_ama_maradi.git
 cd csi_ama_maradi
 ```
 
-#### Étape 2 – Configurer l'environnement
+### Étape 2 – Configurer l'environnement
 ```bash
 cp .env.example .env
-```
-Éditer `.env` :
-```env
-APP_ENV=development
-BASE_URL=http://localhost/csi_ama_maradi
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_NAME=csi_ama
-DB_USER=root
-DB_PASS=votre_mot_de_passe
+nano .env
+# Modifier DB_HOST, DB_USER, DB_PASS, DB_NAME
 ```
 
-#### Étape 3 – Exécuter l'installation
+### Étape 3 – Installer TCPDF (PDF natif, optionnel)
+```bash
+composer require tecnickcom/tcpdf
+```
+> Si TCPDF absent, les reçus sont générés en HTML avec auto-impression.
+
+### Étape 4 – Lancer l'installation
 ```bash
 php install.php
 ```
-Ce script va :
-1. Créer la base de données `csi_ama`
-2. Appliquer le schéma (13 tables)
-3. Insérer les données de référence (actes, examens, produits)
-4. Créer les 4 comptes de test avec mots de passe hachés (bcrypt cost=12)
-5. Créer les dossiers `uploads/`
+Ce script :
+- Crée la base de données `csi_ama`
+- Applique le schéma SQL (13 tables)
+- Insère les données de référence (actes, examens, produits)
+- Crée les **4 comptes de test** avec mots de passe hachés (bcrypt cost=12)
 
-#### Étape 4 – Configurer le VirtualHost Apache
+### Étape 5 – Configurer Apache
 ```apache
 <VirtualHost *:80>
-    DocumentRoot "/chemin/vers/csi_ama_maradi"
     ServerName csi.local
-    <Directory "/chemin/vers/csi_ama_maradi">
+    DocumentRoot /var/www/csi_ama_maradi
+    
+    <Directory /var/www/csi_ama_maradi>
         Options -Indexes +FollowSymLinks
         AllowOverride All
         Require all granted
@@ -187,201 +254,153 @@ Ce script va :
 </VirtualHost>
 ```
 
-#### Étape 5 – Accéder à l'application
-Ouvrir : `http://csi.local` ou `http://localhost/csi_ama_maradi`
-
----
-
-### Déploiement sur Hébergement Mutualisé (cPanel / Plesk)
-
-1. **Uploader** les fichiers via FTP dans `public_html/` ou un sous-dossier
-2. **Créer la base MySQL** via phpMyAdmin
-3. **Configurer** `.env` avec les identifiants BDD de l'hébergeur
-4. **Exécuter** `install.php` via le terminal ou en y accédant via navigateur
-5. **Supprimer** `install.php` après installation !
-
----
-
-### Déploiement sur Serveur VPS (Ubuntu/Debian)
-
+### Étape 6 – Permissions
 ```bash
-# 1. Installer LAMP
-sudo apt update
-sudo apt install apache2 mysql-server php8.2 php8.2-mysql php8.2-mbstring php8.2-fileinfo libapache2-mod-php
+chmod 755 uploads/logos uploads/pdf
+chown -R www-data:www-data uploads/
+```
 
-# 2. Activer mod_rewrite
+### Étape 7 – Accéder à l'application
+```
+http://csi.local/
+http://localhost/csi_ama_maradi/
+```
+
+---
+
+## 🌐 Guide de déploiement
+
+### Option A – Serveur local (XAMPP/Laragon/WAMP)
+1. Copier le projet dans `htdocs/` ou `www/`
+2. Lancer MySQL et créer un user dédié
+3. Modifier `.env` avec les credentials
+4. Exécuter `php install.php`
+5. Accéder via `http://localhost/csi_ama_maradi/`
+
+### Option B – Serveur VPS/dédié (Linux)
+```bash
+# Installation dépendances
+sudo apt update && sudo apt install -y php8.1 php8.1-mysql php8.1-mbstring \
+    apache2 mysql-server composer
+
+# Activer mod_rewrite
 sudo a2enmod rewrite
 sudo systemctl restart apache2
 
-# 3. Cloner et configurer
+# Déployer
 cd /var/www/html
 sudo git clone https://github.com/NasserKailou/csi_ama_maradi.git
-sudo chown -R www-data:www-data csi_ama_maradi/
-sudo chmod -R 755 csi_ama_maradi/
-sudo chmod -R 775 csi_ama_maradi/uploads/
+cd csi_ama_maradi
+sudo cp .env.example .env
+sudo nano .env  # configurer BDD
 
-# 4. Configurer MySQL
-sudo mysql -u root -p
-CREATE DATABASE csi_ama CHARACTER SET utf8mb4;
-CREATE USER 'csi_user'@'localhost' IDENTIFIED BY 'MotDePasseSecurise2026!';
-GRANT ALL PRIVILEGES ON csi_ama.* TO 'csi_user'@'localhost';
-FLUSH PRIVILEGES;
+# Optionnel TCPDF
+composer require tecnickcom/tcpdf
 
-# 5. Lancer l'installation
-cd /var/www/html/csi_ama_maradi
-php install.php
+# Installation
+sudo php install.php
 
-# 6. SUPPRIMER install.php en production !
-rm install.php
+# Permissions
+sudo chown -R www-data:www-data .
+sudo chmod -R 755 uploads/
+```
+
+### Option C – Hébergement mutualisé (cPanel)
+1. Uploader les fichiers via FTP dans `public_html/csi/`
+2. Créer la BDD MySQL dans cPanel
+3. Configurer `.env` avec les paramètres cPanel
+4. Exécuter `install.php` via l'outil Terminal cPanel ou SSH
+5. Accéder à `https://domaine.com/csi/`
+
+### Mise à jour
+```bash
+git pull origin main
+# Si nouvelles migrations :
+php -r "
+  require 'config/config.php';
+  \$pdo = new PDO(sprintf('mysql:host=%s;dbname=%s;charset=utf8mb4', DB_HOST, DB_NAME), DB_USER, DB_PASS);
+  \$pdo->exec(file_get_contents('database/migrations/002_....sql'));
+  echo 'Migration OK';
+"
 ```
 
 ---
 
-## ⚡ Fonctionnalités Implémentées
+## ⚖️ Règles métier critiques
 
-### Module Percepteur
-- ✅ 3 boutons d'action : Reçu Normal / Orphelin / Actes Gratuits
-- ✅ Formulaire patient avec **autocomplete AJAX** (dès 3 chiffres)
-- ✅ **Déduplication patient** par numéro de téléphone
-- ✅ Génération reçu consultation (PDF HTML A5 double exemplaire)
-- ✅ Modal examens – prescription et reçu avec zone laborantin
-- ✅ Modal pharmacie – max 15 produits, décrémentation stock automatique
-- ✅ Blocage produits périmés / rupture de stock (UI + serveur)
-- ✅ Liste journalière (DataTable) – isolation stricte par percepteur
-- ✅ Récapitulatif consolidé par patient
-- ✅ Filtre archives par plage de dates
-
-### Module Paramétrage (Admin & Comptable)
-- ✅ Gestion actes médicaux (CRUD + flag gratuit)
-- ✅ Actes pré-configurés obligatoires (CPN, Accouchement, etc.)
-- ✅ Gestion examens + % laborantin (calcul automatique montant)
-- ✅ Gestion stock pharmaceutique (CRUD + seuil alerte + date péremption)
-- ✅ Approvisionnements avec traçabilité
-- ✅ Configuration entête reçus (nom, adresse, téléphone, logo upload)
-- ✅ Inventaire comparatif stock théorique vs physique
-- ✅ Génération état de paie laborantin (PDF)
-
-### Tableau de Bord Admin
-- ✅ KPIs : Patients jour/semaine/mois, Recettes, Coût actes gratuits, Alertes stock
-- ✅ Filtre recettes sur période personnalisable
-- ✅ Graphique barres : évolution consultations 7 derniers jours (Chart.js)
-- ✅ Graphique camembert : répartition revenus par pôle
-- ✅ Liste rouge alertes stock (rupture + périmé)
-- ✅ Activité de productivité par percepteur
-
-### Gestion Utilisateurs (Admin)
-- ✅ CRUD complet (Créer, Modifier, Supprimer)
-- ✅ 3 rôles : Administrateur, Comptable, Percepteur
-- ✅ Suspension/Activation compte
-- ✅ Soft delete (isDeleted = 1)
-
-### Sécurité
-- ✅ Protection CSRF (token sur tous les formulaires + AJAX headers)
-- ✅ Hachage bcrypt cost=12 pour les mots de passe
-- ✅ Sessions PHP sécurisées (httponly, samesite=Strict)
-- ✅ Régénération ID session à la connexion
-- ✅ Contrôles d'autorisation par rôle sur chaque route
-- ✅ Isolation stricte données percepteur (WHERE whodone = $_SESSION['user_id'])
-- ✅ Validation serveur sur toutes les entrées (pas de confiance au frontend)
-- ✅ Soft delete universel (pas de DELETE SQL)
-- ✅ Transactions atomiques (BEGIN/COMMIT/ROLLBACK) pour la pharmacie
+| # | Règle | Implémentation |
+|---|-------|----------------|
+| 1 | **Déduplication patient** par téléphone | `INSERT ... ON DUPLICATE KEY UPDATE` |
+| 2 | **Soft Delete obligatoire** | `UPDATE ... SET isDeleted=1` (jamais DELETE) |
+| 3 | **Isolation percepteur** | `WHERE whodone = $_SESSION['user_id']` |
+| 4 | **Numérotation séquentielle** | `MAX(numero_recu) + 1` (jamais réinitialisé) |
+| 5 | **Orphelins** | montant_encaisse = 0, prix conservés en BDD |
+| 6 | **Auto-décrémentation stock** | Transaction `BEGIN/COMMIT/ROLLBACK` atomique |
+| 7 | **Paramétrage préalable** | Percepteur = menus déroulants uniquement |
+| 8 | **PDF A5 double exemplaire** | 2 copies identiques sur même document |
+| 9 | **Autocomplete** | AJAX dès le 3ème chiffre du téléphone |
+| 10 | **Blocage périmés/rupture** | Contrôle PHP serveur + visuel grisé frontend |
 
 ---
 
-## 📐 Règles Métier Respectées
+## 🔌 API endpoints
 
-| # | Règle | Statut |
-|---|-------|--------|
-| 1 | Déduplication patient par téléphone | ✅ |
-| 2 | Soft Delete obligatoire | ✅ |
-| 3 | Isolation données percepteur | ✅ |
-| 4 | Numérotation séquentielle globale | ✅ |
-| 5 | Cas orphelins – gratuité totale (prix conservés pour bailleurs) | ✅ |
-| 6 | Auto-décrémentation stock avec transaction atomique | ✅ |
-| 7 | Paramétrage préalable obligatoire (pas de saisie libre percepteur) | ✅ |
-| 8 | Format A5 double exemplaire | ✅ |
-| 9 | Autocomplete téléphone dès 3ème chiffre | ✅ |
-| 10 | Blocage produits périmés / rupture (UI + serveur) | ✅ |
+| Méthode | URL | Description | Auth |
+|---------|-----|-------------|------|
+| `GET` | `/modules/api/patients.php?q=XXX` | Autocomplete patients par téléphone | Percepteur+ |
+| `POST` | `/modules/percepteur/save_consultation.php` | Enregistrer consultation + PDF | Percepteur+ |
+| `POST` | `/modules/percepteur/save_examens.php` | Enregistrer examens + PDF | Percepteur+ |
+| `POST` | `/modules/percepteur/save_pharmacie.php` | Délivrance pharmacie + PDF | Percepteur+ |
+| `POST` | `/modules/percepteur/save_acte_gratuit.php` | Acte gratuit + PDF | Percepteur+ |
+| `GET` | `/modules/percepteur/get_recap.php?recu_id=X` | Récapitulatif patient | Percepteur+ |
+| `POST` | `/index.php?page=parametrage` | CRUD paramétrage | Admin/Comptable |
+| `GET` | `/modules/parametrage/etat_labo.php` | État paie labo PDF | Admin/Comptable |
+| `POST` | `/index.php?page=utilisateurs` | Gestion utilisateurs | Admin |
 
----
-
-## 🔧 Configuration Nginx (alternative Apache)
-
-```nginx
-server {
-    listen 80;
-    server_name csi.local;
-    root /var/www/html/csi_ama_maradi;
-    index index.php;
-
-    location / {
-        try_files $uri $uri/ /index.php?$query_string;
-    }
-
-    location ~ \.php$ {
-        fastcgi_pass unix:/var/run/php/php8.2-fpm.sock;
-        fastcgi_index index.php;
-        include fastcgi_params;
-        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-    }
-
-    # Protéger les fichiers sensibles
-    location ~ \.(env|sql|log)$ { deny all; }
-    
-    # Uploads
-    location /uploads/pdf/ {
-        add_header Content-Disposition "inline";
-    }
-}
-```
+> Tous les endpoints POST requièrent le **token CSRF** (`X-CSRF-TOKEN` header ou `csrf_token` champ).
 
 ---
 
-## 📦 Technologies Utilisées
+## 🗺️ Feuille de route (Roadmap)
 
-| Composant | Version | Usage |
-|-----------|---------|-------|
-| PHP | 8.0+ | Backend (sans framework) |
-| MySQL | 8.0+ | Base de données |
-| Bootstrap | 5.3.3 | UI (modaux, grilles, composants) |
-| Bootstrap Icons | 1.11.3 | Icônes |
-| jQuery | 3.7.1 | AJAX, manipulation DOM |
-| DataTables | 1.13.8 | Tableaux interactifs |
-| Chart.js | 4.4.2 | Graphiques dashboard |
-| Apache | 2.4+ | Serveur web |
+### Phase 2 – Améliorations prioritaires
+- [ ] Impression directe via navigateur (auto-print au chargement PDF)
+- [ ] Export Excel inventaire (PhpSpreadsheet)
+- [ ] Rapport mensuel PDF global
+- [ ] Historique approvisionnements visible par produit
+- [ ] Recherche patient par nom (en plus du téléphone)
 
----
-
-## 🗂️ Variables d'Environnement
-
-| Variable | Défaut | Description |
-|----------|--------|-------------|
-| `APP_ENV` | `development` | `development` ou `production` |
-| `BASE_URL` | `http://localhost` | URL de base de l'application |
-| `DB_HOST` | `127.0.0.1` | Hôte MySQL |
-| `DB_PORT` | `3306` | Port MySQL |
-| `DB_NAME` | `csi_ama` | Nom de la base de données |
-| `DB_USER` | `root` | Utilisateur MySQL |
-| `DB_PASS` | *(vide)* | Mot de passe MySQL |
+### Phase 3 – Fonctionnalités avancées
+- [ ] Module infirmier (suivi traitements)
+- [ ] Statistiques épidémiologiques (fréquence actes/maladies)
+- [ ] Notifications stock (email ou SMS)
+- [ ] Sauvegarde automatique BDD (cron job)
+- [ ] Application mobile PWA
 
 ---
 
-## ⏭️ Fonctionnalités à Développer (Backlog)
+## 🛡️ Sécurité implémentée
 
-- [ ] Export Excel inventaire (`PhpSpreadsheet`)
-- [ ] Intégration TCPDF pour génération PDF native (à la place du HTML imprimable)
-- [ ] Notifications temps réel (alertes stock via WebSocket ou polling)
-- [ ] Module rapport mensuel automatique (email)
-- [ ] API REST complète pour intégration mobile
-- [ ] Sauvegarde automatique BDD planifiée (cron)
-- [ ] Module de gestion des ordonnances
+- ✅ Protection CSRF (token 64 hex régénéré après login)
+- ✅ Mots de passe hachés bcrypt cost=12
+- ✅ Sessions PHP strictes (httponly, samesite=Strict)
+- ✅ Régénération session_id après connexion
+- ✅ Soft delete (aucun DELETE SQL dans le code)
+- ✅ Validation et sanitisation serveur PHP
+- ✅ PDO avec requêtes préparées (protection SQLi)
+- ✅ Upload fichier avec validation MIME réelle (finfo)
+- ✅ Headers Apache sécurité (X-Frame-Options, XSS-Protection...)
+- ✅ .htaccess bloque l'accès aux fichiers sensibles (.sql, .env, .log)
 
 ---
 
 ## 📞 Support
 
-Dépôt GitHub : [https://github.com/NasserKailou/csi_ama_maradi](https://github.com/NasserKailou/csi_ama_maradi)
+**Projet** : Système de Gestion CSI – AMA Maradi  
+**Version** : 1.0 · Mars 2026  
+**Stack** : PHP 8 + MySQL 8 + Bootstrap 5 + Chart.js + TCPDF  
+**Dépôt** : https://github.com/NasserKailou/csi_ama_maradi
 
 ---
 
-*Système CSI AMA Maradi – Développé selon les spécifications techniques v1.0 – Mars 2026*
+*Développé pour le Centre de Santé Intégré AMA Maradi avec le soutien de DirectAid (العون المباشر)*

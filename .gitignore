@@ -1,31 +1,35 @@
-# ─── Environnement ────────────────────────────────────────
+# Dépendances
+/vendor/
+node_modules/
+
+# Environnement
 .env
 *.env.local
 
-# ─── Dépendances ──────────────────────────────────────────
-vendor/
-node_modules/
+# Uploads et fichiers générés
+/uploads/pdf/
+# Conserver le logo par défaut
+!/uploads/logos/logo_csi.png
 
-# ─── Uploads (conserver la structure, ignorer le contenu) ─
-uploads/logos/*
-!uploads/logos/.gitkeep
-uploads/pdf/*
-!uploads/pdf/.gitkeep
-
-# ─── Logs ─────────────────────────────────────────────────
+# Logs
 *.log
-logs/
+/logs/
 
-# ─── Cache ────────────────────────────────────────────────
-cache/
-tmp/
+# Cache et temp
+/tmp/
+/.cache/
 
-# ─── IDE ──────────────────────────────────────────────────
+# IDE
 .vscode/
 .idea/
 *.swp
-*~
+*.swo
 
-# ─── OS ───────────────────────────────────────────────────
+# OS
 .DS_Store
 Thumbs.db
+
+# Wrangler / Node
+.wrangler/
+dist/
+.parcel-cache/
