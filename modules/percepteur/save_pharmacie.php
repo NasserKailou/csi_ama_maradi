@@ -91,11 +91,12 @@ try {
         ]);
 
         // ── Décrement automatique du stock ────────────────────────────────
+        // Note: PDO named params ne peuvent pas être réutilisés → :qte1 et :qte2
         $pdo->prepare("
             UPDATE produits_pharmacie
-            SET stock_actuel = stock_actuel - :qte, whodone = :who
-            WHERE id = :id AND stock_actuel >= :qte
-        ")->execute([':qte'=>$qte, ':who'=>$userId, ':id'=>$produitId]);
+            SET stock_actuel = stock_actuel - :qte1, whodone = :who
+            WHERE id = :id AND stock_actuel >= :qte2
+        ")->execute([':qte1'=>$qte, ':qte2'=>$qte, ':who'=>$userId, ':id'=>$produitId]);
     }
 
     if ($montantTotal === 0) {

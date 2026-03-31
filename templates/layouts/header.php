@@ -51,10 +51,21 @@
             <!-- Nav gauche -->
             <ul class="navbar-nav me-auto mb-2 mb-lg-0">
                 <?php if (Session::hasRole('admin')): ?>
-                <li class="nav-item">
-                    <a class="nav-link <?= ($page === 'dashboard') ? 'active' : '' ?>" href="<?= url('index.php?page=dashboard') ?>">
+                <li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle <?= in_array($page, ['dashboard','analytics']) ? 'active' : '' ?>"
+                       href="#" data-bs-toggle="dropdown">
                         <i class="bi bi-speedometer2"></i> Tableau de bord
                     </a>
+                    <ul class="dropdown-menu">
+                        <li><a class="dropdown-item <?= $page==='dashboard' ? 'active' : '' ?>"
+                               href="<?= url('index.php?page=dashboard') ?>">
+                            <i class="bi bi-house-door me-2"></i>Vue principale
+                        </a></li>
+                        <li><a class="dropdown-item <?= $page==='analytics' ? 'active' : '' ?>"
+                               href="<?= url('index.php?page=analytics') ?>">
+                            <i class="bi bi-graph-up-arrow me-2"></i>Analytique avancée
+                        </a></li>
+                    </ul>
                 </li>
                 <?php endif; ?>
 
@@ -65,6 +76,13 @@
                     </a>
                 </li>
                 <?php endif; ?>
+
+                <!-- Patients : visible pour tous les rôles connectés -->
+                <li class="nav-item">
+                    <a class="nav-link <?= ($page === 'patients') ? 'active' : '' ?>" href="<?= url('index.php?page=patients') ?>">
+                        <i class="bi bi-person-vcard"></i> Patients
+                    </a>
+                </li>
 
                 <?php if (Session::hasRole('admin', 'comptable')): ?>
                 <li class="nav-item dropdown">

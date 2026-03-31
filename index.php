@@ -52,6 +52,12 @@ $routeMap = [
 
     // Gestion utilisateurs (Admin seulement)
     'utilisateurs'     => ROOT_PATH . '/modules/auth/utilisateurs.php',
+
+    // Dashboard analytique avancé (Admin seulement)
+    'analytics'        => ROOT_PATH . '/modules/dashboard/analytics.php',
+
+    // Récapitulatif patients (Admin + Comptable + Percepteur)
+    'patients'         => ROOT_PATH . '/modules/patients/index.php',
 ];
 
 if (isset($routeMap[$page]) && file_exists($routeMap[$page])) {
