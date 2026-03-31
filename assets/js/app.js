@@ -71,11 +71,12 @@ function hideLoader() {
 
 // ─── DataTables initialisation globale ────────────────────────────────────────
 $(document).ready(function () {
+    // URL locale pour éviter le blocage CORS du CDN DataTables
+    const dtLangUrl = (typeof APP_BASE_URL !== 'undefined' ? APP_BASE_URL : '')
+                      + '/assets/i18n/fr-FR.json';
     $('[data-datatable]').each(function () {
         $(this).DataTable({
-            language: {
-                url: 'https://cdn.datatables.net/plug-ins/1.13.8/i18n/fr-FR.json'
-            },
+            language: { url: dtLangUrl },
             pageLength: 25,
             responsive: true,
             dom: '<"row"<"col-sm-6"l><"col-sm-6"f>>rtip'

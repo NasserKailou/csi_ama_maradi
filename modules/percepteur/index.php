@@ -573,16 +573,16 @@ $saveActeGratUrl = url('modules/percepteur/save_acte_gratuit.php');
 $saveExamensUrl  = url('modules/percepteur/save_examens.php');
 $savePharmUrl    = url('modules/percepteur/save_pharmacie.php');
 $getRecapUrl     = url('modules/percepteur/get_recap.php');
-$patientsApiUrl  = url('modules/api/patients.php');
+// PATIENTS_API_URL est déjà déclaré dans header.php – ne pas redéclarer ici
 $extraJs = <<<HEREDOC
 <script>
 let currentTypeRecu = 'normal';
-const SAVE_CONSULT_URL  = '{$saveConsultUrl}';
+const SAVE_CONSULT_URL   = '{$saveConsultUrl}';
 const SAVE_ACTE_GRAT_URL = '{$saveActeGratUrl}';
-const SAVE_EXAMENS_URL  = '{$saveExamensUrl}';
-const SAVE_PHARMA_URL   = '{$savePharmUrl}';
-const GET_RECAP_URL     = '{$getRecapUrl}';
-const PATIENTS_API_URL  = '{$patientsApiUrl}';
+const SAVE_EXAMENS_URL   = '{$saveExamensUrl}';
+const SAVE_PHARMA_URL    = '{$savePharmUrl}';
+const GET_RECAP_URL      = '{$getRecapUrl}';
+// PATIENTS_API_URL vient de header.php (pas redéclarée ici)
 
 function setTypeRecu(type) {
     currentTypeRecu = type;
