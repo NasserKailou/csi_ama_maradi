@@ -2,6 +2,8 @@
 /**
  * API Patients – Autocomplete téléphone (dès 3 chiffres)
  */
+ob_start();
+ini_set('display_errors', '0');
 if (!defined('ROOT_PATH')) { define('ROOT_PATH', dirname(__DIR__, 2)); }
 require_once ROOT_PATH . '/config/config.php';
 require_once ROOT_PATH . '/core/autoload.php';

@@ -3,6 +3,8 @@
  * API : Sauvegarde Pharmacie
  * POST : recu_id, produits (JSON : [{id, qte, nom, forme, prix}])
  */
+ob_start();
+ini_set('display_errors', '0');
 if (!defined('ROOT_PATH')) { define('ROOT_PATH', dirname(__DIR__, 2)); }
 require_once ROOT_PATH . '/config/config.php';
 require_once ROOT_PATH . '/core/autoload.php';
@@ -127,7 +129,7 @@ try {
     jsonSuccess('Pharmacie enregistrée.', [
         'recu_id'     => $newRecuId,
         'numero_recu' => $numRecu,
-        'pdf_url'     => '/uploads/pdf/' . basename($pdfFile)
+        'pdf_url'     => url('uploads/pdf/' . basename($pdfFile))
     ]);
 
 } catch (PDOException $e) {

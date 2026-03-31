@@ -35,12 +35,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ->execute([':l'=>$libelle,':t'=>$tarif,':g'=>$gratuit,':w'=>$userId]);
                 }
                 jsonSuccess('Acte enregistré.');
+                break;
 
             case 'delete_acte':
                 $id = (int)($_POST['id'] ?? 0);
+                if (!$id) jsonError('ID acte manquant.');
                 $pdo->prepare("UPDATE actes_medicaux SET isDeleted=1, whodone=:w WHERE id=:id")
                     ->execute([':w'=>$userId, ':id'=>$id]);
                 jsonSuccess('Acte archivé.');
+                break;
 
             // ── Examens ───────────────────────────────────────────────────
             case 'save_examen':
@@ -57,12 +60,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ->execute([':l'=>$libelle,':c'=>$cout,':p'=>$pct,':w'=>$userId]);
                 }
                 jsonSuccess('Examen enregistré.');
+                break;
 
             case 'delete_examen':
                 $id = (int)($_POST['id'] ?? 0);
+                if (!$id) jsonError('ID examen manquant.');
                 $pdo->prepare("UPDATE examens SET isDeleted=1, whodone=:w WHERE id=:id")
                     ->execute([':w'=>$userId, ':id'=>$id]);
                 jsonSuccess('Examen archivé.');
+                break;
 
             // ── Produits Pharmacie ─────────────────────────────────────────
             case 'save_produit':
@@ -89,12 +95,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                    ':s'=>$seuil,':dp'=>($perempDate ?: null),':w'=>$userId]);
                 }
                 jsonSuccess('Produit enregistré.');
+                break;
 
             case 'delete_produit':
                 $id = (int)($_POST['id'] ?? 0);
+                if (!$id) jsonError('ID produit manquant.');
                 $pdo->prepare("UPDATE produits_pharmacie SET isDeleted=1, whodone=:w WHERE id=:id")
                     ->execute([':w'=>$userId, ':id'=>$id]);
                 jsonSuccess('Produit archivé.');
+                break;
 
             case 'approvisionner':
                 $pid   = (int)($_POST['produit_id'] ?? 0);
@@ -109,6 +118,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ->execute([':qty'=>$qty, ':id'=>$pid]);
                 $pdo->commit();
                 jsonSuccess('Stock approvisionné (+' . $qty . ' unités).');
+                break;
 
             // ── Config système ─────────────────────────────────────────────
             case 'save_config':
@@ -129,9 +139,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
                 jsonSuccess('Configuration sauvegardée.');
+                break;
 
             default:
-                jsonError('Action inconnue.');
+                jsonError('Action inconnue : ' . htmlspecialchars($action));
         }
     } catch (PDOException $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
@@ -687,7 +698,14 @@ const ETAT_LABO_URL  = '{$etatLaboUrl}';
 // ── Fonctions génériques ────────────────────────────────────────────────────
 function saveParam(formId, reloadUrl) {
     const form = document.getElementById(formId);
-    const data = Object.fromEntries(new FormData(form));
+    // Object.fromEntries ne capture pas les checkboxes non cochées → on les ajoute à 0
+    const fd   = new FormData(form);
+    const data = {};
+    fd.forEach((v, k) => { data[k] = v; });
+    // Forcer est_gratuit=0 si la checkbox n'est pas cochée
+    form.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        if (!cb.checked) data[cb.name] = 0;
+    });
     const section = new URLSearchParams(location.search).get('section') || 'actes';
     ajaxPost(PARAM_BASE_URL + '&section=' + section, data,
         () => setTimeout(() => location.reload(), 800));
@@ -700,6 +718,7 @@ function deleteItem(type, id, nom) {
     ajaxPost(PARAM_BASE_URL + '&section=' + section,
         { action: actions[type], id },
         () => setTimeout(() => location.reload(), 800));
+}
 
 // ── Actes ───────────────────────────────────────────────────────────────────
 function openActeModal(a = null) {

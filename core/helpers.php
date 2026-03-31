@@ -26,6 +26,7 @@ function verifyCsrf(): void
 {
     $token = $_POST[CSRF_TOKEN_NAME] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
     if (!Session::validateCsrfToken($token)) {
+        if (ob_get_level() > 0) ob_end_clean();
         http_response_code(403);
         die(json_encode(['success' => false, 'message' => 'Token CSRF invalide.']));
     }
@@ -93,6 +94,10 @@ function redirect(string $url): void
 // ── JSON API ─────────────────────────────────────────────────────────────────
 function jsonResponse(bool $success, string $message = '', array $data = [], int $code = 200): void
 {
+    // Vider tout output en attente (erreurs PHP, notices, etc.) pour ne pas polluer le JSON
+    if (ob_get_level() > 0) {
+        ob_end_clean();
+    }
     http_response_code($code);
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode(array_merge(['success' => $success, 'message' => $message], $data));

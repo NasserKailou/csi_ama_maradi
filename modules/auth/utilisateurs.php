@@ -52,6 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $pdo->prepare($sql)->execute($params);
                     jsonSuccess('Utilisateur mis à jour.');
                 }
+                break;
 
             case 'toggle_actif':
                 $id = (int)($_POST['id'] ?? 0);
@@ -60,6 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->prepare("UPDATE utilisateurs SET est_actif = 1 - est_actif WHERE id=:id AND isDeleted=0")
                     ->execute([':id' => $id]);
                 jsonSuccess('Statut mis à jour.');
+                break;
 
             case 'delete':
                 $id = (int)($_POST['id'] ?? 0);
@@ -68,6 +70,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo->prepare("UPDATE utilisateurs SET isDeleted=1, whodone=:who WHERE id=:id")
                     ->execute([':who' => Session::getUserId(), ':id' => $id]);
                 jsonSuccess('Utilisateur supprimé (archivé).');
+                break;
 
             default:
                 jsonError('Action inconnue.');

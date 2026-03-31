@@ -3,6 +3,8 @@
  * Module Paramétrage – État de paie Laborantin
  * GET : date_debut, date_fin
  */
+ob_start();
+ini_set('display_errors', '0');
 if (!defined('ROOT_PATH')) { define('ROOT_PATH', dirname(__DIR__, 2)); }
 require_once ROOT_PATH . '/config/config.php';
 require_once ROOT_PATH . '/core/autoload.php';
@@ -11,11 +13,11 @@ require_once ROOT_PATH . '/core/helpers.php';
 Session::start();
 requireRole('admin', 'comptable');
 
-header('Content-Type: application/json; charset=utf-8');
-
 $token = $_GET['csrf_token'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
 if (!Session::validateCsrfToken($token)) {
+    if (ob_get_level() > 0) ob_end_clean();
     http_response_code(403);
+    header('Content-Type: application/json; charset=utf-8');
     echo json_encode(['success'=>false,'message'=>'Token CSRF invalide.']);
     exit;
 }
@@ -24,12 +26,15 @@ $dateDebut = $_GET['date_debut'] ?? '';
 $dateFin   = $_GET['date_fin']   ?? '';
 
 if (!$dateDebut || !$dateFin) {
+    if (ob_get_level() > 0) ob_end_clean();
+    header('Content-Type: application/json; charset=utf-8');
     echo json_encode(['success'=>false,'message'=>'Dates obligatoires.']);
     exit;
 }
 
-// Validation format date
 if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateDebut) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateFin)) {
+    if (ob_get_level() > 0) ob_end_clean();
+    header('Content-Type: application/json; charset=utf-8');
     echo json_encode(['success'=>false,'message'=>'Format de date invalide.']);
     exit;
 }
@@ -96,11 +101,13 @@ try {
         require_once ROOT_PATH . '/modules/pdf/PdfGenerator.php';
         $pdf     = new PdfGenerator($pdo);
         $pdfFile = $pdf->generateEtatLabo($dateDebut, $dateFin);
-        $pdfUrl  = '/uploads/pdf/' . basename($pdfFile);
+        $pdfUrl  = url('uploads/pdf/' . basename($pdfFile));
     } catch (Throwable $e) {
         // PDF optionnel – pas bloquant
     }
 
+    if (ob_get_level() > 0) ob_end_clean();
+    header('Content-Type: application/json; charset=utf-8');
     echo json_encode([
         'success'  => true,
         'message'  => 'État généré.',
@@ -110,5 +117,7 @@ try {
     ]);
 
 } catch (PDOException $e) {
+    if (ob_get_level() > 0) ob_end_clean();
+    header('Content-Type: application/json; charset=utf-8');
     echo json_encode(['success'=>false,'message'=>'Erreur BDD : ' . (APP_ENV === 'development' ? $e->getMessage() : 'Contactez l\'admin.')]);
 }

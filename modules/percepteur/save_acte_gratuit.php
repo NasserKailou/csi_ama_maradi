@@ -3,6 +3,8 @@
  * API : Sauvegarde Acte Gratuit (CPN, Nourrissons, etc.)
  * POST : type_patient=acte_gratuit, telephone, nom, sexe, age, provenance, acte_id
  */
+ob_start();
+ini_set('display_errors', '0');
 if (!defined('ROOT_PATH')) { define('ROOT_PATH', dirname(__DIR__, 2)); }
 require_once ROOT_PATH . '/config/config.php';
 require_once ROOT_PATH . '/core/autoload.php';
@@ -90,7 +92,7 @@ try {
     jsonSuccess('Acte gratuit enregistré.', [
         'recu_id'     => $recuId,
         'numero_recu' => $numRecu,
-        'pdf_url'     => '/uploads/pdf/' . basename($pdfFile)
+        'pdf_url'     => url('uploads/pdf/' . basename($pdfFile))
     ]);
 
 } catch (PDOException $e) {
