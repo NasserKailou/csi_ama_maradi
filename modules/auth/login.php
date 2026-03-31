@@ -12,11 +12,11 @@ Session::start();
 // Déjà connecté → rediriger
 if (Session::isLoggedIn()) {
     $role = Session::getRole();
-    redirect(match($role) {
-        'admin'      => '/index.php?page=dashboard',
-        'comptable'  => '/index.php?page=parametrage',
-        default      => '/index.php?page=percepteur',
-    });
+    redirect(url(match($role) {
+        'admin'      => 'index.php?page=dashboard',
+        'comptable'  => 'index.php?page=parametrage',
+        default      => 'index.php?page=percepteur',
+    }));
 }
 
 $error = '';
@@ -50,11 +50,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     Session::set('role',     $user['role']);
                     Session::regenerateCsrfToken();
 
-                    redirect(match($user['role']) {
-                        'admin'     => '/index.php?page=dashboard',
-                        'comptable' => '/index.php?page=parametrage',
-                        default     => '/index.php?page=percepteur',
-                    });
+                    redirect(url(match($user['role']) {
+                        'admin'     => 'index.php?page=dashboard',
+                        'comptable' => 'index.php?page=parametrage',
+                        default     => 'index.php?page=percepteur',
+                    }));
                 }
             } else {
                 $error = 'Identifiants incorrects. Veuillez réessayer.';
@@ -74,9 +74,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <?= csrfMeta() ?>
     <title>Connexion – CSI AMA Maradi</title>
+    <!-- Bootstrap 5 CSS (CDN) -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons (CDN) -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-    <link href="/assets/css/main.css" rel="stylesheet">
+    <!-- CSS personnalisé -->
+    <link href="<?= asset('assets/css/main.css') ?>" rel="stylesheet">
 </head>
 <body>
 <div class="login-wrapper">
@@ -98,7 +101,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
         <?php endif; ?>
 
-        <form method="POST" action="/index.php?page=login" novalidate>
+        <form method="POST" action="<?= url('index.php?page=login') ?>" novalidate>
             <?= csrfInput() ?>
 
             <div class="mb-3">
@@ -138,6 +141,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
 </div>
 
+<!-- Bootstrap 5 JS (CDN) -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
 document.getElementById('togglePwd').addEventListener('click', function () {

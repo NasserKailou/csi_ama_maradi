@@ -1,5 +1,6 @@
 # Apache – Système CSI AMA Maradi
 # Redirige tout vers index.php (Front Controller)
+# Compatible XAMPP sous-dossier /csi_ama_maradi/
 
 Options -Indexes
 
@@ -12,20 +13,21 @@ Options -Indexes
 # ── Front Controller ────────────────────────────────────────
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    RewriteBase /
+    # IMPORTANT : doit correspondre au sous-dossier dans htdocs
+    # Si le projet est dans C:\xampp\htdocs\csi_ama_maradi → /csi_ama_maradi
+    # Si le projet est à la racine de htdocs              → /
+    RewriteBase /csi_ama_maradi/
 
-    # Autoriser les assets et uploads
-    RewriteCond %{REQUEST_URI} ^/assets/ [OR]
-    RewriteCond %{REQUEST_URI} ^/uploads/ [OR]
+    # Autoriser les fichiers et répertoires existants (assets, uploads, etc.)
     RewriteCond %{REQUEST_FILENAME} -f [OR]
     RewriteCond %{REQUEST_FILENAME} -d
     RewriteRule ^ - [L]
 
-    # Rediriger les API modules
-    RewriteCond %{REQUEST_URI} ^/modules/
+    # Autoriser les appels directs aux modules API (AJAX)
+    RewriteCond %{REQUEST_URI} ^/csi_ama_maradi/modules/ [NC]
     RewriteRule ^ - [L]
 
-    # Tout le reste vers index.php
+    # Tout le reste → index.php
     RewriteRule ^ index.php [QSA,L]
 </IfModule>
 
@@ -45,8 +47,8 @@ Options -Indexes
 # ── Cache assets statiques ───────────────────────────────────
 <IfModule mod_expires.c>
     ExpiresActive On
-    ExpiresByType text/css "access plus 7 days"
+    ExpiresByType text/css              "access plus 7 days"
     ExpiresByType application/javascript "access plus 7 days"
-    ExpiresByType image/png "access plus 30 days"
-    ExpiresByType image/jpeg "access plus 30 days"
+    ExpiresByType image/png             "access plus 30 days"
+    ExpiresByType image/jpeg            "access plus 30 days"
 </IfModule>

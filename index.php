@@ -17,7 +17,7 @@ $page = $_GET['page'] ?? 'login';
 $publicPages = ['login', 'logout'];
 
 if (!in_array($page, $publicPages, true) && !Session::isLoggedIn()) {
-    redirect('/index.php?page=login');
+    redirect(url('index.php?page=login'));
 }
 
 // Dispatch

@@ -1,3 +1,13 @@
+<?php
+// Charger les helpers si ROOT_PATH est défini (pour la fonction url())
+if (defined('ROOT_PATH') && function_exists('url')) {
+    $backUrl = url('index.php');
+} else {
+    // Fallback : détecter le sous-dossier depuis REQUEST_URI
+    $baseDir = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\');
+    $backUrl = $baseDir . '/index.php';
+}
+?>
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -20,7 +30,7 @@
         </div>
         <h1 class="fw-bold" style="color:var(--csi);">Accès Refusé</h1>
         <p class="text-muted mb-4">Vous n'avez pas les permissions nécessaires pour accéder à cette ressource.</p>
-        <a href="/index.php" class="btn text-white px-4" style="background:var(--csi);">
+        <a href="<?= $backUrl ?>" class="btn text-white px-4" style="background:var(--csi);">
             <i class="bi bi-house me-2"></i>Retour à l'accueil
         </a>
     </div>

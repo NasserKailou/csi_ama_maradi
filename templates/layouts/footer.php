@@ -16,7 +16,7 @@
 <script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
 <script src="https://cdn.datatables.net/1.13.8/js/dataTables.bootstrap5.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
-<script src="/assets/js/app.js"></script>
+<script src="<?= asset('assets/js/app.js') ?>"></script>
 <?php if (isset($extraJs)) echo $extraJs; ?>
 
 </body>

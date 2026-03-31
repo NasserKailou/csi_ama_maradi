@@ -650,13 +650,13 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         <label class="form-label">Logo du Centre (JPG/PNG, max 2Mo)</label>
                         <?php if (!empty($cfg['logo_filename']) && file_exists(ROOT_PATH.'/uploads/logos/'.$cfg['logo_filename'])): ?>
                         <div class="mb-2 p-2 border rounded">
-                            <img src="/uploads/logos/<?= h($cfg['logo_filename']) ?>"
+                            <img src="<?= uploadUrl(h($cfg['logo_filename'])) ?>"
                                  alt="Logo actuel" style="max-height:80px;">
                             <span class="ms-2 text-muted small">Logo actuel (DirectAid)</span>
                         </div>
                         <?php elseif (file_exists(ROOT_PATH.'/uploads/logos/logo_csi.png')): ?>
                         <div class="mb-2 p-2 border rounded">
-                            <img src="/uploads/logos/logo_csi.png" alt="Logo DirectAid" style="max-height:80px;">
+                            <img src="<?= uploadUrl('logo_csi.png') ?>" alt="Logo DirectAid" style="max-height:80px;">
                             <span class="ms-2 text-muted small">Logo DirectAid (par défaut)</span>
                         </div>
                         <?php endif; ?>

@@ -1,6 +1,7 @@
 <?php
 /**
  * Helpers globaux – fonctions utilitaires
+ * Compatible XAMPP sous-dossier (APP_SUBDIR détecté automatiquement)
  */
 
 // ── Sécurité ──────────────────────────────────────────────────────────────────
@@ -30,12 +31,42 @@ function verifyCsrf(): void
     }
 }
 
+// ── URL helpers – compatibles sous-dossier XAMPP ─────────────────────────────
+/**
+ * Génère une URL absolue avec le sous-dossier XAMPP.
+ * url('index.php?page=login')  → /csi_ama_maradi/index.php?page=login
+ * url('index.php?page=login')  → /index.php?page=login  (à la racine)
+ */
+function url(string $path = ''): string
+{
+    $sub  = defined('APP_SUBDIR') ? APP_SUBDIR : '';
+    $path = ltrim($path, '/');
+    return $sub . '/' . $path;
+}
+
+/**
+ * Génère le chemin vers un asset statique (CSS, JS, images).
+ * asset('assets/css/main.css') → /csi_ama_maradi/assets/css/main.css
+ */
+function asset(string $path): string
+{
+    return url($path);
+}
+
+/**
+ * Génère l'URL d'un fichier uploadé.
+ * uploadUrl('logo_csi.png') → /csi_ama_maradi/uploads/logos/logo_csi.png
+ */
+function uploadUrl(string $filename, string $type = 'logos'): string
+{
+    return url("uploads/{$type}/{$filename}");
+}
+
 // ── Auth / Redirects ──────────────────────────────────────────────────────────
 function requireLogin(): void
 {
     if (!Session::isLoggedIn()) {
-        header('Location: /index.php?page=login');
-        exit;
+        redirect(url('index.php?page=login'));
     }
 }
 
@@ -51,6 +82,10 @@ function requireRole(string ...$roles): void
 
 function redirect(string $url): void
 {
+    // Si chemin relatif sans http, ajouter le sous-dossier
+    if (!str_starts_with($url, 'http') && !str_starts_with($url, APP_SUBDIR ?: '/')) {
+        $url = url(ltrim($url, '/'));
+    }
     header('Location: ' . $url);
     exit;
 }
@@ -115,7 +150,7 @@ function getNextNumeroRecu(PDO $pdo): int
 function traceFields(): array
 {
     return [
-        'whodone'  => Session::getUserId(),
+        'whodone'   => Session::getUserId(),
         'isDeleted' => 0,
     ];
 }

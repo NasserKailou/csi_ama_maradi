@@ -13,7 +13,7 @@
     <!-- DataTables -->
     <link href="https://cdn.datatables.net/1.13.8/css/dataTables.bootstrap5.min.css" rel="stylesheet">
     <!-- CSS personnalisé -->
-    <link href="/assets/css/main.css" rel="stylesheet">
+    <link href="<?= asset('assets/css/main.css') ?>" rel="stylesheet">
     <?php if (isset($extraCss)) echo $extraCss; ?>
 </head>
 <body>
@@ -22,14 +22,14 @@
 <nav class="navbar navbar-expand-lg navbar-dark bg-csi sticky-top shadow-sm">
     <div class="container-fluid px-4">
         <!-- Brand -->
-        <a class="navbar-brand d-flex align-items-center gap-2 fw-bold" href="/index.php">
+        <a class="navbar-brand d-flex align-items-center gap-2 fw-bold" href="<?= url('index.php') ?>">
             <?php
             $logo = '';
             try {
                 $pdo = Database::getInstance();
                 $logoFile = $pdo->query("SELECT valeur FROM config_systeme WHERE cle='logo_filename' AND isDeleted=0 LIMIT 1")->fetchColumn();
                 if ($logoFile && file_exists(ROOT_PATH . '/uploads/logos/' . $logoFile)) {
-                    $logo = '<img src="/uploads/logos/' . h($logoFile) . '" alt="Logo CSI" height="38" class="rounded">';
+                    $logo = '<img src="' . uploadUrl($logoFile) . '" alt="Logo CSI" height="38" class="rounded">';
                 }
             } catch (Exception $e) {}
             ?>
@@ -46,7 +46,7 @@
             <ul class="navbar-nav me-auto mb-2 mb-lg-0">
                 <?php if (Session::hasRole('admin')): ?>
                 <li class="nav-item">
-                    <a class="nav-link <?= ($page === 'dashboard') ? 'active' : '' ?>" href="/index.php?page=dashboard">
+                    <a class="nav-link <?= ($page === 'dashboard') ? 'active' : '' ?>" href="<?= url('index.php?page=dashboard') ?>">
                         <i class="bi bi-speedometer2"></i> Tableau de bord
                     </a>
                 </li>
@@ -54,7 +54,7 @@
 
                 <?php if (Session::hasRole('percepteur')): ?>
                 <li class="nav-item">
-                    <a class="nav-link <?= ($page === 'percepteur') ? 'active' : '' ?>" href="/index.php?page=percepteur">
+                    <a class="nav-link <?= ($page === 'percepteur') ? 'active' : '' ?>" href="<?= url('index.php?page=percepteur') ?>">
                         <i class="bi bi-person-badge"></i> Espace Percepteur
                     </a>
                 </li>
@@ -67,20 +67,20 @@
                         <i class="bi bi-gear"></i> Paramétrage
                     </a>
                     <ul class="dropdown-menu">
-                        <li><a class="dropdown-item" href="/index.php?page=parametrage&section=actes"><i class="bi bi-clipboard-pulse me-2"></i>Actes médicaux</a></li>
-                        <li><a class="dropdown-item" href="/index.php?page=parametrage&section=examens"><i class="bi bi-microscope me-2"></i>Examens & Labo</a></li>
-                        <li><a class="dropdown-item" href="/index.php?page=parametrage&section=pharmacie"><i class="bi bi-capsule me-2"></i>Pharmacie / Stock</a></li>
+                        <li><a class="dropdown-item" href="<?= url('index.php?page=parametrage&section=actes') ?>"><i class="bi bi-clipboard-pulse me-2"></i>Actes médicaux</a></li>
+                        <li><a class="dropdown-item" href="<?= url('index.php?page=parametrage&section=examens') ?>"><i class="bi bi-microscope me-2"></i>Examens &amp; Labo</a></li>
+                        <li><a class="dropdown-item" href="<?= url('index.php?page=parametrage&section=pharmacie') ?>"><i class="bi bi-capsule me-2"></i>Pharmacie / Stock</a></li>
                         <li><hr class="dropdown-divider"></li>
-                        <li><a class="dropdown-item" href="/index.php?page=parametrage&section=config"><i class="bi bi-building me-2"></i>Config. centre</a></li>
-                        <li><a class="dropdown-item" href="/index.php?page=parametrage&section=inventaire"><i class="bi bi-clipboard-check me-2"></i>Inventaire</a></li>
-                        <li><a class="dropdown-item" href="/index.php?page=parametrage&section=etat_labo"><i class="bi bi-file-earmark-pdf me-2"></i>État de paie labo</a></li>
+                        <li><a class="dropdown-item" href="<?= url('index.php?page=parametrage&section=config') ?>"><i class="bi bi-building me-2"></i>Config. centre</a></li>
+                        <li><a class="dropdown-item" href="<?= url('index.php?page=parametrage&section=inventaire') ?>"><i class="bi bi-clipboard-check me-2"></i>Inventaire</a></li>
+                        <li><a class="dropdown-item" href="<?= url('index.php?page=parametrage&section=etat_labo') ?>"><i class="bi bi-file-earmark-pdf me-2"></i>État de paie labo</a></li>
                     </ul>
                 </li>
                 <?php endif; ?>
 
                 <?php if (Session::hasRole('admin')): ?>
                 <li class="nav-item">
-                    <a class="nav-link <?= ($page === 'utilisateurs') ? 'active' : '' ?>" href="/index.php?page=utilisateurs">
+                    <a class="nav-link <?= ($page === 'utilisateurs') ? 'active' : '' ?>" href="<?= url('index.php?page=utilisateurs') ?>">
                         <i class="bi bi-people"></i> Utilisateurs
                     </a>
                 </li>
@@ -101,7 +101,7 @@
                     </span>
                 </li>
                 <li class="nav-item">
-                    <a class="btn btn-outline-light btn-sm" href="/index.php?page=logout">
+                    <a class="btn btn-outline-light btn-sm" href="<?= url('index.php?page=logout') ?>">
                         <i class="bi bi-box-arrow-right"></i> Déconnexion
                     </a>
                 </li>

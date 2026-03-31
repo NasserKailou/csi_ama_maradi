@@ -23,7 +23,14 @@ if (file_exists($envFile)) {
 define('APP_NAME',    $_ENV['APP_NAME']    ?? 'Système CSI');
 define('APP_VERSION', '1.0');
 define('APP_ENV',     $_ENV['APP_ENV']     ?? 'development');
-define('APP_URL',     $_ENV['APP_URL']     ?? 'http://localhost');
+define('APP_URL',     rtrim($_ENV['APP_URL'] ?? 'http://localhost/csi_ama_maradi', '/'));
+
+// ── Sous-répertoire web (détection automatique) ───────────────────────────────
+// Ex : http://localhost/csi_ama_maradi → APP_SUBDIR = /csi_ama_maradi
+// Ex : http://localhost               → APP_SUBDIR = (vide)
+$_parsedUrl  = parse_url(APP_URL);
+$_appPath    = rtrim($_parsedUrl['path'] ?? '', '/');
+define('APP_SUBDIR', $_appPath);   // ex: "/csi_ama_maradi"  ou ""
 
 // ── Base de données ────────────────────────────────────────────────────────────
 define('DB_HOST',    $_ENV['DB_HOST']    ?? '127.0.0.1');
@@ -48,11 +55,11 @@ define('UPLOAD_MAX_SIZE', 2 * 1024 * 1024); // 2 Mo
 define('UPLOAD_ALLOWED',  ['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
 // ── Règles métier ─────────────────────────────────────────────────────────────
-define('TARIF_CONSULTATION',  300);   // Tarif consultation de base
-define('TARIF_CARNET_SOINS',  100);   // Carnet de soins
-define('TARIF_CARNET_SANTE',    0);   // Carnet de santé (gratuit CPN)
-define('STOCK_SEUIL_ALERTE',   10);   // Seuil alerte stock par défaut
-define('PHARMACIE_MAX_LIGNES', 15);   // Max produits par reçu pharmacie
+define('TARIF_CONSULTATION',  300);
+define('TARIF_CARNET_SOINS',  100);
+define('TARIF_CARNET_SANTE',    0);
+define('STOCK_SEUIL_ALERTE',   10);
+define('PHARMACIE_MAX_LIGNES', 15);
 
 // ── Rôles ─────────────────────────────────────────────────────────────────────
 define('ROLE_ADMIN',      'admin');
