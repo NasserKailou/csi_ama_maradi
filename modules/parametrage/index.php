@@ -677,25 +677,29 @@ include ROOT_PATH . '/templates/layouts/header.php';
 </div>
 
 <?php
-$extraJs = <<<'HEREDOC'
+$paramBaseUrl = url('index.php?page=parametrage');
+$etatLaboUrl  = url('modules/parametrage/etat_labo.php');
+$extraJs = <<<HEREDOC
 <script>
-const PARAM_URL = window.location.href.split('?')[0] + '?' + new URLSearchParams({page:'parametrage'});
+const PARAM_BASE_URL = '{$paramBaseUrl}';
+const ETAT_LABO_URL  = '{$etatLaboUrl}';
 
 // ── Fonctions génériques ────────────────────────────────────────────────────
 function saveParam(formId, reloadUrl) {
     const form = document.getElementById(formId);
     const data = Object.fromEntries(new FormData(form));
-    ajaxPost('/index.php?page=parametrage&section=' + new URLSearchParams(location.search).get('section'), data,
+    const section = new URLSearchParams(location.search).get('section') || 'actes';
+    ajaxPost(PARAM_BASE_URL + '&section=' + section, data,
         () => setTimeout(() => location.reload(), 800));
 }
 
 function deleteItem(type, id, nom) {
-    if (!confirm(`Archiver "${nom}" ?`)) return;
+    if (!confirm('Archiver "' + nom + '" ?')) return;
     const actions = { acte: 'delete_acte', examen: 'delete_examen', produit: 'delete_produit' };
-    ajaxPost('/index.php?page=parametrage&section=' + new URLSearchParams(location.search).get('section'),
+    const section = new URLSearchParams(location.search).get('section') || 'actes';
+    ajaxPost(PARAM_BASE_URL + '&section=' + section,
         { action: actions[type], id },
         () => setTimeout(() => location.reload(), 800));
-}
 
 // ── Actes ───────────────────────────────────────────────────────────────────
 function openActeModal(a = null) {
@@ -754,7 +758,7 @@ function saveConfig() {
     const fd   = new FormData(form);
     fd.append('csrf_token', CSRF_TOKEN);
 
-    fetch('/index.php?page=parametrage&section=config', {
+    fetch(PARAM_BASE_URL + '&section=config', {
         method: 'POST',
         headers: { 'X-CSRF-TOKEN': CSRF_TOKEN },
         body: fd
@@ -774,7 +778,7 @@ function genererEtatLabo() {
     const fin = document.getElementById('laboDateFin').value;
     if (!deb || !fin) { showToast('warning', 'Sélectionnez les deux dates.'); return; }
     showLoader();
-    fetch('/modules/parametrage/etat_labo.php?date_debut=' + deb + '&date_fin=' + fin, {
+    fetch(ETAT_LABO_URL + '?date_debut=' + deb + '&date_fin=' + fin, {
         headers: { 'X-CSRF-TOKEN': CSRF_TOKEN }
     })
     .then(r => r.json())

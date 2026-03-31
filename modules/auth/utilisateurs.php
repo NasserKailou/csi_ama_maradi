@@ -217,9 +217,9 @@ include ROOT_PATH . '/templates/layouts/header.php';
     </div>
 </div>
 
-<?php $extraJs = <<<JS
+<?php $usersUrl = url('index.php?page=utilisateurs'); $extraJs = <<<HEREDOC
 <script>
-const USERS_URL = '/modules/auth/utilisateurs.php';
+const USERS_URL = '{$usersUrl}';
 
 function openCreateModal() {
     document.getElementById('modalUserLabel').innerHTML = '<i class="bi bi-person-plus me-2"></i>Nouvel utilisateur';
@@ -254,15 +254,15 @@ function saveUser() {
 }
 
 function toggleActif(id, nom) {
-    if (!confirm(`Changer le statut de ${nom} ?`)) return;
+    if (!confirm('Changer le statut de ' + nom + ' ?')) return;
     ajaxPost(USERS_URL, { action: 'toggle_actif', id }, () => setTimeout(() => location.reload(), 800));
 }
 
 function deleteUser(id, nom) {
-    if (!confirm(`Supprimer (archiver) l'utilisateur ${nom} ?`)) return;
+    if (!confirm('Supprimer (archiver) l\'utilisateur ' + nom + ' ?')) return;
     ajaxPost(USERS_URL, { action: 'delete', id }, () => setTimeout(() => location.reload(), 800));
 }
 </script>
-JS;
+HEREDOC;
 include ROOT_PATH . '/templates/layouts/footer.php';
 ?>

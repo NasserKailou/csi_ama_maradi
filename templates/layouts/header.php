@@ -15,6 +15,12 @@
     <!-- CSS personnalisé -->
     <link href="<?= asset('assets/css/main.css') ?>" rel="stylesheet">
     <?php if (isset($extraCss)) echo $extraCss; ?>
+    <!-- Variables globales JS (sous-dossier XAMPP) -->
+    <script>
+        const APP_BASE_URL      = '<?= url('') ?>';
+        const PATIENTS_API_URL  = '<?= url('modules/api/patients.php') ?>';
+        const INDEX_URL         = '<?= url('index.php') ?>';
+    </script>
 </head>
 <body>
 

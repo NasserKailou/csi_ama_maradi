@@ -83,10 +83,40 @@ $(document).ready(function () {
     });
 });
 
-// ─── Autocomplete téléphone ────────────────────────────────────────────────────
+// ─── Autocomplete téléphone ──────────────────────────────────────────────────
+// Règles : 8 chiffres maximum, chiffres uniquement (format Niger: 99999999)
 function initPhoneAutocomplete(inputId, onSelect) {
     const input = document.getElementById(inputId);
     if (!input) return;
+
+    // Forcer chiffres uniquement + max 8 caractères
+    input.setAttribute('maxlength', '8');
+    input.setAttribute('placeholder', 'Ex: 90000000');
+    input.setAttribute('pattern', '[0-9]{8}');
+    input.setAttribute('title', 'Numéro à 8 chiffres obligatoire');
+    input.setAttribute('inputmode', 'numeric');
+
+    // Bloquer les caractères non numériques à la saisie
+    input.addEventListener('keydown', function(e) {
+        // Autoriser : Backspace, Delete, Tab, Escape, Enter, flèches
+        const allowedKeys = ['Backspace','Delete','Tab','Escape','Enter','ArrowLeft','ArrowRight','Home','End'];
+        if (allowedKeys.includes(e.key)) return;
+        // Bloquer tout ce qui n'est pas un chiffre
+        if (!/^[0-9]$/.test(e.key)) {
+            e.preventDefault();
+            return;
+        }
+        // Bloquer si déjà 8 chiffres (sauf sélection)
+        const digits = input.value.replace(/\D/g, '');
+        if (digits.length >= 8 && window.getSelection().toString() === '') {
+            e.preventDefault();
+        }
+    });
+
+    input.addEventListener('input', function () {
+        // Nettoyer et tronquer à 8 chiffres
+        this.value = this.value.replace(/\D/g, '').substring(0, 8);
+    });
 
     let listEl = null;
     let debounceTimer;
@@ -97,10 +127,15 @@ function initPhoneAutocomplete(inputId, onSelect) {
         if (val.length < 3) { closeList(); return; }
 
         debounceTimer = setTimeout(() => {
-            $.getJSON('/modules/api/patients.php', { q: val, csrf_token: CSRF_TOKEN })
+            // PATIENTS_API_URL est injecté depuis templates/layouts/header.php
+            const apiUrl = (typeof PATIENTS_API_URL !== 'undefined')
+                ? PATIENTS_API_URL
+                : '/modules/api/patients.php';
+
+            $.getJSON(apiUrl, { q: val, csrf_token: CSRF_TOKEN })
                 .done(data => renderList(data))
                 .fail(() => closeList());
-        }, 250);
+        }, 300);
     });
 
     function renderList(patients) {
@@ -113,7 +148,7 @@ function initPhoneAutocomplete(inputId, onSelect) {
         patients.forEach(p => {
             const item = document.createElement('div');
             item.className = 'ac-item';
-            item.innerHTML = `<strong>${escHtml(p.nom)}</strong> <small class="text-muted">${escHtml(p.telephone)}</small>`;
+            item.innerHTML = '<strong>' + escHtml(p.nom) + '</strong> <small class="text-muted">' + escHtml(p.telephone) + '</small>';
             item.addEventListener('click', () => {
                 input.value = p.telephone;
                 closeList();

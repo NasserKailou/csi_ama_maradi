@@ -198,7 +198,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
             <h6 class="mb-0"><i class="bi bi-calendar-range me-2"></i>Archives – Recherche par période</h6>
         </div>
         <div class="card-body">
-            <form method="GET" action="/index.php" class="row g-3 align-items-end">
+            <form method="GET" action="<?= url('index.php') ?>" class="row g-3 align-items-end">
                 <input type="hidden" name="page" value="percepteur">
                 <div class="col-md-4">
                     <label class="form-label">Date de début</label>
@@ -568,9 +568,21 @@ include ROOT_PATH . '/templates/layouts/header.php';
 </div>
 
 <?php
-$extraJs = <<<'HEREDOC'
+$saveConsultUrl  = url('modules/percepteur/save_consultation.php');
+$saveActeGratUrl = url('modules/percepteur/save_acte_gratuit.php');
+$saveExamensUrl  = url('modules/percepteur/save_examens.php');
+$savePharmUrl    = url('modules/percepteur/save_pharmacie.php');
+$getRecapUrl     = url('modules/percepteur/get_recap.php');
+$patientsApiUrl  = url('modules/api/patients.php');
+$extraJs = <<<HEREDOC
 <script>
 let currentTypeRecu = 'normal';
+const SAVE_CONSULT_URL  = '{$saveConsultUrl}';
+const SAVE_ACTE_GRAT_URL = '{$saveActeGratUrl}';
+const SAVE_EXAMENS_URL  = '{$saveExamensUrl}';
+const SAVE_PHARMA_URL   = '{$savePharmUrl}';
+const GET_RECAP_URL     = '{$getRecapUrl}';
+const PATIENTS_API_URL  = '{$patientsApiUrl}';
 
 function setTypeRecu(type) {
     currentTypeRecu = type;
@@ -600,7 +612,7 @@ initPhoneAutocomplete('fTelephone', function(p) {
     document.getElementById('fNomPatient').value  = p.nom;
     document.getElementById('fAge').value         = p.age;
     document.getElementById('fProvenance').value  = p.provenance || '';
-    document.querySelector(`input[name="sexe"][value="${p.sexe}"]`).checked = true;
+    document.querySelector('input[name="sexe"][value="' + p.sexe + '"]').checked = true;
 });
 initPhoneAutocomplete('fTelAG', function(p) {
     document.getElementById('fNomAG').value  = p.nom;
@@ -614,7 +626,7 @@ document.getElementById('btnEnregistrerPatient').addEventListener('click', funct
     if (!data.telephone || !data.nom || !data.age) {
         showToast('warning', 'Veuillez remplir tous les champs obligatoires.'); return;
     }
-    ajaxPost('/modules/percepteur/save_consultation.php', data, function(res) {
+    ajaxPost(SAVE_CONSULT_URL, data, function(res) {
         bootstrap.Modal.getInstance(document.getElementById('modalPatient')).hide();
         if (res.pdf_url) window.open(res.pdf_url, '_blank');
         setTimeout(() => location.reload(), 1000);
@@ -628,7 +640,7 @@ function saveActeGratuit() {
     if (!data.telephone || !data.nom || !data.acte_id) {
         showToast('warning', 'Champs obligatoires manquants.'); return;
     }
-    ajaxPost('/modules/percepteur/save_acte_gratuit.php', data, function(res) {
+    ajaxPost(SAVE_ACTE_GRAT_URL, data, function(res) {
         bootstrap.Modal.getInstance(document.getElementById('modalActeGratuit')).hide();
         if (res.pdf_url) window.open(res.pdf_url, '_blank');
         setTimeout(() => location.reload(), 1000);
@@ -658,7 +670,7 @@ function saveExamens() {
     const ids = [...document.querySelectorAll('.examen-chk:checked')].map(c => c.value);
     if (!ids.length) { showToast('warning', 'Veuillez sélectionner au moins un examen.'); return; }
     const recuId = document.getElementById('examRecuId').value;
-    ajaxPost('/modules/percepteur/save_examens.php', { recu_id: recuId, examens: ids.join(',') }, function(res) {
+    ajaxPost(SAVE_EXAMENS_URL, { recu_id: recuId, examens: ids.join(',') }, function(res) {
         bootstrap.Modal.getInstance(document.getElementById('modalExamens')).hide();
         if (res.pdf_url) window.open(res.pdf_url, '_blank');
         setTimeout(() => location.reload(), 1000);
@@ -695,7 +707,7 @@ function savePharmacie() {
     if (!items.length) { showToast('warning', 'Aucun produit sélectionné.'); return; }
     if (items.length > 15) { showToast('danger', 'Maximum 15 produits par reçu.'); return; }
     const recuId = document.getElementById('pharmaRecuId').value;
-    ajaxPost('/modules/percepteur/save_pharmacie.php', {
+    ajaxPost(SAVE_PHARMA_URL, {
         recu_id: recuId, produits: JSON.stringify(items)
     }, function(res) {
         bootstrap.Modal.getInstance(document.getElementById('modalPharmacie')).hide();
@@ -707,7 +719,7 @@ function savePharmacie() {
 // ── Récapitulatif ──────────────────────────────────────────────────────────
 function openRecapModal(recuId) {
     document.getElementById('recapContent').innerHTML = '<div class="text-center py-4"><div class="spinner-border text-secondary"></div></div>';
-    fetch('/modules/percepteur/get_recap.php?recu_id=' + recuId, {
+    fetch(GET_RECAP_URL + '?recu_id=' + recuId, {
         headers: { 'X-CSRF-TOKEN': CSRF_TOKEN }
     })
     .then(r => r.json())

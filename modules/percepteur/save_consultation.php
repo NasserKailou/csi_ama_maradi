@@ -3,7 +3,7 @@
  * API : Sauvegarde Consultation (Normal / Orphelin)
  * POST : type_patient, telephone, nom, sexe, age, provenance, avec_carnet
  */
-define('ROOT_PATH', dirname(__DIR__, 2));
+if (!defined('ROOT_PATH')) { define('ROOT_PATH', dirname(__DIR__, 2)); }
 require_once ROOT_PATH . '/config/config.php';
 require_once ROOT_PATH . '/core/autoload.php';
 require_once ROOT_PATH . '/core/helpers.php';
@@ -17,7 +17,7 @@ header('Content-Type: application/json');
 $pdo         = Database::getInstance();
 $userId      = Session::getUserId();
 $typePatient = in_array($_POST['type_patient'] ?? '', ['normal','orphelin','acte_gratuit']) ? $_POST['type_patient'] : 'normal';
-$telephone   = trim($_POST['telephone'] ?? '');
+$telephone   = preg_replace('/\D/', '', trim($_POST['telephone'] ?? ''));
 $nom         = trim($_POST['nom'] ?? '');
 $sexe        = in_array($_POST['sexe'] ?? 'M', ['M','F']) ? $_POST['sexe'] : 'M';
 $age         = max(0, (int)($_POST['age'] ?? 0));
@@ -25,6 +25,7 @@ $provenance  = trim($_POST['provenance'] ?? '');
 $avecCarnet  = (int)($_POST['avec_carnet'] ?? 1);
 
 if (!$telephone || !$nom) jsonError('Téléphone et nom obligatoires.');
+if (strlen($telephone) !== 8 || !ctype_digit($telephone)) jsonError('Le numéro de téléphone doit contenir exactement 8 chiffres.');
 
 try {
     $pdo->beginTransaction();
