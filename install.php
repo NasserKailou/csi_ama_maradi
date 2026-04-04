@@ -21,7 +21,7 @@ function info(string $msg): void{ echo "\033[36m[..]\033[0m  {$msg}\n"; }
 function sep(): void            { echo str_repeat('─', 60) . "\n"; }
 
 sep();
-echo "\033[1;32m  Système CSI AMA Maradi – Installation v1.0\033[0m\n";
+echo "\033[1;32m  Système CSI Direct Aid Maradi – Installation v1.0\033[0m\n";
 sep();
 echo "\n";
 

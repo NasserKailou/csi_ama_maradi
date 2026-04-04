@@ -23,7 +23,7 @@ if (file_exists($envFile)) {
 define('APP_NAME',    $_ENV['APP_NAME']    ?? 'Système CSI');
 define('APP_VERSION', '1.0');
 define('APP_ENV',     $_ENV['APP_ENV']     ?? 'development');
-define('APP_URL',     rtrim($_ENV['APP_URL'] ?? 'http://localhost/csi_ama_maradi', '/'));
+define('APP_URL',     rtrim($_ENV['APP_URL'] ?? 'http://localhost:8182/csi_ama_maradi', '/'));
 
 // ── Sous-répertoire web (détection automatique) ───────────────────────────────
 // Ex : http://localhost/csi_ama_maradi → APP_SUBDIR = /csi_ama_maradi

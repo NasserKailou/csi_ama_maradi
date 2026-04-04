@@ -4,7 +4,7 @@
 <footer class="footer bg-light border-top py-2 mt-4">
     <div class="container-fluid px-4">
         <div class="d-flex justify-content-between align-items-center small text-muted">
-            <span><i class="bi bi-hospital text-csi"></i> Système CSI AMA Maradi — v1.0</span>
+            <span><i class="bi bi-hospital text-csi"></i> Système CSI Direct Aid Maradi — v1.0</span>
             <span><?= date('d/m/Y H:i') ?></span>
         </div>
     </div>

@@ -89,11 +89,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <div class="login-card bg-white">
         <!-- Brand -->
         <div class="text-center mb-4">
-            <div class="bg-csi d-inline-flex align-items-center justify-content-center rounded-circle mb-3"
-                 style="width:70px;height:70px;">
-                <i class="bi bi-hospital text-white" style="font-size:2rem;"></i>
+            <div class="bg-csi d-inline-flex align-items-center justify-content-center rounded-circle mb-4"
+                 style="width:100px;height:100px;">
+              
+                <?php
+            $logo = '';
+            try {
+                $pdo = Database::getInstance();
+                $logoFile = $pdo->query("SELECT valeur FROM config_systeme WHERE cle='logo_filename' AND isDeleted=0 LIMIT 1")->fetchColumn();
+                if ($logoFile && file_exists(ROOT_PATH . '/uploads/logos/' . $logoFile)) {
+                    $logo = '<img src="' . uploadUrl($logoFile) . '" alt="Logo CSI" height="38" class="rounded">';
+                }
+            } catch (Exception $e) {}
+            ?>
+            <?= $logo ?: '<i class="bi bi-hospital fs-4"></i>' ?>
             </div>
-            <h1 class="login-brand">CSI AMA Maradi</h1>
+            <h1 class="login-brand">CSI Direct Aid Maradi</h1>
             <p class="text-muted small">Système de Gestion du Centre de Santé</p>
         </div>
 
