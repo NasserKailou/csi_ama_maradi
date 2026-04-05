@@ -77,10 +77,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <?= csrfMeta() ?>
     <title>Connexion – CSI AMA Maradi</title>
-    <!-- Bootstrap 5 CSS (CDN) -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Bootstrap Icons (CDN) -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <!-- Bootstrap 5 CSS (local) -->
+    <link href="<?= asset('bootstrap/css/bootstrap.min.css') ?>" rel="stylesheet">
+    <!-- Bootstrap Icons (local) -->
+    <link href="<?= asset('assets/vendor/bootstrap-icons/font/bootstrap-icons.css') ?>" rel="stylesheet">
     <!-- CSS personnalisé -->
     <link href="<?= asset('assets/css/main.css') ?>" rel="stylesheet">
 </head>
@@ -90,7 +90,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <!-- Brand -->
         <div class="text-center mb-4">
             <div class="bg-csi d-inline-flex align-items-center justify-content-center rounded-circle mb-4"
-                 style="width:100px;height:100px;">
+                 style="width:140px;height:140px;">
               
                 <?php
             $logo = '';
@@ -98,11 +98,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pdo = Database::getInstance();
                 $logoFile = $pdo->query("SELECT valeur FROM config_systeme WHERE cle='logo_filename' AND isDeleted=0 LIMIT 1")->fetchColumn();
                 if ($logoFile && file_exists(ROOT_PATH . '/uploads/logos/' . $logoFile)) {
-                    $logo = '<img src="' . uploadUrl($logoFile) . '" alt="Logo CSI" height="38" class="rounded">';
+                    $logo = '<img src="' . uploadUrl($logoFile) . '" alt="Logo CSI" style="width:120px;height:120px;object-fit:contain;border-radius:50%;">';
                 }
             } catch (Exception $e) {}
             ?>
-            <?= $logo ?: '<i class="bi bi-hospital fs-4"></i>' ?>
+            <?= $logo ?: '<i class="bi bi-hospital" style="font-size:4rem;"></i>' ?>
             </div>
             <h1 class="login-brand">CSI Direct Aid Maradi</h1>
             <p class="text-muted small">Système de Gestion du Centre de Santé</p>
@@ -155,8 +155,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </div>
 </div>
 
-<!-- Bootstrap 5 JS (CDN) -->
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<!-- Bootstrap 5 JS (local) -->
+<script src="<?= asset('bootstrap/js/bootstrap.bundle.min.js') ?>"></script>
 <script>
 document.getElementById('togglePwd').addEventListener('click', function () {
     const inp  = document.getElementById('password');
