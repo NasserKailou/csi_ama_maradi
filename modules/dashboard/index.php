@@ -21,8 +21,9 @@ $coutGratuitJour = (int)$pdo->query("SELECT COALESCE(SUM(montant_total),0) FROM 
 // Total recettes sur filtre période (GET)
 $filtreDebut  = $_GET['filtre_debut'] ?? date('Y-m-01');
 $filtreFin    = $_GET['filtre_fin']   ?? date('Y-m-d');
-$recettesPeriode = (int)$pdo->prepare("SELECT COALESCE(SUM(montant_encaisse),0) FROM recus WHERE isDeleted=0 AND DATE(whendone) BETWEEN :d AND :f")
-    ->execute([':d'=>$filtreDebut,':f'=>$filtreFin]) ? (int)$pdo->query("SELECT COALESCE(SUM(montant_encaisse),0) FROM recus WHERE isDeleted=0 AND DATE(whendone) BETWEEN '{$filtreDebut}' AND '{$filtreFin}'")->fetchColumn() : 0;
+$stmtPeriode  = $pdo->prepare("SELECT COALESCE(SUM(montant_encaisse),0) FROM recus WHERE isDeleted=0 AND DATE(whendone) BETWEEN :d AND :f");
+$stmtPeriode->execute([':d' => $filtreDebut, ':f' => $filtreFin]);
+$recettesPeriode = (int)$stmtPeriode->fetchColumn();
 
 // ── Graphique 1 : Évolution consultations 7 derniers jours ─────────────────
 $evolution = $pdo->query("
@@ -67,7 +68,7 @@ $alertesStock = $pdo->query("
 
 // ── Activité par percepteur ────────────────────────────────────────────────
 $activitePercep = $pdo->query("
-    SELECT u.nom, u.prenom, u.login,
+    SELECT u.id AS user_id, u.nom, u.prenom, u.login,
            COUNT(r.id) AS nb_recus,
            COALESCE(SUM(r.montant_encaisse),0) AS total_encaisse
     FROM utilisateurs u
@@ -150,7 +151,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
     <!-- ── Filtre période ────────────────────────────────────────────────── -->
     <div class="card mb-4">
         <div class="card-body py-2">
-            <form method="GET" action="/index.php" class="row g-2 align-items-end">
+            <form method="GET" action="<?= url('index.php') ?>" class="row g-2 align-items-end">
                 <input type="hidden" name="page" value="dashboard">
                 <div class="col-auto"><label class="form-label mb-0 fw-semibold">Recettes sur période :</label></div>
                 <div class="col-auto">
@@ -255,7 +256,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                 <div class="card-body p-0">
                     <table class="table table-hover align-middle mb-0">
                         <thead class="table-light">
-                            <tr><th>Percepteur</th><th class="text-center">Reçus</th><th class="text-end">Encaissé</th></tr>
+                            <tr><th>Percepteur</th><th class="text-center">Reçus</th><th class="text-end">Encaissé</th><th class="text-center">Actions</th></tr>
                         </thead>
                         <tbody>
                         <?php foreach ($activitePercep as $p): ?>
@@ -273,6 +274,23 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                 <td class="text-end fw-bold">
                                     <?= $p['nb_recus'] > 0 ? number_format($p['total_encaisse'],0,',',' ').' F' : '<span class="text-muted">0 F</span>' ?>
                                 </td>
+                                <td class="text-center">
+                                    <!-- Bouton situation journalière -->
+                                    <a href="<?= url('modules/pdf/situation_percepteur.php') ?>?percepteur_id=<?= $p['user_id'] ?>&mode=jour"
+                                       target="_blank"
+                                       class="btn btn-sm btn-outline-success me-1"
+                                       title="Situation journalière – Imprimer PDF">
+                                        <i class="bi bi-file-earmark-pdf"></i> Jour
+                                    </a>
+                                    <!-- Bouton situation sur période -->
+                                    <button type="button"
+                                            class="btn btn-sm btn-outline-primary"
+                                            title="Situation sur période"
+                                            onclick="ouvrirModalPeriode(<?= $p['user_id'] ?>, '<?= h(addslashes($p['nom'] . ' ' . $p['prenom'])) ?>')"
+                                    >
+                                        <i class="bi bi-calendar-range"></i> Période
+                                    </button>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                         </tbody>
@@ -283,15 +301,77 @@ include ROOT_PATH . '/templates/layouts/header.php';
     </div>
 </div>
 
+<!-- ── Modal Situation par Période ─────────────────────────────────────────── -->
+<div class="modal fade" id="modalPeriodePercepteur" tabindex="-1" aria-labelledby="modalPeriodeLabel">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header" style="background:#1b5e20;">
+                <h5 class="modal-title text-white" id="modalPeriodeLabel">
+                    <i class="bi bi-calendar-range me-2"></i>Situation Percepteur – Par Période
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info py-2">
+                    <i class="bi bi-person-circle me-1"></i>
+                    Percepteur : <strong id="modalPercepNom"></strong>
+                </div>
+                <form id="formPeriodePercepteur">
+                    <input type="hidden" id="modalPercepId" value="">
+                    <div class="row g-3">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Date de début</label>
+                            <input type="date" class="form-control" id="periodeDateDebut"
+                                   value="<?= date('Y-m-01') ?>" required>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Date de fin</label>
+                            <input type="date" class="form-control" id="periodeDateFin"
+                                   value="<?= date('Y-m-d') ?>" required>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn text-white" style="background:#1b5e20;"
+                        onclick="genererSituationPeriode()">
+                    <i class="bi bi-file-earmark-pdf me-1"></i>Voir &amp; Imprimer PDF
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <?php
-$labelsEvoJs  = json_encode($labelsEvo);
-$dataEvoJs    = json_encode($dataEvo);
-$repLabelsJs  = json_encode($repLabels);
-$repDataJs    = json_encode($repData);
-$repColorsJs  = json_encode(array_values(array_intersect_key($repColors, array_flip(array_map('strtolower', $repLabels)))));
+$labelsEvoJs       = json_encode($labelsEvo);
+$dataEvoJs         = json_encode($dataEvo);
+$repLabelsJs       = json_encode($repLabels);
+$repDataJs         = json_encode($repData);
+$repColorsJs       = json_encode(array_values(array_intersect_key($repColors, array_flip(array_map('strtolower', $repLabels)))));
+$situationPercepUrl = url('modules/pdf/situation_percepteur.php');
 
 $extraJs = <<<HEREDOC
 <script>
+const SITUATION_PERCEP_URL = '{$situationPercepUrl}';
+
+// ── Modal Période Percepteur ─────────────────────────────────────────────────
+function ouvrirModalPeriode(percepId, percepNom) {
+    document.getElementById('modalPercepId').value = percepId;
+    document.getElementById('modalPercepNom').textContent = percepNom;
+    new bootstrap.Modal(document.getElementById('modalPeriodePercepteur')).show();
+}
+
+function genererSituationPeriode() {
+    const id  = document.getElementById('modalPercepId').value;
+    const deb = document.getElementById('periodeDateDebut').value;
+    const fin = document.getElementById('periodeDateFin').value;
+    if (!deb || !fin) { alert('Veuillez sélectionner les deux dates.'); return; }
+    if (deb > fin)    { alert('La date de début doit être antérieure à la date de fin.'); return; }
+    const url = SITUATION_PERCEP_URL + '?percepteur_id=' + id + '&mode=periode&date_debut=' + deb + '&date_fin=' + fin;
+    window.open(url, '_blank');
+}
+
 // ── Chart Évolution ──────────────────────────────────────────────────────────
 new Chart(document.getElementById('chartEvolution'), {
     type: 'bar',

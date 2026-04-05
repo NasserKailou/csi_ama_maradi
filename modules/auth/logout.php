@@ -10,5 +10,5 @@ require_once ROOT_PATH . '/core/helpers.php';
 Session::start();
 Session::destroy();
 
-header('Location: /index.php?page=login');
+redirect(url('index.php?page=login'));
 exit;

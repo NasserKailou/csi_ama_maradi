@@ -14,8 +14,12 @@ if (defined('ROOT_PATH') && function_exists('url')) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>403 – Accès Refusé | CSI AMA Maradi</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <?php
+    $baseDir = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\');
+    $assetBase = $baseDir;
+    ?>
+    <link href="<?= $assetBase ?>/bootstrap/css/bootstrap.min.css" rel="stylesheet">
+    <link href="<?= $assetBase ?>/assets/vendor/bootstrap-icons/font/bootstrap-icons.css" rel="stylesheet">
     <style>
         :root { --csi: #2e7d32; }
         body { background: #f5f7fa; }
