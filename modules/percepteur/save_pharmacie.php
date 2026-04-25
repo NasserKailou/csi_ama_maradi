@@ -2,6 +2,12 @@
 /**
  * API : Sauvegarde Pharmacie
  * POST : recu_id, produits (JSON : [{id, qte, nom, forme, prix}])
+ *
+ * RÈGLE ORPHELIN :
+ *  - Stock décrémenté normalement (les médicaments sont bien délivrés)
+ *  - montant_encaisse = 0 sur le reçu pharmacie
+ *  - total_ligne      conservé dans lignes_pharmacie pour reporting bailleur
+ *  - Détection : lecture est_orphelin depuis la table patients (jamais via POST)
  */
 ob_start();
 ini_set('display_errors', '0');
@@ -28,11 +34,22 @@ if (count($produits) > PHARMACIE_MAX_LIGNES) {
     jsonError('Maximum ' . PHARMACIE_MAX_LIGNES . ' produits par reçu.');
 }
 
-// Vérifier que le reçu existe
-$recu = $pdo->prepare("SELECT id, patient_id FROM recus WHERE id=:id AND isDeleted=0 LIMIT 1");
+// ── Vérifier que le reçu existe + récupérer est_orphelin depuis patients ──
+// Lecture en source de vérité BDD, jamais via POST
+$recu = $pdo->prepare("
+    SELECT r.id, r.patient_id, r.type_patient,
+           p.est_orphelin
+    FROM recus r
+    JOIN patients p ON p.id = r.patient_id
+    WHERE r.id = :id AND r.isDeleted = 0
+    LIMIT 1
+");
 $recu->execute([':id' => $recuId]);
 $recuData = $recu->fetch();
 if (!$recuData) jsonError('Reçu introuvable.');
+
+// Double vérification : type_patient OU flag est_orphelin en base
+$estOrphelin = ($recuData['type_patient'] === 'orphelin' || (int)$recuData['est_orphelin'] === 1);
 
 try {
     $pdo->beginTransaction();
@@ -40,16 +57,17 @@ try {
     $montantTotal = 0;
 
     foreach ($produits as $item) {
-        $produitId = (int)($item['id'] ?? 0);
+        $produitId = (int)($item['id']  ?? 0);
         $qte       = max(1, (int)($item['qte'] ?? 0));
 
         if (!$produitId || $qte < 1) continue;
 
-        // Récupérer le produit avec vérifications stock/péremption
+        // ── Récupérer le produit avec vérifications stock/péremption ────
         $stmtProd = $pdo->prepare("
             SELECT id, nom, forme, prix_unitaire, stock_actuel, date_peremption
             FROM produits_pharmacie
-            WHERE id=:id AND isDeleted=0 LIMIT 1
+            WHERE id = :id AND isDeleted = 0
+            LIMIT 1
         ");
         $stmtProd->execute([':id' => $produitId]);
         $prod = $stmtProd->fetch();
@@ -74,29 +92,42 @@ try {
             jsonError("Stock insuffisant pour {$prod['nom']} (dispo: {$prod['stock_actuel']})");
         }
 
-        $totalLigne = $qte * $prod['prix_unitaire'];
+        $totalLigne    = $qte * $prod['prix_unitaire'];
         $montantTotal += $totalLigne;
 
-        // Ligne pharmacie (dans le reçu consultation existant pour l'instant)
-        // sera déplacée vers le nouveau reçu pharmacie ci-dessous
+        // ── Insérer la ligne pharmacie ───────────────────────────────────
+        // total_ligne conservé à sa valeur réelle même pour orphelin
+        // (nécessaire pour le reporting bailleur)
         $pdo->prepare("
             INSERT INTO lignes_pharmacie
-                (recu_id, produit_id, nom, forme, quantite, prix_unitaire, total_ligne, whodone)
-            VALUES (:rid, :pid, :nom, :forme, :qte, :pu, :tl, :who)
+                (recu_id, produit_id, nom, forme,
+                 quantite, prix_unitaire, total_ligne, whodone)
+            VALUES
+                (:rid, :pid, :nom, :forme, :qte, :pu, :tl, :who)
         ")->execute([
-            ':rid'=>$recuId, ':pid'=>$produitId,
-            ':nom'=>$prod['nom'], ':forme'=>$prod['forme'],
-            ':qte'=>$qte, ':pu'=>$prod['prix_unitaire'],
-            ':tl'=>$totalLigne, ':who'=>$userId
+            ':rid'   => $recuId,
+            ':pid'   => $produitId,
+            ':nom'   => $prod['nom'],
+            ':forme' => $prod['forme'],
+            ':qte'   => $qte,
+            ':pu'    => $prod['prix_unitaire'],
+            ':tl'    => $totalLigne,    // valeur réelle, pas 0
+            ':who'   => $userId,
         ]);
 
-        // ── Décrement automatique du stock ────────────────────────────────
-        // Note: PDO named params ne peuvent pas être réutilisés → :qte1 et :qte2
+        // ── Décrémentation stock : TOUJOURS, même pour orphelin ─────────
+        // (les médicaments sont physiquement délivrés)
         $pdo->prepare("
             UPDATE produits_pharmacie
-            SET stock_actuel = stock_actuel - :qte1, whodone = :who
+            SET stock_actuel = stock_actuel - :qte1,
+                whodone      = :who
             WHERE id = :id AND stock_actuel >= :qte2
-        ")->execute([':qte1'=>$qte, ':qte2'=>$qte, ':who'=>$userId, ':id'=>$produitId]);
+        ")->execute([
+            ':qte1' => $qte,
+            ':qte2' => $qte,
+            ':who'  => $userId,
+            ':id'   => $produitId,
+        ]);
     }
 
     if ($montantTotal === 0) {
@@ -104,36 +135,59 @@ try {
         jsonError('Aucun produit valide sélectionné.');
     }
 
-    // Créer reçu pharmacie séparé
+    // ── Créer le reçu pharmacie séparé ───────────────────────────────────
+    // Orphelin : montant_encaisse = 0, montant_total réel conservé
+    $montantEncaisse = $estOrphelin ? 0 : $montantTotal;
+
     $numRecu = getNextNumeroRecu($pdo);
     $pdo->prepare("
-        INSERT INTO recus (numero_recu, patient_id, type_recu, type_patient,
-                           montant_total, montant_encaisse, whodone)
-        VALUES (:num, :pat, 'pharmacie', 'normal', :mt, :me, :who)
+        INSERT INTO recus
+            (numero_recu, patient_id, type_recu, type_patient,
+             montant_total, montant_encaisse, whodone)
+        VALUES
+            (:num, :pat, 'pharmacie', :tp, :mt, :me, :who)
     ")->execute([
-        ':num'=>$numRecu, ':pat'=>$recuData['patient_id'],
-        ':mt'=>$montantTotal, ':me'=>$montantTotal, ':who'=>$userId
+        ':num' => $numRecu,
+        ':pat' => $recuData['patient_id'],
+        ':tp'  => $recuData['type_patient'],    // conserve 'orphelin' dans le reçu
+        ':mt'  => $montantTotal,
+        ':me'  => $montantEncaisse,
+        ':who' => $userId,
     ]);
     $newRecuId = (int)$pdo->lastInsertId();
 
-    // Déplacer lignes vers le nouveau reçu pharmacie
-    $pdo->prepare("UPDATE lignes_pharmacie SET recu_id=:nid WHERE recu_id=:oid AND whodone=:who AND isDeleted=0")
-        ->execute([':nid'=>$newRecuId, ':oid'=>$recuId, ':who'=>$userId]);
+    // ── Déplacer les lignes vers le nouveau reçu pharmacie ───────────────
+    $pdo->prepare("
+        UPDATE lignes_pharmacie
+        SET recu_id = :nid
+        WHERE recu_id = :oid AND whodone = :who AND isDeleted = 0
+    ")->execute([
+        ':nid' => $newRecuId,
+        ':oid' => $recuId,
+        ':who' => $userId,
+    ]);
 
     $pdo->commit();
 
-    // Générer PDF
+    // ── Générer PDF ──────────────────────────────────────────────────────
     require_once ROOT_PATH . '/modules/pdf/PdfGenerator.php';
     $pdf     = new PdfGenerator($pdo);
     $pdfFile = $pdf->generatePharmacie($newRecuId);
 
-    jsonSuccess('Pharmacie enregistrée.', [
-        'recu_id'     => $newRecuId,
-        'numero_recu' => $numRecu,
-        'pdf_url'     => url('uploads/pdf/' . basename($pdfFile))
-    ]);
+    jsonSuccess(
+        $estOrphelin
+            ? 'Pharmacie enregistrée (gratuit – orphelin). Stock mis à jour.'
+            : 'Pharmacie enregistrée.',
+        [
+            'recu_id'     => $newRecuId,
+            'numero_recu' => $numRecu,
+            'pdf_url'     => url('uploads/pdf/' . basename($pdfFile)),
+        ]
+    );
 
 } catch (PDOException $e) {
     if ($pdo->inTransaction()) $pdo->rollBack();
-    jsonError('Erreur BDD : ' . (APP_ENV === 'development' ? $e->getMessage() : 'Contactez l\'administrateur.'));
+    jsonError('Erreur BDD : ' . (APP_ENV === 'development'
+        ? $e->getMessage()
+        : 'Contactez l\'administrateur.'));
 }

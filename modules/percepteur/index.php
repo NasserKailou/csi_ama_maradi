@@ -8,10 +8,10 @@ $userId    = Session::getUserId();
 $pageTitle = 'Espace Percepteur';
 
 // ── Récupérer les actes médicaux configurés ────────────────────────────────
-$actes  = $pdo->query("SELECT id, libelle, tarif, est_gratuit FROM actes_medicaux WHERE isDeleted=0 ORDER BY libelle")->fetchAll();
+$actes         = $pdo->query("SELECT id, libelle, tarif, est_gratuit FROM actes_medicaux WHERE isDeleted=0 ORDER BY libelle")->fetchAll();
 $actesGratuits = array_filter($actes, fn($a) => $a['est_gratuit']);
 
-// ── Récupérer les examens configurés ───────────────────────────────────────
+// ── Récupérer les examens configurés ──────────────────────────────────────
 $examens = $pdo->query("SELECT id, libelle, cout_total, pourcentage_labo FROM examens WHERE isDeleted=0 ORDER BY libelle")->fetchAll();
 
 // ── Récupérer les produits pharmacie disponibles ──────────────────────────
@@ -28,11 +28,11 @@ $produits = $pdo->query("
 ")->fetchAll();
 
 // ── Liste journalière du percepteur connecté ───────────────────────────────
-// Filtre strict : WHERE whodone = $userId
+// On joint patients pour récupérer est_orphelin (utile pour passer à JS)
 $listeJour = $pdo->prepare("
     SELECT r.id, r.numero_recu, p.nom AS patient_nom, p.telephone,
            r.type_recu, r.type_patient, r.montant_total, r.montant_encaisse,
-           r.whendone
+           r.whendone, p.est_orphelin
     FROM recus r
     JOIN patients p ON p.id = r.patient_id
     WHERE r.isDeleted = 0
@@ -98,7 +98,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                     onclick="setTypeRecu('orphelin')">
                 <i class="bi bi-heart"></i>
                 Reçu Orphelin
-                <div class="small fw-normal mt-1 opacity-75">Gratuité totale</div>
+                <div class="small fw-normal mt-1 opacity-75"></div>
             </button>
         </div>
         <div class="col-md-4 col-lg-3 text-center">
@@ -144,11 +144,11 @@ include ROOT_PATH . '/templates/layouts/header.php';
                             <td>
                                 <?php
                                 $badgeTypes = [
-                                    'consultation' => ['color'=>'#2e7d32','label'=>'Consultation'],
-                                    'examen'       => ['color'=>'#e65100','label'=>'Examen'],
-                                    'pharmacie'    => ['color'=>'#006064','label'=>'Pharmacie'],
+                                    'consultation' => ['color' => '#2e7d32', 'label' => 'Consultation'],
+                                    'examen'       => ['color' => '#e65100', 'label' => 'Examen'],
+                                    'pharmacie'    => ['color' => '#006064', 'label' => 'Pharmacie'],
                                 ];
-                                $bt = $badgeTypes[$r['type_recu']] ?? ['color'=>'#757575','label'=>$r['type_recu']];
+                                $bt = $badgeTypes[$r['type_recu']] ?? ['color' => '#757575', 'label' => $r['type_recu']];
                                 ?>
                                 <span class="badge" style="background:<?= $bt['color'] ?>"><?= $bt['label'] ?></span>
                                 <?php if ($r['type_patient'] === 'orphelin'): ?>
@@ -165,16 +165,29 @@ include ROOT_PATH . '/templates/layouts/header.php';
                             </td>
                             <td><small class="text-muted"><?= date('H:i', strtotime($r['whendone'])) ?></small></td>
                             <td>
-                                <!-- Examens -->
-                                <button class="btn btn-sm btn-outline-warning me-1" title="Prescire des examens"
+                                <!-- Examens :
+                                     on passe type_patient en 4e argument pour que JS
+                                     sache si c'est un orphelin et affiche la bannière gratuit -->
+                                <button class="btn btn-sm btn-outline-warning me-1" title="Prescrire des examens"
                                         data-bs-toggle="modal" data-bs-target="#modalExamens"
-                                        onclick="openExamensModal(<?= (int)$r['id'] ?>, '<?= h($r['patient_nom']) ?>', <?= (int)$r['numero_recu'] ?>)">
+                                        onclick="openExamensModal(
+                                            <?= (int)$r['id'] ?>,
+                                            '<?= h($r['patient_nom']) ?>',
+                                            <?= (int)$r['numero_recu'] ?>,
+                                            '<?= h($r['type_patient']) ?>'
+                                        )">
                                     <i class="bi bi-microscope"></i>
                                 </button>
-                                <!-- Pharmacie -->
+                                <!-- Pharmacie :
+                                     idem, type_patient passé en 4e argument -->
                                 <button class="btn btn-sm btn-outline-info me-1" title="Pharmacie"
                                         data-bs-toggle="modal" data-bs-target="#modalPharmacie"
-                                        onclick="openPharmacieModal(<?= (int)$r['id'] ?>, '<?= h($r['patient_nom']) ?>', <?= (int)$r['numero_recu'] ?>)">
+                                        onclick="openPharmacieModal(
+                                            <?= (int)$r['id'] ?>,
+                                            '<?= h($r['patient_nom']) ?>',
+                                            <?= (int)$r['numero_recu'] ?>,
+                                            '<?= h($r['type_patient']) ?>'
+                                        )">
                                     <i class="bi bi-capsule"></i>
                                 </button>
                                 <!-- Récapitulatif -->
@@ -224,11 +237,13 @@ include ROOT_PATH . '/templates/layouts/header.php';
                     <tbody>
                     <?php foreach ($recusArchives as $r): ?>
                         <tr>
-                            <td><strong>#<?= str_pad($r['numero_recu'],5,'0',STR_PAD_LEFT) ?></strong></td>
+                            <td><strong>#<?= str_pad($r['numero_recu'], 5, '0', STR_PAD_LEFT) ?></strong></td>
                             <td><?= h($r['patient_nom']) ?></td>
                             <td><?= h($r['telephone']) ?></td>
                             <td><?= h(ucfirst($r['type_recu'])) ?></td>
-                            <td><?= $r['type_patient']==='orphelin' ? '<span class="text-danger fw-bold">0 F (GRATUIT)</span>' : formatMontant($r['montant_encaisse']) ?></td>
+                            <td><?= $r['type_patient'] === 'orphelin'
+                                    ? '<span class="text-danger fw-bold">0 F (GRATUIT)</span>'
+                                    : formatMontant($r['montant_encaisse']) ?></td>
                             <td><?= formatDate($r['whendone']) ?></td>
                         </tr>
                     <?php endforeach; ?>
@@ -246,6 +261,11 @@ include ROOT_PATH . '/templates/layouts/header.php';
 
 <!-- ═══════════════════════════════════════════════════════════════════════════
      MODAL : Formulaire Patient (Normal / Orphelin)
+     MODIFICATIONS :
+       - Ajout id="sexeBlock" sur le col sexe     → masqué pour orphelin
+       - Ajout id="provenanceBlock" sur le col     → masqué pour orphelin
+       - Le champ #fProvenance est pré-rempli "Maradi" côté JS pour orphelin
+       - Le radio sexe M est forcé côté JS pour orphelin
 ═══════════════════════════════════════════════════════════════════════════ -->
 <div class="modal fade" id="modalPatient" tabindex="-1" data-bs-backdrop="static">
     <div class="modal-dialog modal-lg">
@@ -274,10 +294,12 @@ include ROOT_PATH . '/templates/layouts/header.php';
 
                         <div class="col-md-6">
                             <label class="form-label">Nom et Prénom <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" id="fNomPatient" name="nom" placeholder="Ex: Moussa Halima" required>
+                            <input type="text" class="form-control" id="fNomPatient" name="nom"
+                                   placeholder="Ex: Moussa Halima" required>
                         </div>
 
-                        <div class="col-md-4">
+                        <!-- SEXE — id="sexeBlock" ajouté : masqué pour orphelin (toujours M) -->
+                        <div class="col-md-4" id="sexeBlock">
                             <label class="form-label">Sexe <span class="text-danger">*</span></label>
                             <div class="d-flex gap-3 mt-1">
                                 <div class="form-check">
@@ -293,15 +315,18 @@ include ROOT_PATH . '/templates/layouts/header.php';
 
                         <div class="col-md-4">
                             <label class="form-label">Âge <span class="text-danger">*</span></label>
-                            <input type="number" class="form-control" id="fAge" name="age" min="0" max="120" placeholder="0" required>
+                            <input type="number" class="form-control" id="fAge" name="age"
+                                   min="0" max="120" placeholder="0" required>
                         </div>
 
-                        <div class="col-md-4">
+                        <!-- PROVENANCE — id="provenanceBlock" ajouté : masqué pour orphelin (toujours Maradi) -->
+                        <div class="col-md-4" id="provenanceBlock">
                             <label class="form-label">Provenance</label>
-                            <input type="text" class="form-control" id="fProvenance" name="provenance" placeholder="Ville / Village">
+                            <input type="text" class="form-control" id="fProvenance" name="provenance"
+                                   placeholder="Ville / Village">
                         </div>
 
-                        <!-- Type consultation (masqué pour orphelins) -->
+                        <!-- Type consultation — masqué pour orphelins -->
                         <div class="col-12" id="typeConsultBlock">
                             <label class="form-label">Type de consultation <span class="text-danger">*</span></label>
                             <div class="row g-2">
@@ -326,11 +351,11 @@ include ROOT_PATH . '/templates/layouts/header.php';
                             </div>
                         </div>
 
-                        <!-- Indicateur gratuit -->
+                        <!-- Bannière gratuité orphelin -->
                         <div class="col-12 d-none" id="gratuitBanner">
                             <div class="alert alert-warning mb-0">
                                 <i class="bi bi-gift me-2"></i>
-                                <strong>ORPHELIN – GRATUITÉ TOTALE.</strong>
+                                <strong>ORPHELIN </strong>
                                 Le montant encaissé sera <strong>0 F</strong>.
                                 Les prix sont conservés pour le reporting bailleur.
                             </div>
@@ -350,7 +375,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════════════
-     MODAL : Actes Gratuits
+     MODAL : Actes Gratuits (inchangé)
 ═══════════════════════════════════════════════════════════════════════════ -->
 <div class="modal fade" id="modalActeGratuit" tabindex="-1" data-bs-backdrop="static">
     <div class="modal-dialog modal-lg">
@@ -413,6 +438,10 @@ include ROOT_PATH . '/templates/layouts/header.php';
 
 <!-- ═══════════════════════════════════════════════════════════════════════════
      MODAL : Examens
+     MODIFICATIONS :
+       - Ajout bannière #examGratuitBanner (d-none par défaut)
+       - Les badges de prix affichent "barré + 0 F" quand orphelin
+       - Le sous-total affiche "0 F (GRATUIT)" quand orphelin
 ═══════════════════════════════════════════════════════════════════════════ -->
 <div class="modal fade" id="modalExamens" tabindex="-1" data-bs-backdrop="static">
     <div class="modal-dialog modal-lg">
@@ -422,10 +451,16 @@ include ROOT_PATH . '/templates/layouts/header.php';
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <div class="alert alert-info">
+                <div class="alert alert-info mb-2">
                     <i class="bi bi-info-circle me-2"></i>
                     Patient : <strong id="examPatientNom"></strong>
                     · Reçu N° <span id="examNumeroRecu"></span>
+                </div>
+                <!-- Bannière orphelin — masquée par défaut, affichée par JS si orphelin -->
+                <div class="alert alert-warning d-none mb-2" id="examGratuitBanner">
+                    <i class="bi bi-gift me-2"></i>
+                    <strong>ORPHELIN – GRATUITÉ TOTALE.</strong>
+                    Les examens seront enregistrés à <strong>0 F</strong> encaissé.
                 </div>
                 <input type="hidden" id="examRecuId">
                 <label class="form-label">Sélectionner les examens à prescrire</label>
@@ -440,7 +475,12 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                    data-libelle="<?= h($e['libelle']) ?>">
                             <label class="form-check-label w-100" for="ex<?= $e['id'] ?>">
                                 <strong><?= h($e['libelle']) ?></strong>
-                                <span class="badge float-end" style="background:#e65100;"><?= formatMontant($e['cout_total']) ?></span>
+                                <!-- data-prix-original conserve la valeur pour restauration -->
+                                <span class="badge float-end examen-prix-badge"
+                                      style="background:#e65100;"
+                                      data-prix-original="<?= formatMontant($e['cout_total']) ?>">
+                                    <?= formatMontant($e['cout_total']) ?>
+                                </span>
                             </label>
                         </div>
                     </div>
@@ -464,6 +504,10 @@ include ROOT_PATH . '/templates/layouts/header.php';
 
 <!-- ═══════════════════════════════════════════════════════════════════════════
      MODAL : Pharmacie
+     MODIFICATIONS :
+       - Ajout bannière #pharmaGratuitBanner (d-none par défaut)
+       - data-orphelin sur #pharmaRecuId pour que updateTotalPharma() adapte l'affichage
+       - Total affiche "barré + 0 F (GRATUIT)" quand orphelin
 ═══════════════════════════════════════════════════════════════════════════ -->
 <div class="modal fade" id="modalPharmacie" tabindex="-1" data-bs-backdrop="static">
     <div class="modal-dialog modal-xl">
@@ -473,19 +517,27 @@ include ROOT_PATH . '/templates/layouts/header.php';
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <div class="alert alert-info">
+                <div class="alert alert-info mb-2">
                     <i class="bi bi-info-circle me-2"></i>
                     Patient : <strong id="pharmaPatientNom"></strong>
                     · Reçu N° <span id="pharmaNumeroRecu"></span>
                     <span class="float-end text-muted">Max 15 produits</span>
                 </div>
-                <input type="hidden" id="pharmaRecuId">
+                <!-- Bannière orphelin — masquée par défaut, affichée par JS si orphelin -->
+                <div class="alert alert-warning d-none mb-2" id="pharmaGratuitBanner">
+                    <i class="bi bi-gift me-2"></i>
+                    <strong>ORPHELIN – GRATUITÉ TOTALE.</strong>
+                    La pharmacie sera enregistrée à <strong>0 F</strong> encaissé.
+                    Le stock sera quand même mis à jour.
+                </div>
+                <!-- data-orphelin initialisé à 0, mis à jour par openPharmacieModal() -->
+                <input type="hidden" id="pharmaRecuId" data-orphelin="0">
 
                 <!-- Grille des produits -->
                 <div class="row g-2 mb-3" id="produitsList">
                     <?php foreach ($produits as $p):
                         $disabled = ($p['statut'] !== 'ok');
-                        $label    = match($p['statut']){
+                        $label    = match($p['statut']) {
                             'rupture' => '⚠ Rupture de stock',
                             'perime'  => '⛔ Périmé',
                             default   => ''
@@ -549,7 +601,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
 </div>
 
 <!-- ═══════════════════════════════════════════════════════════════════════════
-     MODAL : Récapitulatif Patient
+     MODAL : Récapitulatif Patient (inchangé)
 ═══════════════════════════════════════════════════════════════════════════ -->
 <div class="modal fade" id="modalRecap" tabindex="-1">
     <div class="modal-dialog modal-lg">
@@ -584,26 +636,52 @@ const SAVE_PHARMA_URL    = '{$savePharmUrl}';
 const GET_RECAP_URL      = '{$getRecapUrl}';
 // PATIENTS_API_URL vient de header.php (pas redéclarée ici)
 
+// ── setTypeRecu ────────────────────────────────────────────────────────────
+// MODIFIÉ : masque sexeBlock et provenanceBlock pour orphelin,
+//           force sexe=M et provenance=Maradi côté client
+//           (le serveur re-force de toute façon ces valeurs)
 function setTypeRecu(type) {
     currentTypeRecu = type;
-    const header  = document.getElementById('modalPatientHeader');
-    const title   = document.getElementById('modalPatientTitle');
-    const block   = document.getElementById('typeConsultBlock');
-    const banner  = document.getElementById('gratuitBanner');
+    const header         = document.getElementById('modalPatientHeader');
+    const title          = document.getElementById('modalPatientTitle');
+    const block          = document.getElementById('typeConsultBlock');
+    const banner         = document.getElementById('gratuitBanner');
+    const sexeBlock      = document.getElementById('sexeBlock');
+    const provenanceBlk  = document.getElementById('provenanceBlock');
+
+    // Reset complet des champs texte (sans écraser les valeurs forcées)
+    document.getElementById('fTelephone').value  = '';
+    document.getElementById('fNomPatient').value = '';
+    document.getElementById('fAge').value        = '';
+    document.getElementById('consAvec').checked  = true;   // reset carnet
 
     if (type === 'orphelin') {
+        // Couleur violette = mode orphelin
         header.style.background = '#7b1fa2';
-        title.innerHTML = '<i class="bi bi-heart me-2"></i>Reçu Orphelin – Gratuité Totale';
-        block.style.display  = 'none';
+        title.innerHTML = '<i class="bi bi-heart me-2"></i>Reçu Orphelin';
+
+        // Masquer les champs non pertinents pour un orphelin
+        block.style.display       = 'none';   // pas de choix consultation
+        sexeBlock.style.display   = 'none';   // toujours M
+        provenanceBlk.style.display = 'none'; // toujours Maradi
         banner.classList.remove('d-none');
+
+        // Forcer les valeurs côté client (double sécurité, serveur re-vérifie)
+        document.getElementById('sexeM').checked    = true;
+        document.getElementById('fProvenance').value = 'Maradi';
+
     } else {
         header.style.background = 'var(--csi-green)';
         title.innerHTML = '<i class="bi bi-person-plus me-2"></i>Nouveau Patient Normal';
-        block.style.display  = '';
+
+        block.style.display       = '';
+        sexeBlock.style.display   = '';
+        provenanceBlk.style.display = '';
         banner.classList.add('d-none');
+
+        document.getElementById('fProvenance').value = '';
     }
-    document.getElementById('typeRecuHidden').value = type;
-    document.getElementById('formPatient').reset();
+
     document.getElementById('typeRecuHidden').value = type;
 }
 
@@ -611,8 +689,12 @@ function setTypeRecu(type) {
 initPhoneAutocomplete('fTelephone', function(p) {
     document.getElementById('fNomPatient').value  = p.nom;
     document.getElementById('fAge').value         = p.age;
-    document.getElementById('fProvenance').value  = p.provenance || '';
-    document.querySelector('input[name="sexe"][value="' + p.sexe + '"]').checked = true;
+    // Ne pas écraser provenance si on est en mode orphelin
+    if (currentTypeRecu !== 'orphelin') {
+        document.getElementById('fProvenance').value = p.provenance || '';
+        const sexeRadio = document.querySelector('input[name="sexe"][value="' + p.sexe + '"]');
+        if (sexeRadio) sexeRadio.checked = true;
+    }
 });
 initPhoneAutocomplete('fTelAG', function(p) {
     document.getElementById('fNomAG').value  = p.nom;
@@ -621,14 +703,15 @@ initPhoneAutocomplete('fTelAG', function(p) {
 
 // ── Enregistrer Patient ────────────────────────────────────────────────────
 document.getElementById('btnEnregistrerPatient').addEventListener('click', function() {
-    const form  = document.getElementById('formPatient');
-    const data  = Object.fromEntries(new FormData(form));
-    // age peut être 0 (nourrisson) → vérifier la chaîne vide, pas la valeur falsy
+    const form = document.getElementById('formPatient');
+    const data = Object.fromEntries(new FormData(form));
     if (!data.telephone || !data.nom || data.age === '' || data.age === undefined) {
-        showToast('warning', 'Veuillez remplir tous les champs obligatoires (téléphone, nom, âge).'); return;
+        showToast('warning', 'Veuillez remplir tous les champs obligatoires (téléphone, nom, âge).');
+        return;
     }
     if (data.telephone.replace(/\D/g, '').length !== 8) {
-        showToast('warning', 'Le numéro de téléphone doit contenir exactement 8 chiffres.'); return;
+        showToast('warning', 'Le numéro de téléphone doit contenir exactement 8 chiffres.');
+        return;
     }
     ajaxPost(SAVE_CONSULT_URL, data, function(res) {
         bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPatient')).hide();
@@ -642,10 +725,12 @@ function saveActeGratuit() {
     const form = document.getElementById('formActeGratuit');
     const data = Object.fromEntries(new FormData(form));
     if (!data.telephone || !data.nom || !data.acte_id) {
-        showToast('warning', 'Champs obligatoires manquants (téléphone, nom, acte).'); return;
+        showToast('warning', 'Champs obligatoires manquants (téléphone, nom, acte).');
+        return;
     }
     if (data.telephone.replace(/\D/g, '').length !== 8) {
-        showToast('warning', 'Le numéro de téléphone doit contenir exactement 8 chiffres.'); return;
+        showToast('warning', 'Le numéro de téléphone doit contenir exactement 8 chiffres.');
+        return;
     }
     ajaxPost(SAVE_ACTE_GRAT_URL, data, function(res) {
         bootstrap.Modal.getOrCreateInstance(document.getElementById('modalActeGratuit')).hide();
@@ -655,11 +740,34 @@ function saveActeGratuit() {
 }
 
 // ── Examens ────────────────────────────────────────────────────────────────
-function openExamensModal(recuId, nom, num) {
-    document.getElementById('examRecuId').value  = recuId;
+// MODIFIÉ : reçoit typePatient en 4e argument
+//           affiche bannière gratuit + badges barrés si orphelin
+function openExamensModal(recuId, nom, num, typePatient) {
+    document.getElementById('examRecuId').value            = recuId;
     document.getElementById('examPatientNom').textContent  = nom;
     document.getElementById('examNumeroRecu').textContent  = '#' + String(num).padStart(5,'0');
     document.querySelectorAll('.examen-chk').forEach(c => c.checked = false);
+
+    const isOrphelin = (typePatient === 'orphelin');
+    const banner     = document.getElementById('examGratuitBanner');
+
+    if (isOrphelin) {
+        banner.classList.remove('d-none');
+        // Afficher les prix barrés sur chaque badge pour information
+        document.querySelectorAll('.examen-prix-badge').forEach(function(badge) {
+            const prixOriginal = badge.dataset.prixOriginal;
+            badge.innerHTML = '<s>' + prixOriginal + '</s> <strong>0 F</strong>';
+        });
+    } else {
+        banner.classList.add('d-none');
+        // Restaurer les prix normaux
+        document.querySelectorAll('.examen-prix-badge').forEach(function(badge) {
+            badge.textContent = badge.dataset.prixOriginal;
+        });
+    }
+
+    // Stocker le flag orphelin pour updateSousTotal()
+    document.getElementById('examRecuId').dataset.orphelin = isOrphelin ? '1' : '0';
     updateSousTotal();
 }
 
@@ -667,17 +775,27 @@ document.querySelectorAll('.examen-chk').forEach(chk => {
     chk.addEventListener('change', updateSousTotal);
 });
 
+// MODIFIÉ : affiche "0 F (GRATUIT)" si orphelin
 function updateSousTotal() {
+    const isOrphelin = document.getElementById('examRecuId').dataset.orphelin === '1';
     let total = 0;
     document.querySelectorAll('.examen-chk:checked').forEach(c => total += parseInt(c.dataset.cout));
-    document.getElementById('sousTotal').textContent = new Intl.NumberFormat('fr-FR').format(total) + ' F';
+
+    if (isOrphelin && total > 0) {
+        document.getElementById('sousTotal').innerHTML =
+            '<s>' + new Intl.NumberFormat('fr-FR').format(total) + ' F</s> ' +
+            '<strong class="text-danger ms-1">0 F (GRATUIT)</strong>';
+    } else {
+        document.getElementById('sousTotal').textContent =
+            new Intl.NumberFormat('fr-FR').format(total) + ' F';
+    }
 }
 
 function saveExamens() {
-    const ids = [...document.querySelectorAll('.examen-chk:checked')].map(c => c.value);
-    if (!ids.length) { showToast('warning', 'Veuillez sélectionner au moins un examen.'); return; }
+    const ids    = [...document.querySelectorAll('.examen-chk:checked')].map(c => c.value);
     const recuId = document.getElementById('examRecuId').value;
-    if (!recuId) { showToast('warning', 'Aucun reçu de consultation lié.'); return; }
+    if (!ids.length)  { showToast('warning', 'Veuillez sélectionner au moins un examen.');  return; }
+    if (!recuId)      { showToast('warning', 'Aucun reçu de consultation lié.');            return; }
     ajaxPost(SAVE_EXAMENS_URL, { recu_id: recuId, examens: ids.join(',') }, function(res) {
         bootstrap.Modal.getOrCreateInstance(document.getElementById('modalExamens')).hide();
         if (res.pdf_url) window.open(res.pdf_url, '_blank');
@@ -686,48 +804,75 @@ function saveExamens() {
 }
 
 // ── Pharmacie ──────────────────────────────────────────────────────────────
-function openPharmacieModal(recuId, nom, num) {
-    document.getElementById('pharmaRecuId').value = recuId;
-    document.getElementById('pharmaPatientNom').textContent = nom;
-    document.getElementById('pharmaNumeroRecu').textContent = '#' + String(num).padStart(5,'0');
+// MODIFIÉ : reçoit typePatient en 4e argument
+//           stocke le flag orphelin sur data-orphelin de #pharmaRecuId
+//           affiche bannière gratuit si orphelin
+function openPharmacieModal(recuId, nom, num, typePatient) {
+    const isOrphelin = (typePatient === 'orphelin');
+
+    document.getElementById('pharmaRecuId').value             = recuId;
+    document.getElementById('pharmaRecuId').dataset.orphelin  = isOrphelin ? '1' : '0';
+    document.getElementById('pharmaPatientNom').textContent   = nom;
+    document.getElementById('pharmaNumeroRecu').textContent   = '#' + String(num).padStart(5,'0');
     document.querySelectorAll('.produit-qte').forEach(i => i.value = 0);
+
+    const banner = document.getElementById('pharmaGratuitBanner');
+    if (isOrphelin) {
+        banner.classList.remove('d-none');
+    } else {
+        banner.classList.add('d-none');
+    }
+
     updateTotalPharma();
 }
 
+// MODIFIÉ : affiche "barré + 0 F (GRATUIT)" si orphelin
 function updateTotalPharma() {
+    const isOrphelin = document.getElementById('pharmaRecuId').dataset.orphelin === '1';
     let total = 0, count = 0;
     document.querySelectorAll('.produit-qte').forEach(inp => {
         const qty = parseInt(inp.value) || 0;
         if (qty > 0) { total += qty * parseInt(inp.dataset.prix); count++; }
     });
-    document.getElementById('totalPharma').textContent  = new Intl.NumberFormat('fr-FR').format(total) + ' F';
+
+    if (isOrphelin && total > 0) {
+        document.getElementById('totalPharma').innerHTML =
+            '<s>' + new Intl.NumberFormat('fr-FR').format(total) + ' F</s> ' +
+            '<strong class="text-danger ms-1">0 F (GRATUIT)</strong>';
+    } else {
+        document.getElementById('totalPharma').textContent =
+            new Intl.NumberFormat('fr-FR').format(total) + ' F';
+    }
+
     document.getElementById('nbProduitsSelec').textContent = count;
-    document.getElementById('nbProduitsSelec').className =
+    document.getElementById('nbProduitsSelec').className   =
         'badge ' + (count > 15 ? 'bg-danger' : (count > 0 ? 'bg-success' : 'bg-secondary'));
 }
 
 function savePharmacie() {
-    const items = [];
+    const items  = [];
+    const recuId = document.getElementById('pharmaRecuId').value;
     document.querySelectorAll('.produit-qte').forEach(inp => {
         const qty = parseInt(inp.value) || 0;
-        if (qty > 0) items.push({ id: inp.dataset.id, qte: qty, nom: inp.dataset.nom, forme: inp.dataset.forme, prix: inp.dataset.prix });
+        if (qty > 0) items.push({
+            id: inp.dataset.id, qte: qty,
+            nom: inp.dataset.nom, forme: inp.dataset.forme, prix: inp.dataset.prix
+        });
     });
-    if (!items.length) { showToast('warning', 'Aucun produit sélectionné.'); return; }
-    if (items.length > 15) { showToast('danger', 'Maximum 15 produits par reçu.'); return; }
-    const recuId = document.getElementById('pharmaRecuId').value;
-    if (!recuId) { showToast('warning', 'Aucun reçu de consultation lié.'); return; }
-    ajaxPost(SAVE_PHARMA_URL, {
-        recu_id: recuId, produits: JSON.stringify(items)
-    }, function(res) {
+    if (!items.length)    { showToast('warning', 'Aucun produit sélectionné.');          return; }
+    if (items.length > 15){ showToast('danger',  'Maximum 15 produits par reçu.');       return; }
+    if (!recuId)          { showToast('warning', 'Aucun reçu de consultation lié.');     return; }
+    ajaxPost(SAVE_PHARMA_URL, { recu_id: recuId, produits: JSON.stringify(items) }, function(res) {
         bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPharmacie')).hide();
         if (res.pdf_url) window.open(res.pdf_url, '_blank');
         setTimeout(() => location.reload(), 1000);
     });
 }
 
-// ── Récapitulatif ──────────────────────────────────────────────────────────
+// ── Récapitulatif (inchangé) ───────────────────────────────────────────────
 function openRecapModal(recuId) {
-    document.getElementById('recapContent').innerHTML = '<div class="text-center py-4"><div class="spinner-border text-secondary"></div></div>';
+    document.getElementById('recapContent').innerHTML =
+        '<div class="text-center py-4"><div class="spinner-border text-secondary"></div></div>';
     fetch(GET_RECAP_URL + '?recu_id=' + recuId, {
         headers: { 'X-CSRF-TOKEN': CSRF_TOKEN }
     })
