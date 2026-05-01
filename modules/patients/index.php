@@ -231,7 +231,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                             <span class="badge d-inline-flex align-items-center gap-1 px-2 py-1"
                                   style="background:#7b1fa2;font-size:0.75rem;letter-spacing:.5px;">
                                 <i class="bi bi-heart-fill" style="font-size:0.7rem;"></i>
-                                ORPHELIN – DIRECTAID AMA
+                                ORPHELIN – DIRECTAID
                             </span>
                             <?php endif; ?>
                         </h5>
