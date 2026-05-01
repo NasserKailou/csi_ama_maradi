@@ -125,17 +125,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $keys = ['nom_centre','adresse','telephone','pied_de_page'];
                 foreach ($keys as $k) {
                     $v = trim($_POST[$k] ?? '');
-                    $pdo->prepare("INSERT INTO config_systeme (cle, valeur, whodone) VALUES (:k,:v,:w)
-                                   ON DUPLICATE KEY UPDATE valeur=:v, whodone=:w")
-                        ->execute([':k'=>$k,':v'=>$v,':w'=>$userId]);
+                    $pdo->prepare("INSERT INTO config_systeme (cle, valeur, whodone) VALUES (:k, :v1, :w1)
+                                   ON DUPLICATE KEY UPDATE valeur = :v2, whodone = :w2")
+                        ->execute([':k'=>$k, ':v1'=>$v, ':w1'=>$userId, ':v2'=>$v, ':w2'=>$userId]);
                 }
                 // Upload logo
                 if (!empty($_FILES['logo']['name'])) {
                     $logoFile = uploadLogo($_FILES['logo']);
                     if ($logoFile) {
-                        $pdo->prepare("INSERT INTO config_systeme (cle, valeur, whodone) VALUES ('logo_filename',:v,:w)
-                                       ON DUPLICATE KEY UPDATE valeur=:v, whodone=:w")
-                            ->execute([':v'=>$logoFile,':w'=>$userId]);
+                        $pdo->prepare("INSERT INTO config_systeme (cle, valeur, whodone) VALUES ('logo_filename', :v1, :w1)
+                                       ON DUPLICATE KEY UPDATE valeur = :v2, whodone = :w2")
+                            ->execute([':v1'=>$logoFile, ':w1'=>$userId, ':v2'=>$logoFile, ':w2'=>$userId]);
                     }
                 }
                 jsonSuccess('Configuration sauvegardée.');
