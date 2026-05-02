@@ -9,6 +9,13 @@ requireRole('admin');
 $pdo       = Database::getInstance();
 $pageTitle = 'Analytique Avancée';
 
+/**
+ * Formate un nombre en sécurité (gère NULL, chaînes vides, etc.)
+ */
+function fmt($val, $decimales = 0) {
+    return number_format((float)($val ?? 0), $decimales, ',', ' ');
+}
+
 // ── Période de filtre ─────────────────────────────────────────────────────
 $filtreDebut = $_GET['filtre_debut'] ?? date('Y-m-01');
 $filtreFin   = $_GET['filtre_fin']   ?? date('Y-m-d');
@@ -27,20 +34,22 @@ $sqlKpi = "
         COALESCE(SUM(montant_encaisse),0)         AS total_encaisse,
         COALESCE(SUM(montant_total),0)            AS total_theorique,
         COALESCE(SUM(montant_total - montant_encaisse),0) AS total_subventionne,
-        SUM(CASE WHEN type_patient IN ('orphelin','acte_gratuit') THEN 1 ELSE 0 END) AS nb_gratuits,
+        COALESCE(SUM(CASE WHEN type_patient IN ('orphelin','acte_gratuit') THEN 1 ELSE 0 END),0) AS nb_gratuits,
         COALESCE(AVG(NULLIF(montant_encaisse,0)),0) AS panier_moyen
     FROM recus
     WHERE isDeleted=0 AND DATE(whendone) BETWEEN :d AND :f
 ";
 $stmt = $pdo->prepare($sqlKpi);
 $stmt->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
-$kpi = $stmt->fetch();
+$kpi = $stmt->fetch() ?: ['nb_patients'=>0,'nb_recus'=>0,'total_encaisse'=>0,'total_theorique'=>0,'total_subventionne'=>0,'nb_gratuits'=>0,'panier_moyen'=>0];
 
 $stmt = $pdo->prepare($sqlKpi);
 $stmt->execute([':d'=>$periodePrecDeb, ':f'=>$periodePrecFin]);
-$kpiPrec = $stmt->fetch();
+$kpiPrec = $stmt->fetch() ?: ['nb_patients'=>0,'nb_recus'=>0,'total_encaisse'=>0,'total_theorique'=>0,'total_subventionne'=>0,'nb_gratuits'=>0,'panier_moyen'=>0];
 
 function variation($a, $p) {
+    $a = (float)($a ?? 0);
+    $p = (float)($p ?? 0);
     if ($p == 0) return $a > 0 ? 100 : 0;
     return round((($a - $p) / $p) * 100, 1);
 }
@@ -53,16 +62,15 @@ $tauxSubvention = $kpi['total_theorique'] > 0
     ? round(($kpi['total_subventionne'] / $kpi['total_theorique']) * 100, 1) : 0;
 
 // ════════════════════════════════════════════════════════════════════════════
-// 2. Top Actes médicaux – revenu calculé via tarif + tarif_carnet
+// 2. Top Actes médicaux
 // ════════════════════════════════════════════════════════════════════════════
 $topActes = $pdo->prepare("
     SELECT a.libelle, a.tarif,
            COUNT(lc.id) AS nb_utilisations,
-           SUM(CASE WHEN lc.est_gratuit=1 THEN 0
-                    ELSE (lc.tarif + lc.tarif_carnet) END) AS revenu_genere,
-           SUM(CASE WHEN lc.est_gratuit=1 THEN 1 ELSE 0 END) AS nb_gratuits_acte,
-           SUM(CASE WHEN r.type_patient IN ('orphelin','acte_gratuit') THEN 1 ELSE 0 END) AS nb_orphelins,
-           SUM(lc.avec_carnet) AS nb_avec_carnet
+           COALESCE(SUM(CASE WHEN lc.est_gratuit=1 THEN 0 ELSE (lc.tarif + lc.tarif_carnet) END),0) AS revenu_genere,
+           COALESCE(SUM(CASE WHEN lc.est_gratuit=1 THEN 1 ELSE 0 END),0) AS nb_gratuits_acte,
+           COALESCE(SUM(CASE WHEN r.type_patient IN ('orphelin','acte_gratuit') THEN 1 ELSE 0 END),0) AS nb_orphelins,
+           COALESCE(SUM(lc.avec_carnet),0) AS nb_avec_carnet
     FROM lignes_consultation lc
     JOIN actes_medicaux a ON a.id = lc.acte_id
     JOIN recus r ON r.id = lc.recu_id AND r.isDeleted=0
@@ -79,9 +87,9 @@ $topActes = $topActes->fetchAll();
 // ════════════════════════════════════════════════════════════════════════════
 $topProduits = $pdo->prepare("
     SELECT lp.nom, lp.forme,
-           SUM(lp.quantite)     AS total_qte,
-           SUM(lp.total_ligne)  AS total_revenu,
-           AVG(lp.prix_unitaire) AS prix_moyen
+           COALESCE(SUM(lp.quantite),0)     AS total_qte,
+           COALESCE(SUM(lp.total_ligne),0)  AS total_revenu,
+           COALESCE(AVG(lp.prix_unitaire),0) AS prix_moyen
     FROM lignes_pharmacie lp
     JOIN recus r ON r.id = lp.recu_id AND r.isDeleted=0
     WHERE lp.isDeleted=0 AND DATE(r.whendone) BETWEEN :d AND :f
@@ -93,7 +101,7 @@ $topProduits->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
 $topProduits = $topProduits->fetchAll();
 
 // ════════════════════════════════════════════════════════════════════════════
-// 4. Répartition par type de patient (3 valeurs : normal/orphelin/acte_gratuit)
+// 4. Répartition par type de patient
 // ════════════════════════════════════════════════════════════════════════════
 $typePatients = $pdo->prepare("
     SELECT type_patient, COUNT(*) AS nb,
@@ -125,7 +133,7 @@ $evolution->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
 $evolution = $evolution->fetchAll();
 
 $cumul = 0;
-foreach ($evolution as &$e) { $cumul += $e['recettes']; $e['cumul'] = $cumul; }
+foreach ($evolution as &$e) { $cumul += (float)$e['recettes']; $e['cumul'] = $cumul; }
 unset($e);
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -147,12 +155,11 @@ $topExamens = $pdo->prepare("
 $topExamens->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
 $topExamens = $topExamens->fetchAll();
 
-// Total reversé au labo sur la période
 $totalLabo = 0;
-foreach ($topExamens as $e) $totalLabo += (float)$e['part_labo'];
+foreach ($topExamens as $ex) $totalLabo += (float)($ex['part_labo'] ?? 0);
 
 // ════════════════════════════════════════════════════════════════════════════
-// 7. Performance percepteurs détaillée
+// 7. Performance percepteurs
 // ════════════════════════════════════════════════════════════════════════════
 $perfPercep = $pdo->prepare("
     SELECT u.id, u.nom, u.prenom, u.est_actif,
@@ -160,10 +167,10 @@ $perfPercep = $pdo->prepare("
            COUNT(DISTINCT r.patient_id)        AS nb_patients,
            COALESCE(SUM(r.montant_encaisse),0) AS total_encaisse,
            COALESCE(AVG(NULLIF(r.montant_encaisse,0)),0) AS panier_moyen,
-           SUM(CASE WHEN r.type_patient IN ('orphelin','acte_gratuit') THEN 1 ELSE 0 END) AS nb_gratuits,
-           SUM(CASE WHEN r.type_recu='consultation' THEN 1 ELSE 0 END) AS nb_consult,
-           SUM(CASE WHEN r.type_recu='examen'       THEN 1 ELSE 0 END) AS nb_exam,
-           SUM(CASE WHEN r.type_recu='pharmacie'    THEN 1 ELSE 0 END) AS nb_pharma
+           COALESCE(SUM(CASE WHEN r.type_patient IN ('orphelin','acte_gratuit') THEN 1 ELSE 0 END),0) AS nb_gratuits,
+           COALESCE(SUM(CASE WHEN r.type_recu='consultation' THEN 1 ELSE 0 END),0) AS nb_consult,
+           COALESCE(SUM(CASE WHEN r.type_recu='examen'       THEN 1 ELSE 0 END),0) AS nb_exam,
+           COALESCE(SUM(CASE WHEN r.type_recu='pharmacie'    THEN 1 ELSE 0 END),0) AS nb_pharma
     FROM utilisateurs u
     LEFT JOIN recus r ON r.whodone=u.id AND r.isDeleted=0
         AND DATE(r.whendone) BETWEEN :d AND :f
@@ -175,7 +182,7 @@ $perfPercep->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
 $perfPercep = $perfPercep->fetchAll();
 
 // ════════════════════════════════════════════════════════════════════════════
-// 8. Répartition revenus par pôle (consultation / examen / pharmacie)
+// 8. Répartition revenus par pôle
 // ════════════════════════════════════════════════════════════════════════════
 $repartition = $pdo->prepare("
     SELECT type_recu, COUNT(*) AS nb,
@@ -225,26 +232,18 @@ foreach ($stockAlertes as $s) {
     elseif  ($s['statut']==='FAIBLE')     $nbFaible++;
 }
 
-// Valeur du stock immobilisé (utilise prix_unitaire de vente, pas prix_achat)
 $valeurStock = (float)$pdo->query("
-    SELECT COALESCE(SUM(stock_actuel * prix_unitaire),0) AS valeur_stock
+    SELECT COALESCE(SUM(stock_actuel * prix_unitaire),0)
     FROM produits_pharmacie WHERE isDeleted=0
 ")->fetchColumn();
 
-// Taux de rotation = Quantité vendue (période) / Stock moyen
-$qteVenduePeriode = (int)$pdo->prepare("
-    SELECT COALESCE(SUM(lp.quantite),0)
-    FROM lignes_pharmacie lp
-    JOIN recus r ON r.id=lp.recu_id AND r.isDeleted=0
-    WHERE lp.isDeleted=0 AND DATE(r.whendone) BETWEEN ? AND ?
-")->execute([$filtreDebut,$filtreFin]) ;
 $stmtRot = $pdo->prepare("
     SELECT COALESCE(SUM(lp.quantite),0)
     FROM lignes_pharmacie lp
     JOIN recus r ON r.id=lp.recu_id AND r.isDeleted=0
     WHERE lp.isDeleted=0 AND DATE(r.whendone) BETWEEN ? AND ?
 ");
-$stmtRot->execute([$filtreDebut,$filtreFin]);
+$stmtRot->execute([$filtreDebut, $filtreFin]);
 $qteVenduePeriode = (int)$stmtRot->fetchColumn();
 
 $stockTotalActuel = (int)$pdo->query("
@@ -252,7 +251,7 @@ $stockTotalActuel = (int)$pdo->query("
 ")->fetchColumn();
 
 // ════════════════════════════════════════════════════════════════════════════
-// 10. Heures de pic d'activité (24h)
+// 10. Heures de pic d'activité
 // ════════════════════════════════════════════════════════════════════════════
 $piesHeures = $pdo->prepare("
     SELECT HOUR(whendone) AS heure, COUNT(*) AS nb
@@ -284,7 +283,7 @@ foreach ($jrSemaine->fetchAll() as $j) {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// 12. Démographie patients (sexe + tranches d'âge + orphelins DirectAid)
+// 12. Démographie patients
 // ════════════════════════════════════════════════════════════════════════════
 $demoSexe = $pdo->prepare("
     SELECT p.sexe, COUNT(DISTINCT r.patient_id) AS nb
@@ -316,20 +315,13 @@ $demoAge = $pdo->prepare("
 $demoAge->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
 $demoAge = $demoAge->fetchAll();
 
-// Compteur d'orphelins DirectAid AMA (champ dédié dans patients)
-$nbOrphelinsAma = (int)$pdo->prepare("
-    SELECT COUNT(DISTINCT p.id)
-    FROM patients p
-    JOIN recus r ON r.patient_id = p.id AND r.isDeleted=0
-    WHERE p.est_orphelin=1 AND DATE(r.whendone) BETWEEN ? AND ?
-");
 $stmtOrph = $pdo->prepare("
     SELECT COUNT(DISTINCT p.id)
     FROM patients p
     JOIN recus r ON r.patient_id = p.id AND r.isDeleted=0
     WHERE p.est_orphelin=1 AND DATE(r.whendone) BETWEEN ? AND ?
 ");
-$stmtOrph->execute([$filtreDebut,$filtreFin]);
+$stmtOrph->execute([$filtreDebut, $filtreFin]);
 $nbOrphelinsAma = (int)$stmtOrph->fetchColumn();
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -351,7 +343,7 @@ $topProvenances->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
 $topProvenances = $topProvenances->fetchAll();
 
 // ════════════════════════════════════════════════════════════════════════════
-// 14. Audit qualité : modifications (table sans isDeleted, colonne user_id)
+// 14. Audit qualité : modifications
 // ════════════════════════════════════════════════════════════════════════════
 $auditModifs = $pdo->prepare("
     SELECT COUNT(*) AS nb_modifs,
@@ -361,7 +353,7 @@ $auditModifs = $pdo->prepare("
     WHERE DATE(whendone) BETWEEN :d AND :f
 ");
 $auditModifs->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
-$auditModifs = $auditModifs->fetch();
+$auditModifs = $auditModifs->fetch() ?: ['nb_modifs'=>0,'nb_recus_modifies'=>0,'nb_users_modificateurs'=>0];
 
 $tauxModif = $kpi['nb_recus'] > 0
     ? round(($auditModifs['nb_recus_modifies'] / $kpi['nb_recus']) * 100, 2) : 0;
@@ -377,7 +369,6 @@ $topMotifs = $pdo->prepare("
 $topMotifs->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
 $topMotifs = $topMotifs->fetchAll();
 
-// Modifs par type
 $modifsParType = $pdo->prepare("
     SELECT type_recu, COUNT(*) AS nb
     FROM modifications_recus
@@ -387,7 +378,6 @@ $modifsParType = $pdo->prepare("
 $modifsParType->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
 $modifsParType = $modifsParType->fetchAll();
 
-// Top utilisateurs modificateurs
 $topModificateurs = $pdo->prepare("
     SELECT u.nom, u.prenom, u.role, COUNT(m.id) AS nb_modifs
     FROM modifications_recus m
@@ -401,7 +391,7 @@ $topModificateurs->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
 $topModificateurs = $topModificateurs->fetchAll();
 
 // ════════════════════════════════════════════════════════════════════════════
-// 15. Patients fidèles (≥ 2 visites)
+// 15. Patients fidèles
 // ════════════════════════════════════════════════════════════════════════════
 $patientsFideles = $pdo->prepare("
     SELECT p.id, p.nom, p.telephone, p.age, p.sexe, p.est_orphelin,
@@ -420,7 +410,7 @@ $patientsFideles->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
 $patientsFideles = $patientsFideles->fetchAll();
 
 // ════════════════════════════════════════════════════════════════════════════
-// 16. Approvisionnements pharmacie (joint avec produits pour la valeur)
+// 16. Approvisionnements pharmacie
 // ════════════════════════════════════════════════════════════════════════════
 $approvis = $pdo->prepare("
     SELECT COUNT(ap.id)                              AS nb_approvis,
@@ -431,22 +421,22 @@ $approvis = $pdo->prepare("
     WHERE ap.isDeleted=0 AND ap.date_appro BETWEEN :d AND :f
 ");
 $approvis->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
-$approvis = $approvis->fetch();
+$approvis = $approvis->fetch() ?: ['nb_approvis'=>0,'total_qte_entree'=>0,'valeur_totale'=>0];
 
 // ════════════════════════════════════════════════════════════════════════════
 // 17. Taux d'utilisation des carnets
 // ════════════════════════════════════════════════════════════════════════════
 $statsCarnets = $pdo->prepare("
     SELECT
-        SUM(lc.avec_carnet) AS nb_avec_carnet,
-        COUNT(*)             AS nb_total,
+        COALESCE(SUM(lc.avec_carnet),0) AS nb_avec_carnet,
+        COUNT(*)                         AS nb_total,
         COALESCE(SUM(lc.tarif_carnet),0) AS revenu_carnets
     FROM lignes_consultation lc
     JOIN recus r ON r.id = lc.recu_id AND r.isDeleted=0
     WHERE lc.isDeleted=0 AND DATE(r.whendone) BETWEEN :d AND :f
 ");
 $statsCarnets->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
-$statsCarnets = $statsCarnets->fetch();
+$statsCarnets = $statsCarnets->fetch() ?: ['nb_avec_carnet'=>0,'nb_total'=>0,'revenu_carnets'=>0];
 $tauxCarnet = $statsCarnets['nb_total'] > 0
     ? round(($statsCarnets['nb_avec_carnet'] / $statsCarnets['nb_total']) * 100, 1) : 0;
 
@@ -455,8 +445,8 @@ $tauxCarnet = $statsCarnets['nb_total'] > 0
 // ════════════════════════════════════════════════════════════════════════════
 $record = ['jour'=>null,'patients'=>0,'recettes'=>0];
 foreach ($evolution as $e) {
-    if ($e['recettes'] > $record['recettes']) {
-        $record = ['jour'=>$e['jour'], 'patients'=>$e['nb_patients'], 'recettes'=>$e['recettes']];
+    if ((float)$e['recettes'] > $record['recettes']) {
+        $record = ['jour'=>$e['jour'], 'patients'=>(int)$e['nb_patients'], 'recettes'=>(float)$e['recettes']];
     }
 }
 
@@ -603,10 +593,10 @@ include ROOT_PATH . '/templates/layouts/header.php';
     <div class="row g-3 mb-3">
         <?php
         $kpiCards = [
-            ['bi-people-fill',      '#1565c0', '#dbeafe', number_format($kpi['nb_patients'],0,',',' '),         'Patients uniques',  $varPatients],
-            ['bi-receipt',          '#2e7d32', '#dcfce7', number_format($kpi['nb_recus'],0,',',' '),             'Reçus émis',        $varRecus],
-            ['bi-cash-stack',       '#e65100', '#fef3e2', number_format($kpi['total_encaisse'],0,',',' ').' F', 'Total encaissé',     $varEncaisse],
-            ['bi-heart-pulse-fill', '#7b1fa2', '#f3e8ff', number_format($kpi['nb_gratuits'],0,',',' '),          'Gratuits/Orphelins', $varGratuits],
+            ['bi-people-fill',      '#1565c0', '#dbeafe', fmt($kpi['nb_patients']),         'Patients uniques',  $varPatients],
+            ['bi-receipt',          '#2e7d32', '#dcfce7', fmt($kpi['nb_recus']),             'Reçus émis',        $varRecus],
+            ['bi-cash-stack',       '#e65100', '#fef3e2', fmt($kpi['total_encaisse']).' F', 'Total encaissé',     $varEncaisse],
+            ['bi-heart-pulse-fill', '#7b1fa2', '#f3e8ff', fmt($kpi['nb_gratuits']),          'Gratuits/Orphelins', $varGratuits],
         ];
         foreach ($kpiCards as [$icon, $color, $bg, $val, $label, $var]):
             $vc = $var > 0 ? '#2e7d32' : ($var < 0 ? '#d32f2f' : '#757575');
@@ -639,7 +629,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
             <div class="card border-0 shadow-sm h-100" style="border-left:4px solid #00695c !important;">
                 <div class="card-body">
                     <div class="text-muted small text-uppercase">Panier moyen</div>
-                    <div class="fw-bold fs-5" style="color:#00695c;"><?= number_format($kpi['panier_moyen'],0,',',' ') ?> F</div>
+                    <div class="fw-bold fs-5" style="color:#00695c;"><?= fmt($kpi['panier_moyen']) ?> F</div>
                     <small class="text-muted">par reçu payant</small>
                 </div>
             </div>
@@ -649,7 +639,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                 <div class="card-body">
                     <div class="text-muted small text-uppercase">Taux subvention sociale</div>
                     <div class="fw-bold fs-5" style="color:#f57f17;"><?= $tauxSubvention ?>%</div>
-                    <small class="text-muted"><?= number_format($kpi['total_subventionne'],0,',',' ') ?> F offerts</small>
+                    <small class="text-muted"><?= fmt($kpi['total_subventionne']) ?> F offerts</small>
                 </div>
             </div>
         </div>
@@ -666,14 +656,14 @@ include ROOT_PATH . '/templates/layouts/header.php';
             <div class="card border-0 shadow-sm h-100" style="border-left:4px solid #6a1b9a !important;">
                 <div class="card-body">
                     <div class="text-muted small text-uppercase">Valeur stock pharmacie</div>
-                    <div class="fw-bold fs-5" style="color:#6a1b9a;"><?= number_format($valeurStock,0,',',' ') ?> F</div>
+                    <div class="fw-bold fs-5" style="color:#6a1b9a;"><?= fmt($valeurStock) ?> F</div>
                     <small class="text-muted"><?= $stockTotalActuel ?> unités · <?= $qteVenduePeriode ?> vendues</small>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- KPI tertiaires : carnets, labo, orphelins AMA -->
+    <!-- KPI tertiaires -->
     <div class="row g-3 mb-4">
         <div class="col-md-4">
             <div class="card border-0 shadow-sm h-100" style="border-left:4px solid #1976d2 !important;">
@@ -682,7 +672,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                     <div class="fw-bold fs-5" style="color:#1976d2;"><?= $tauxCarnet ?>%</div>
                     <small class="text-muted">
                         <?= (int)$statsCarnets['nb_avec_carnet'] ?> consultations avec carnet ·
-                        <?= number_format($statsCarnets['revenu_carnets'],0,',',' ') ?> F générés
+                        <?= fmt($statsCarnets['revenu_carnets']) ?> F générés
                     </small>
                 </div>
             </div>
@@ -691,7 +681,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
             <div class="card border-0 shadow-sm h-100" style="border-left:4px solid #006064 !important;">
                 <div class="card-body">
                     <div class="text-muted small text-uppercase">Part Laboratoire (examens)</div>
-                    <div class="fw-bold fs-5" style="color:#006064;"><?= number_format($totalLabo,0,',',' ') ?> F</div>
+                    <div class="fw-bold fs-5" style="color:#006064;"><?= fmt($totalLabo) ?> F</div>
                     <small class="text-muted">à reverser au labo sur la période</small>
                 </div>
             </div>
@@ -716,7 +706,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                 <strong style="color:#e65100;">🏆 Meilleure journée :</strong>
                 <span class="ms-2"><?= date('l d F Y', strtotime($record['jour'])) ?></span>
                 <span class="badge bg-success ms-2"><?= $record['patients'] ?> patients</span>
-                <span class="badge bg-warning text-dark ms-1"><?= number_format($record['recettes'],0,',',' ') ?> F</span>
+                <span class="badge bg-warning text-dark ms-1"><?= fmt($record['recettes']) ?> F</span>
             </div>
         </div>
     </div>
@@ -865,9 +855,9 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                     <span class="badge" style="background:#7b1fa2;"><?= $a['nb_orphelins'] ?></span>
                                     <?php else: ?><span class="text-muted">-</span><?php endif; ?>
                                 </td>
-                                <td class="text-end text-muted small"><?= number_format($a['tarif'],0,',',' ') ?> F</td>
+                                <td class="text-end text-muted small"><?= fmt($a['tarif']) ?> F</td>
                                 <td class="text-end fw-bold" style="color:#2e7d32;">
-                                    <?= number_format($a['revenu_genere'],0,',',' ') ?> F
+                                    <?= fmt($a['revenu_genere']) ?> F
                                 </td>
                             </tr>
                         <?php endforeach; else: ?>
@@ -895,17 +885,17 @@ include ROOT_PATH . '/templates/layouts/header.php';
                             </tr>
                         </thead>
                         <tbody>
-                        <?php if ($topProduits): foreach ($topProduits as $i => $p): ?>
+                        <?php if ($topProduits): foreach ($topProduits as $i => $prod): ?>
                             <tr>
                                 <td><span class="badge bg-secondary"><?= $i+1 ?></span></td>
-                                <td class="fw-semibold"><?= h($p['nom']) ?></td>
-                                <td><small class="text-muted"><?= h($p['forme']) ?></small></td>
+                                <td class="fw-semibold"><?= h($prod['nom']) ?></td>
+                                <td><small class="text-muted"><?= h($prod['forme']) ?></small></td>
                                 <td class="text-center">
-                                    <span class="badge" style="background:#6a1b9a;"><?= $p['total_qte'] ?></span>
+                                    <span class="badge" style="background:#6a1b9a;"><?= $prod['total_qte'] ?></span>
                                 </td>
-                                <td class="text-end text-muted small"><?= number_format($p['prix_moyen'],0,',',' ') ?> F</td>
+                                <td class="text-end text-muted small"><?= fmt($prod['prix_moyen']) ?> F</td>
                                 <td class="text-end fw-bold" style="color:#2e7d32;">
-                                    <?= number_format($p['total_revenu'],0,',',' ') ?> F
+                                    <?= fmt($prod['total_revenu']) ?> F
                                 </td>
                             </tr>
                         <?php endforeach; else: ?>
@@ -942,12 +932,14 @@ include ROOT_PATH . '/templates/layouts/header.php';
                 </thead>
                 <tbody>
                 <?php
-                $maxEncaisse = max(1, ...array_column($perfPercep, 'total_encaisse'));
+                $encaisses = array_map(fn($x) => (float)($x['total_encaisse'] ?? 0), $perfPercep);
+                $maxEncaisse = !empty($encaisses) ? max(1, max($encaisses)) : 1;
                 foreach ($perfPercep as $idx => $p):
-                    $pct = round(($p['total_encaisse'] / $maxEncaisse) * 100);
-                    $medal = $idx===0 && $p['total_encaisse']>0 ? '🥇' :
-                             ($idx===1 && $p['total_encaisse']>0 ? '🥈' :
-                             ($idx===2 && $p['total_encaisse']>0 ? '🥉' : ''));
+                    $totalEnc = (float)($p['total_encaisse'] ?? 0);
+                    $pct = round(($totalEnc / $maxEncaisse) * 100);
+                    $medal = $idx===0 && $totalEnc>0 ? '🥇' :
+                             ($idx===1 && $totalEnc>0 ? '🥈' :
+                             ($idx===2 && $totalEnc>0 ? '🥉' : ''));
                 ?>
                     <tr>
                         <td>
@@ -972,9 +964,9 @@ include ROOT_PATH . '/templates/layouts/header.php';
                             <span class="badge" style="background:#7b1fa2;"><?= $p['nb_gratuits'] ?></span>
                             <?php else: ?><span class="text-muted">-</span><?php endif; ?>
                         </td>
-                        <td class="text-end text-muted small"><?= number_format($p['panier_moyen'],0,',',' ') ?> F</td>
+                        <td class="text-end text-muted small"><?= fmt($p['panier_moyen']) ?> F</td>
                         <td class="text-end fw-bold" style="color:#2e7d32;">
-                            <?= number_format($p['total_encaisse'],0,',',' ') ?> F
+                            <?= fmt($p['total_encaisse']) ?> F
                         </td>
                         <td style="min-width:150px;">
                             <div class="progress" style="height:10px;">
@@ -1020,7 +1012,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         'FAIBLE'     => '<span class="badge bg-warning text-dark">STOCK FAIBLE</span>',
                         default      => '<span class="badge bg-secondary">'.h($s['statut']).'</span>'
                     };
-                    $valLigne = $s['stock_actuel'] * $s['prix_unitaire'];
+                    $valLigne = (float)$s['stock_actuel'] * (float)$s['prix_unitaire'];
                 ?>
                     <tr>
                         <td class="fw-semibold"><?= h($s['nom']) ?></td>
@@ -1029,7 +1021,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                             <strong class="<?= $s['stock_actuel']<=0?'text-danger':'' ?>"><?= $s['stock_actuel'] ?></strong>
                         </td>
                         <td class="text-center text-muted"><?= $s['seuil_alerte'] ?></td>
-                        <td class="text-end text-muted small"><?= number_format($valLigne,0,',',' ') ?> F</td>
+                        <td class="text-end text-muted small"><?= fmt($valLigne) ?> F</td>
                         <td>
                             <?php if ($s['date_peremption']): ?>
                                 <?= date('d/m/Y', strtotime($s['date_peremption'])) ?>
@@ -1086,7 +1078,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                     <span class="badge bg-primary"><?= $pv['nb_recus'] ?></span>
                                 </td>
                                 <td class="text-end fw-bold" style="color:#2e7d32;">
-                                    <?= number_format($pv['total'],0,',',' ') ?> F
+                                    <?= fmt($pv['total']) ?> F
                                 </td>
                             </tr>
                         <?php endforeach; else: ?>
@@ -1130,7 +1122,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                     <span class="badge bg-warning text-dark"><?= $f['nb_visites'] ?></span>
                                 </td>
                                 <td class="text-end fw-bold" style="color:#2e7d32;">
-                                    <?= number_format($f['total_paye'],0,',',' ') ?> F
+                                    <?= fmt($f['total_paye']) ?> F
                                 </td>
                                 <td><small><?= date('d/m/Y', strtotime($f['derniere_visite'])) ?></small></td>
                             </tr>
@@ -1225,12 +1217,12 @@ include ROOT_PATH . '/templates/layouts/header.php';
                             <small class="text-muted">Entrées</small>
                         </div>
                         <div class="col-4">
-                            <div class="fs-4 fw-bold" style="color:#1b5e20;"><?= number_format($approvis['total_qte_entree'],0,',',' ') ?></div>
+                            <div class="fs-4 fw-bold" style="color:#1b5e20;"><?= fmt($approvis['total_qte_entree']) ?></div>
                             <small class="text-muted">Quantité</small>
                         </div>
                         <div class="col-4">
                             <div class="fs-4 fw-bold" style="color:#1b5e20;">
-                                <?= number_format($approvis['valeur_totale'],0,',',' ') ?> F
+                                <?= fmt($approvis['valeur_totale']) ?> F
                             </div>
                             <small class="text-muted">Valeur</small>
                         </div>
@@ -1240,15 +1232,15 @@ include ROOT_PATH . '/templates/layouts/header.php';
                     <ul class="list-group list-group-flush">
                         <li class="list-group-item d-flex justify-content-between px-0 py-2">
                             <span><i class="bi bi-archive me-2"></i>Stock total actuel</span>
-                            <strong><?= number_format($stockTotalActuel,0,',',' ') ?> unités</strong>
+                            <strong><?= fmt($stockTotalActuel) ?> unités</strong>
                         </li>
                         <li class="list-group-item d-flex justify-content-between px-0 py-2">
                             <span><i class="bi bi-cart-check me-2"></i>Quantité vendue (période)</span>
-                            <strong><?= number_format($qteVenduePeriode,0,',',' ') ?> unités</strong>
+                            <strong><?= fmt($qteVenduePeriode) ?> unités</strong>
                         </li>
                         <li class="list-group-item d-flex justify-content-between px-0 py-2">
                             <span><i class="bi bi-cash-coin me-2"></i>Valeur immobilisée</span>
-                            <strong style="color:#6a1b9a;"><?= number_format($valeurStock,0,',',' ') ?> F</strong>
+                            <strong style="color:#6a1b9a;"><?= fmt($valeurStock) ?> F</strong>
                         </li>
                     </ul>
                 </div>
@@ -1410,3 +1402,4 @@ HEREDOC;
 
 include ROOT_PATH . '/templates/layouts/footer.php';
 ?>
+

@@ -71,10 +71,14 @@
                 </li>
                 <?php endif; ?>
 
-                <?php if (Session::hasRole('percepteur')): ?>
+                <?php /* Espace Percepteur : accessible au percepteur ET à l'admin (pour saisie de reçus) */ ?>
+                <?php if (Session::hasRole('admin', 'percepteur')): ?>
                 <li class="nav-item">
                     <a class="nav-link <?= ($page === 'percepteur') ? 'active' : '' ?>" href="<?= url('index.php?page=percepteur') ?>">
                         <i class="bi bi-person-badge"></i> Espace Percepteur
+                        <?php if (Session::hasRole('admin')): ?>
+                            <span class="badge bg-light text-dark ms-1" title="Accès administrateur">admin</span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <?php endif; ?>
@@ -85,6 +89,33 @@
                         <i class="bi bi-person-vcard"></i> Patients
                     </a>
                 </li>
+
+                <!-- ── Règlements DirectAid AMA (admin + comptable) ── -->
+                <?php if (Session::hasRole('admin', 'comptable')): ?>
+                <li class="nav-item">
+                    <a class="nav-link position-relative <?= ($page === 'reglements') ? 'active' : '' ?>"
+                       href="<?= url('index.php?page=reglements') ?>">
+                        <i class="bi bi-cash-stack"></i> Règlements Orphelins
+                        <?php
+                        // Badge avec le nombre d'orphelins en instance
+                        try {
+                            $pdoNav = Database::getInstance();
+                            $nbInstance = (int)$pdoNav->query("
+                                SELECT COUNT(DISTINCT patient_id) 
+                                FROM recus 
+                                WHERE isDeleted = 0 
+                                  AND type_patient = 'orphelin' 
+                                  AND statut_reglement = 'en_instance'
+                            ")->fetchColumn();
+                            if ($nbInstance > 0):
+                        ?>
+                            <span class="badge rounded-pill bg-warning text-dark ms-1" title="<?= $nbInstance ?> orphelin(s) en instance">
+                                <?= $nbInstance ?>
+                            </span>
+                        <?php endif; } catch (Exception $e) {} ?>
+                    </a>
+                </li>
+                <?php endif; ?>
 
                 <?php if (Session::hasRole('admin', 'comptable')): ?>
                 <li class="nav-item dropdown">
@@ -115,6 +146,7 @@
 
             <!-- Nav droite : infos utilisateur -->
             <ul class="navbar-nav align-items-center gap-2">
+
                 <?php
                 $role = Session::getRole();
                 $badgeColor = match($role) { 'admin' => 'danger', 'comptable' => 'warning', default => 'info' };
@@ -126,6 +158,7 @@
                         <?= h(Session::get('user_nom', 'Inconnu')) ?> · <?= $roleLabel ?>
                     </span>
                 </li>
+
                 <li class="nav-item">
                     <a class="btn btn-outline-light btn-sm" href="<?= url('index.php?page=logout') ?>">
                         <i class="bi bi-box-arrow-right"></i> Déconnexion

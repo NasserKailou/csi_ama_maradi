@@ -33,6 +33,7 @@ $listeJour = $pdo->prepare("
     SELECT r.id, r.numero_recu, p.nom AS patient_nom, p.telephone,
            r.type_recu, r.type_patient, r.montant_total, r.montant_encaisse,
            r.whendone, p.est_orphelin,
+           r.statut_reglement, r.date_reglement, r.reglement_id,
            (SELECT COUNT(*) FROM modifications_recus mr WHERE mr.recu_id = r.id) AS nb_modifs
     FROM recus r
     JOIN patients p ON p.id = r.patient_id
@@ -49,18 +50,18 @@ $recusArchives = [];
 $dateDebut = $_GET['date_debut'] ?? '';
 $dateFin   = $_GET['date_fin']   ?? '';
 if ($dateDebut && $dateFin) {
-    $stmtArch = $pdo->prepare("
-        SELECT r.id, r.numero_recu, p.nom AS patient_nom, p.telephone,
-               r.type_recu, r.type_patient, r.montant_total, r.montant_encaisse,
-               r.whendone,
-               (SELECT COUNT(*) FROM modifications_recus mr WHERE mr.recu_id = r.id) AS nb_modifs
-        FROM recus r
-        JOIN patients p ON p.id = r.patient_id
-        WHERE r.isDeleted = 0
-          AND r.whodone = :uid
-          AND DATE(r.whendone) BETWEEN :deb AND :fin
-        ORDER BY r.whendone DESC
-    ");
+   $stmtArch = $pdo->prepare("
+    SELECT r.id, r.numero_recu, p.nom AS patient_nom, p.telephone,
+           r.type_recu, r.type_patient, r.montant_total, r.montant_encaisse,
+           r.whendone, r.statut_reglement, r.date_reglement,
+           (SELECT COUNT(*) FROM modifications_recus mr WHERE mr.recu_id = r.id) AS nb_modifs
+    FROM recus r
+    JOIN patients p ON p.id = r.patient_id
+    WHERE r.isDeleted = 0
+      AND r.whodone = :uid
+      AND DATE(r.whendone) BETWEEN :deb AND :fin
+    ORDER BY r.whendone DESC
+");
     $stmtArch->execute([':uid' => $userId, ':deb' => $dateDebut, ':fin' => $dateFin]);
     $recusArchives = $stmtArch->fetchAll();
 }
@@ -192,9 +193,19 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                 $bt = $badgeTypes[$r['type_recu']] ?? ['color' => '#757575', 'label' => $r['type_recu']];
                                 ?>
                                 <span class="badge" style="background:<?= $bt['color'] ?>"><?= $bt['label'] ?></span>
-                                <?php if ($r['type_patient'] === 'orphelin'): ?>
-                                    <span class="badge bg-secondary">GRATUIT</span>
-                                <?php endif; ?>
+                                        <?php if ($r['type_patient'] === 'orphelin'): ?>
+                                            <span class="badge bg-secondary">DirectAid</span>
+                                            <?php if (($r['statut_reglement'] ?? 'en_instance') === 'regle'): ?>
+                                                <span class="badge bg-success" title="Réglé le <?= date('d/m/Y', strtotime($r['date_reglement'])) ?>">
+                                                    <i class="bi bi-check-circle"></i> RÉGLÉ
+                                                </span>
+                                            <?php else: ?>
+                                                <span class="badge bg-warning text-dark" title="En attente de règlement DirectAid ">
+                                                    <i class="bi bi-hourglass-split"></i> EN INSTANCE
+                                                </span>
+                                            <?php endif; ?>
+                                        <?php endif; ?>
+
                             </td>
                             <td>
                                 <?php if ($r['type_patient'] === 'orphelin'): ?>
@@ -207,10 +218,19 @@ include ROOT_PATH . '/templates/layouts/header.php';
                             <td><small class="text-muted"><?= date('H:i', strtotime($r['whendone'])) ?></small></td>
                             <td>
                                 <!-- Modifier le reçu -->
-                                <button class="btn btn-sm btn-outline-warning me-1" title="Modifier ce reçu"
-                                        onclick="ouvrirModification(<?= (int)$r['id'] ?>, '<?= h($r['type_recu']) ?>')">
-                                    <i class="bi bi-pencil-square"></i>
-                                </button>
+                                <?php $estVerrouille = ($r['type_patient'] === 'orphelin' && ($r['statut_reglement'] ?? '') === 'regle'); ?>
+                                        <?php if ($estVerrouille): ?>
+                                            <button class="btn btn-sm btn-outline-secondary me-1" 
+                                                    title="Reçu déjà réglé par DirectAid AMA — modification interdite" disabled>
+                                                <i class="bi bi-lock"></i>
+                                            </button>
+                                        <?php else: ?>
+                                            <button class="btn btn-sm btn-outline-warning me-1" title="Modifier ce reçu"
+                                                    onclick="ouvrirModification(<?= (int)$r['id'] ?>, '<?= h($r['type_recu']) ?>')">
+                                                <i class="bi bi-pencil-square"></i>
+                                            </button>
+                                        <?php endif; ?>
+
                                 <!-- Examens -->
                                 <button class="btn btn-sm btn-outline-warning me-1" title="Prescrire des examens"
                                         data-bs-toggle="modal" data-bs-target="#modalExamens"
@@ -282,6 +302,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                             <th>Type</th>
                             <th>Montant</th>
                             <th>Date</th>
+                            <th>Statut</th>
                             <th>Modif.</th>
                         </tr>
                     </thead>
@@ -304,6 +325,21 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                     ? '<span class="text-danger fw-bold">0 F (GRATUIT)</span>'
                                     : formatMontant($r['montant_encaisse']) ?></td>
                             <td><?= formatDate($r['whendone']) ?></td>
+                            <td>
+                                    <?php if ($r['type_patient'] === 'orphelin'): ?>
+                                        <?php if (($r['statut_reglement'] ?? 'en_instance') === 'regle'): ?>
+                                            <span class="badge bg-success">RÉGLÉ</span>
+                                            <?php if ($r['date_reglement']): ?>
+                                                <br><small class="text-muted"><?= date('d/m/Y', strtotime($r['date_reglement'])) ?></small>
+                                            <?php endif; ?>
+                                        <?php else: ?>
+                                            <span class="badge bg-warning text-dark">EN INSTANCE</span>
+                                        <?php endif; ?>
+                                    <?php else: ?>
+                                        <span class="badge bg-light text-dark">—</span>
+                                    <?php endif; ?>
+                                </td>
+
                             <td>
                                 <?php if ($r['nb_modifs'] > 0): ?>
                                     <button class="btn btn-xs btn-outline-warning"
