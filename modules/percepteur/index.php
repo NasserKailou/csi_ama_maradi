@@ -786,425 +786,426 @@ foreach ($jsUrls as $constName => $urlValue) {
 let currentTypeRecu = 'normal';
 
 // ══════════════════════════════════════════════════════════════════════════
-//  FONCTIONS EXISTANTES — INCHANGÉES
+//  TOUT LE CODE EST ENCAPSULÉ DANS DOMContentLoaded
+//  → garantit que app.js (initPhoneAutocomplete, ajaxPost, showToast…)
+//    est chargé AVANT toute exécution
 // ══════════════════════════════════════════════════════════════════════════
+window.addEventListener('load', function () {
 
-function setTypeRecu(type) {
-    currentTypeRecu = type;
-    const header         = document.getElementById('modalPatientHeader');
-    const title          = document.getElementById('modalPatientTitle');
-    const block          = document.getElementById('typeConsultBlock');
-    const banner         = document.getElementById('gratuitBanner');
-    const sexeBlock      = document.getElementById('sexeBlock');
-    const provenanceBlk  = document.getElementById('provenanceBlock');
+    // ── setTypeRecu ──────────────────────────────────────────────────────
+    window.setTypeRecu = function(type) {
+        currentTypeRecu = type;
+        const header        = document.getElementById('modalPatientHeader');
+        const title         = document.getElementById('modalPatientTitle');
+        const block         = document.getElementById('typeConsultBlock');
+        const banner        = document.getElementById('gratuitBanner');
+        const sexeBlock     = document.getElementById('sexeBlock');
+        const provenanceBlk = document.getElementById('provenanceBlock');
 
-    document.getElementById('fTelephone').value  = '';
-    document.getElementById('fNomPatient').value = '';
-    document.getElementById('fAge').value        = '';
-    document.getElementById('consAvec').checked  = true;
+        document.getElementById('fTelephone').value  = '';
+        document.getElementById('fNomPatient').value = '';
+        document.getElementById('fAge').value        = '';
+        document.getElementById('consAvec').checked  = true;
 
-    if (type === 'orphelin') {
-        header.style.background     = '#7b1fa2';
-        title.innerHTML             = '<i class="bi bi-heart me-2"></i>Reçu Orphelin';
-        block.style.display         = 'none';
-        sexeBlock.style.display     = 'none';
-        provenanceBlk.style.display = 'none';
-        banner.classList.remove('d-none');
-        document.getElementById('sexeM').checked     = true;
-        document.getElementById('fProvenance').value = 'Maradi';
-    } else {
-        header.style.background     = 'var(--csi-green)';
-        title.innerHTML             = '<i class="bi bi-person-plus me-2"></i>Nouveau Patient Normal';
-        block.style.display         = '';
-        sexeBlock.style.display     = '';
-        provenanceBlk.style.display = '';
-        banner.classList.add('d-none');
-        document.getElementById('fProvenance').value = '';
-    }
-    document.getElementById('typeRecuHidden').value = type;
-}
+        if (type === 'orphelin') {
+            header.style.background     = '#7b1fa2';
+            title.innerHTML             = '<i class="bi bi-heart me-2"></i>Reçu Orphelin';
+            block.style.display         = 'none';
+            sexeBlock.style.display     = 'none';
+            provenanceBlk.style.display = 'none';
+            banner.classList.remove('d-none');
+            document.getElementById('sexeM').checked     = true;
+            document.getElementById('fProvenance').value = 'Maradi';
+        } else {
+            header.style.background     = 'var(--csi-green)';
+            title.innerHTML             = '<i class="bi bi-person-plus me-2"></i>Nouveau Patient Normal';
+            block.style.display         = '';
+            sexeBlock.style.display     = '';
+            provenanceBlk.style.display = '';
+            banner.classList.add('d-none');
+            document.getElementById('fProvenance').value = '';
+        }
+        document.getElementById('typeRecuHidden').value = type;
+    };
 
-initPhoneAutocomplete('fTelephone', function(p) {
-    document.getElementById('fNomPatient').value = p.nom;
-    document.getElementById('fAge').value        = p.age;
-    if (currentTypeRecu !== 'orphelin') {
-        document.getElementById('fProvenance').value = p.provenance || '';
-        const sexeRadio = document.querySelector('input[name="sexe"][value="' + p.sexe + '"]');
-        if (sexeRadio) sexeRadio.checked = true;
-    }
-});
-
-initPhoneAutocomplete('fTelAG', function(p) {
-    document.getElementById('fNomAG').value  = p.nom;
-    document.getElementById('fAgeAG').value  = p.age;
-});
-
-document.getElementById('btnEnregistrerPatient').addEventListener('click', function() {
-    const form = document.getElementById('formPatient');
-    const data = Object.fromEntries(new FormData(form));
-    if (!data.telephone || !data.nom || data.age === '' || data.age === undefined) {
-        showToast('warning', 'Veuillez remplir tous les champs obligatoires (téléphone, nom, âge).');
-        return;
-    }
-    if (data.telephone.replace(/\D/g, '').length !== 8) {
-        showToast('warning', 'Le numéro de téléphone doit contenir exactement 8 chiffres.');
-        return;
-    }
-    ajaxPost(SAVE_CONSULT_URL, data, function(res) {
-        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPatient')).hide();
-        if (res.pdf_url) window.open(res.pdf_url, '_blank');
-        setTimeout(() => location.reload(), 1000);
-    });
-});
-
-function saveActeGratuit() {
-    const form = document.getElementById('formActeGratuit');
-    const data = Object.fromEntries(new FormData(form));
-    if (!data.telephone || !data.nom || !data.acte_id) {
-        showToast('warning', 'Champs obligatoires manquants (téléphone, nom, acte).');
-        return;
-    }
-    if (data.telephone.replace(/\D/g, '').length !== 8) {
-        showToast('warning', 'Le numéro de téléphone doit contenir exactement 8 chiffres.');
-        return;
-    }
-    ajaxPost(SAVE_ACTE_GRAT_URL, data, function(res) {
-        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalActeGratuit')).hide();
-        if (res.pdf_url) window.open(res.pdf_url, '_blank');
-        setTimeout(() => location.reload(), 1000);
-    });
-}
-
-function openExamensModal(recuId, nom, num, typePatient) {
-    document.getElementById('examRecuId').value           = recuId;
-    document.getElementById('examPatientNom').textContent = nom;
-    document.getElementById('examNumeroRecu').textContent = '#' + String(num).padStart(5, '0');
-    document.querySelectorAll('.examen-chk').forEach(c => c.checked = false);
-
-    const isOrphelin = (typePatient === 'orphelin');
-    const banner     = document.getElementById('examGratuitBanner');
-
-    if (isOrphelin) {
-        banner.classList.remove('d-none');
-        document.querySelectorAll('.examen-prix-badge').forEach(function(badge) {
-            badge.innerHTML = '<s>' + badge.dataset.prixOriginal + '</s> <strong>0 F</strong>';
+    // ── Autocomplete téléphone (protégé) ─────────────────────────────────
+    if (typeof initPhoneAutocomplete === 'function') {
+        initPhoneAutocomplete('fTelephone', function(p) {
+            document.getElementById('fNomPatient').value = p.nom;
+            document.getElementById('fAge').value        = p.age;
+            if (currentTypeRecu !== 'orphelin') {
+                document.getElementById('fProvenance').value = p.provenance || '';
+                const sexeRadio = document.querySelector('input[name="sexe"][value="' + p.sexe + '"]');
+                if (sexeRadio) sexeRadio.checked = true;
+            }
+        });
+        initPhoneAutocomplete('fTelAG', function(p) {
+            document.getElementById('fNomAG').value = p.nom;
+            document.getElementById('fAgeAG').value = p.age;
         });
     } else {
-        banner.classList.add('d-none');
-        document.querySelectorAll('.examen-prix-badge').forEach(function(badge) {
-            badge.textContent = badge.dataset.prixOriginal;
-        });
+        console.warn('initPhoneAutocomplete non chargée (app.js absent ?)');
     }
 
-    document.getElementById('examRecuId').dataset.orphelin = isOrphelin ? '1' : '0';
-    updateSousTotal();
-}
-
-document.querySelectorAll('.examen-chk').forEach(chk => {
-    chk.addEventListener('change', updateSousTotal);
-});
-
-function updateSousTotal() {
-    const isOrphelin = document.getElementById('examRecuId').dataset.orphelin === '1';
-    let total = 0;
-    document.querySelectorAll('.examen-chk:checked').forEach(c => total += parseInt(c.dataset.cout));
-
-    if (isOrphelin && total > 0) {
-        document.getElementById('sousTotal').innerHTML =
-            '<s>' + new Intl.NumberFormat('fr-FR').format(total) + ' F</s> ' +
-            '<strong class="text-danger ms-1">0 F (GRATUIT)</strong>';
-    } else {
-        document.getElementById('sousTotal').textContent =
-            new Intl.NumberFormat('fr-FR').format(total) + ' F';
-    }
-}
-
-function saveExamens() {
-    const ids    = [...document.querySelectorAll('.examen-chk:checked')].map(c => c.value);
-    const recuId = document.getElementById('examRecuId').value;
-    if (!ids.length) { showToast('warning', 'Veuillez sélectionner au moins un examen.'); return; }
-    if (!recuId)     { showToast('warning', 'Aucun reçu de consultation lié.');           return; }
-    ajaxPost(SAVE_EXAMENS_URL, { recu_id: recuId, examens: ids.join(',') }, function(res) {
-        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalExamens')).hide();
-        if (res.pdf_url) window.open(res.pdf_url, '_blank');
-        setTimeout(() => location.reload(), 1000);
-    });
-}
-
-function openPharmacieModal(recuId, nom, num, typePatient) {
-    const isOrphelin = (typePatient === 'orphelin');
-    document.getElementById('pharmaRecuId').value            = recuId;
-    document.getElementById('pharmaRecuId').dataset.orphelin = isOrphelin ? '1' : '0';
-    document.getElementById('pharmaPatientNom').textContent  = nom;
-    document.getElementById('pharmaNumeroRecu').textContent  = '#' + String(num).padStart(5, '0');
-    document.querySelectorAll('.produit-qte').forEach(i => i.value = 0);
-
-    const banner = document.getElementById('pharmaGratuitBanner');
-    if (isOrphelin) {
-        banner.classList.remove('d-none');
-    } else {
-        banner.classList.add('d-none');
-    }
-    updateTotalPharma();
-}
-
-function updateTotalPharma() {
-    const isOrphelin = document.getElementById('pharmaRecuId').dataset.orphelin === '1';
-    let total = 0, count = 0;
-    document.querySelectorAll('.produit-qte').forEach(inp => {
-        const qty = parseInt(inp.value) || 0;
-        if (qty > 0) { total += qty * parseInt(inp.dataset.prix); count++; }
-    });
-
-    if (isOrphelin && total > 0) {
-        document.getElementById('totalPharma').innerHTML =
-            '<s>' + new Intl.NumberFormat('fr-FR').format(total) + ' F</s> ' +
-            '<strong class="text-danger ms-1">0 F (GRATUIT)</strong>';
-    } else {
-        document.getElementById('totalPharma').textContent =
-            new Intl.NumberFormat('fr-FR').format(total) + ' F';
-    }
-    document.getElementById('nbProduitsSelec').textContent = count;
-    document.getElementById('nbProduitsSelec').className   =
-        'badge ' + (count > 15 ? 'bg-danger' : (count > 0 ? 'bg-success' : 'bg-secondary'));
-}
-
-function savePharmacie() {
-    const items  = [];
-    const recuId = document.getElementById('pharmaRecuId').value;
-    document.querySelectorAll('.produit-qte').forEach(inp => {
-        const qty = parseInt(inp.value) || 0;
-        if (qty > 0) items.push({
-            id: inp.dataset.id, qte: qty,
-            nom: inp.dataset.nom, forme: inp.dataset.forme, prix: inp.dataset.prix
+    // ── Bouton Enregistrer Patient ───────────────────────────────────────
+    document.getElementById('btnEnregistrerPatient').addEventListener('click', function() {
+        const form = document.getElementById('formPatient');
+        const data = Object.fromEntries(new FormData(form));
+        if (!data.telephone || !data.nom || data.age === '' || data.age === undefined) {
+            showToast('warning', 'Veuillez remplir tous les champs obligatoires (téléphone, nom, âge).');
+            return;
+        }
+        if (data.telephone.replace(/\D/g, '').length !== 8) {
+            showToast('warning', 'Le numéro de téléphone doit contenir exactement 8 chiffres.');
+            return;
+        }
+        ajaxPost(SAVE_CONSULT_URL, data, function(res) {
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPatient')).hide();
+            if (res.pdf_url) window.open(res.pdf_url, '_blank');
+            setTimeout(() => location.reload(), 1000);
         });
     });
-    if (!items.length)     { showToast('warning', 'Aucun produit sélectionné.');      return; }
-    if (items.length > 15) { showToast('danger',  'Maximum 15 produits par reçu.');   return; }
-    if (!recuId)           { showToast('warning', 'Aucun reçu de consultation lié.'); return; }
-    ajaxPost(SAVE_PHARMA_URL, { recu_id: recuId, produits: JSON.stringify(items) }, function(res) {
-        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPharmacie')).hide();
-        if (res.pdf_url) window.open(res.pdf_url, '_blank');
-        setTimeout(() => location.reload(), 1000);
-    });
-}
 
-function openRecapModal(recuId) {
-    document.getElementById('recapContent').innerHTML =
-        '<div class="text-center py-4"><div class="spinner-border text-secondary"></div></div>';
-    fetch(GET_RECAP_URL + '?recu_id=' + recuId, {
-        headers: { 'X-CSRF-TOKEN': CSRF_TOKEN }
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (data.html) document.getElementById('recapContent').innerHTML = data.html;
-        else           document.getElementById('recapContent').innerHTML = '<p class="text-muted">Aucune donnée.</p>';
-    });
-}
+    // ── Acte gratuit ─────────────────────────────────────────────────────
+    window.saveActeGratuit = function() {
+        const form = document.getElementById('formActeGratuit');
+        const data = Object.fromEntries(new FormData(form));
+        if (!data.telephone || !data.nom || !data.acte_id) {
+            showToast('warning', 'Champs obligatoires manquants (téléphone, nom, acte).');
+            return;
+        }
+        if (data.telephone.replace(/\D/g, '').length !== 8) {
+            showToast('warning', 'Le numéro de téléphone doit contenir exactement 8 chiffres.');
+            return;
+        }
+        ajaxPost(SAVE_ACTE_GRAT_URL, data, function(res) {
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('modalActeGratuit')).hide();
+            if (res.pdf_url) window.open(res.pdf_url, '_blank');
+            setTimeout(() => location.reload(), 1000);
+        });
+    };
 
-// ══════════════════════════════════════════════════════════════════════════
-//  NOUVELLES FONCTIONS — MODIFICATION & HISTORIQUE
-// ══════════════════════════════════════════════════════════════════════════
+    // ── Examens ──────────────────────────────────────────────────────────
+    window.openExamensModal = function(recuId, nom, num, typePatient) {
+        document.getElementById('examRecuId').value           = recuId;
+        document.getElementById('examPatientNom').textContent = nom;
+        document.getElementById('examNumeroRecu').textContent = '#' + String(num).padStart(5, '0');
+        document.querySelectorAll('.examen-chk').forEach(c => c.checked = false);
 
-function ouvrirModification(recuId, typeRecu) {
-    document.getElementById('modifRecuId').value      = recuId;
-    document.getElementById('modifTypeRecu').value    = typeRecu;
-    document.getElementById('modifMotifSelect').value = '';
-    document.getElementById('modifMotifAutre').value  = '';
-    document.getElementById('modifMotifAutre').classList.add('d-none');
+        const isOrphelin = (typePatient === 'orphelin');
+        const banner     = document.getElementById('examGratuitBanner');
 
-    document.getElementById('modifFormContainer').innerHTML =
-        '<div class="text-center py-4"><div class="spinner-border text-warning"></div></div>';
-
-    // GET_MODIF_FORM_URL = ".../ajax_get_modif_form.php" → on ajoute ? puis les params
-    const url = GET_MODIF_FORM_URL
-        + '?recu_id=' + encodeURIComponent(recuId)
-        + '&type='    + encodeURIComponent(typeRecu);
-
-    fetch(url, { credentials: 'same-origin' })
-    .then(function(r) {
-        const ct = r.headers.get('Content-Type') || '';
-        if (!r.ok) throw new Error('HTTP ' + r.status + ' — ' + r.statusText);
-        if (!ct.includes('application/json')) {
-            return r.text().then(function(t) {
-                throw new Error('Réponse non-JSON : ' + t.substring(0, 300));
+        if (isOrphelin) {
+            banner.classList.remove('d-none');
+            document.querySelectorAll('.examen-prix-badge').forEach(function(badge) {
+                badge.innerHTML = '<s>' + badge.dataset.prixOriginal + '</s> <strong>0 F</strong>';
+            });
+        } else {
+            banner.classList.add('d-none');
+            document.querySelectorAll('.examen-prix-badge').forEach(function(badge) {
+                badge.textContent = badge.dataset.prixOriginal;
             });
         }
-        return r.json();
-    })
-    .then(function(data) {
-        if (data.html) {
-            document.getElementById('modifFormContainer').innerHTML = data.html;
-            document.getElementById('modifNumeroRecu').textContent =
-                '#' + String(data.numero_recu || recuId).padStart(5, '0');
-            if (typeRecu === 'pharmacie') initModifPharmacieEvents();
+
+        document.getElementById('examRecuId').dataset.orphelin = isOrphelin ? '1' : '0';
+        updateSousTotal();
+    };
+
+    document.querySelectorAll('.examen-chk').forEach(chk => {
+        chk.addEventListener('change', updateSousTotal);
+    });
+
+    function updateSousTotal() {
+        const isOrphelin = document.getElementById('examRecuId').dataset.orphelin === '1';
+        let total = 0;
+        document.querySelectorAll('.examen-chk:checked').forEach(c => total += parseInt(c.dataset.cout));
+
+        if (isOrphelin && total > 0) {
+            document.getElementById('sousTotal').innerHTML =
+                '<s>' + new Intl.NumberFormat('fr-FR').format(total) + ' F</s> ' +
+                '<strong class="text-danger ms-1">0 F (GRATUIT)</strong>';
         } else {
-            document.getElementById('modifFormContainer').innerHTML =
-                '<div class="alert alert-danger">Erreur : ' + (data.error || '?') + '</div>';
+            document.getElementById('sousTotal').textContent =
+                new Intl.NumberFormat('fr-FR').format(total) + ' F';
         }
-    })
-    .catch(function(err) {
-        document.getElementById('modifFormContainer').innerHTML =
-            '<div class="alert alert-danger"><strong>Erreur :</strong> ' + err.message + '</div>';
-    });
-
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalModification')).show();
-}
-
-
-
-function toggleMotifAutre() {
-    const sel = document.getElementById('modifMotifSelect');
-    const txt = document.getElementById('modifMotifAutre');
-    if (sel.value === 'autre') {
-        txt.classList.remove('d-none');
-        txt.focus();
-    } else {
-        txt.classList.add('d-none');
     }
-}
+    window.updateSousTotal = updateSousTotal;
 
-function initModifPharmacieEvents() {
-    document.querySelectorAll('.modif-produit-qte').forEach(function(inp) {
-        inp.addEventListener('input', updateModifTotalPharma);
-    });
-    updateModifTotalPharma();
-}
+    window.saveExamens = function() {
+        const ids    = [...document.querySelectorAll('.examen-chk:checked')].map(c => c.value);
+        const recuId = document.getElementById('examRecuId').value;
+        if (!ids.length) { showToast('warning', 'Veuillez sélectionner au moins un examen.'); return; }
+        if (!recuId)     { showToast('warning', 'Aucun reçu de consultation lié.');           return; }
+        ajaxPost(SAVE_EXAMENS_URL, { recu_id: recuId, examens: ids.join(',') }, function(res) {
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('modalExamens')).hide();
+            if (res.pdf_url) window.open(res.pdf_url, '_blank');
+            setTimeout(() => location.reload(), 1000);
+        });
+    };
 
-function updateModifTotalPharma() {
-    let total = 0, count = 0;
-    document.querySelectorAll('.modif-produit-qte').forEach(function(inp) {
-        const qty = parseInt(inp.value) || 0;
-        const td  = inp.closest('tr') ? inp.closest('tr').querySelector('.modif-ligne-total') : null;
-        if (qty > 0) {
-            const ligneTot = qty * (parseInt(inp.dataset.prix) || 0);
-            total += ligneTot;
-            count++;
-            if (td) td.textContent = new Intl.NumberFormat('fr-FR').format(ligneTot) + ' F';
-        } else {
-            if (td) td.textContent = '0 F';
-        }
-    });
-    const totalEl = document.getElementById('modifTotalPharma');
-    if (totalEl) totalEl.textContent = new Intl.NumberFormat('fr-FR').format(total) + ' F';
-    const countEl = document.getElementById('modifNbProduits');
-    if (countEl) {
-        countEl.textContent = count;
-        countEl.className   = 'badge ' + (count > 15 ? 'bg-danger' : count > 0 ? 'bg-success' : 'bg-secondary');
-    }
-}
+    // ── Pharmacie ────────────────────────────────────────────────────────
+    window.openPharmacieModal = function(recuId, nom, num, typePatient) {
+        const isOrphelin = (typePatient === 'orphelin');
+        document.getElementById('pharmaRecuId').value            = recuId;
+        document.getElementById('pharmaRecuId').dataset.orphelin = isOrphelin ? '1' : '0';
+        document.getElementById('pharmaPatientNom').textContent  = nom;
+        document.getElementById('pharmaNumeroRecu').textContent  = '#' + String(num).padStart(5, '0');
+        document.querySelectorAll('.produit-qte').forEach(i => i.value = 0);
 
-function validerModification() {
-    const recuId   = document.getElementById('modifRecuId').value;
-    const typeRecu = document.getElementById('modifTypeRecu').value;
-    const motifSel = document.getElementById('modifMotifSelect').value;
-    const motifTxt = document.getElementById('modifMotifAutre').value.trim();
+        const banner = document.getElementById('pharmaGratuitBanner');
+        if (isOrphelin) banner.classList.remove('d-none');
+        else            banner.classList.add('d-none');
+        updateTotalPharma();
+    };
 
-    // ── 1. Validation motif ──────────────────────────────────────────────
-    if (!motifSel) {
-        showToast('warning', 'Veuillez sélectionner un motif de modification.');
-        return;
-    }
-    const motifFinal = (motifSel === 'autre') ? motifTxt : motifSel;
-    if (!motifFinal) {
-        showToast('warning', 'Veuillez préciser le motif de modification.');
-        return;
-    }
-
-    // ── 2. Vérifier que le formulaire est bien chargé ────────────────────
-    const container = document.getElementById('modifFormContainer');
-    if (container.querySelector('.spinner-border')) {
-        showToast('warning', 'Le formulaire est encore en cours de chargement, patientez.');
-        return;
-    }
-
-    // ── 3. Collecter les données selon le type ───────────────────────────
-    let payload = { recu_id: recuId, type_recu: typeRecu, motif: motifFinal };
-
-    if (typeRecu === 'consultation') {
-        const avecCarnet = container.querySelector('input[name="modif_avec_carnet"]:checked');
-        if (!avecCarnet) {
-            showToast('warning', 'Veuillez sélectionner le type de consultation.');
-            return;
-        }
-        payload.avec_carnet = avecCarnet.value;
-
-    } else if (typeRecu === 'examen') {
-        const chks = container.querySelectorAll('.modif-examen-chk:checked');
-        if (chks.length === 0) {
-            showToast('warning', 'Veuillez sélectionner au moins un examen.');
-            return;
-        }
-        payload.examens = [...chks].map(c => c.value).join(',');
-
-    } else if (typeRecu === 'pharmacie') {
-        const items = [];
-        container.querySelectorAll('.modif-produit-qte').forEach(function(inp) {
+    window.updateTotalPharma = function() {
+        const isOrphelin = document.getElementById('pharmaRecuId').dataset.orphelin === '1';
+        let total = 0, count = 0;
+        document.querySelectorAll('.produit-qte').forEach(inp => {
             const qty = parseInt(inp.value) || 0;
-            if (qty > 0) items.push({ id: inp.dataset.id, qte: qty });
+            if (qty > 0) { total += qty * parseInt(inp.dataset.prix); count++; }
         });
-        if (items.length === 0) {
-            showToast('warning', 'Veuillez saisir au moins une quantité.');
-            return;
-        }
-        if (items.length > 15) {
-            showToast('danger', 'Maximum 15 produits par reçu.');
-            return;
-        }
-        payload.produits = JSON.stringify(items);
-    }
 
-    // ── 4. Confirmation ──────────────────────────────────────────────────
-    if (!confirm('Confirmer la modification ?\nMotif : ' + motifFinal + '\n\nCette action sera enregistrée dans l\'historique.')) {
-        return;
-    }
-
-    // Dans validerModification(), remplacer le bloc ajaxPost par :
-            ajaxPost(SAVE_MODIF_URL, payload, function(res) {
-                bootstrap.Modal.getOrCreateInstance(document.getElementById('modalModification')).hide();
-                showToast('success', 'Modification enregistrée avec succès.');
-                if (res.pdf_url) window.open(res.pdf_url, '_blank');
-                setTimeout(() => location.reload(), 1200);
-            });
-
-}
-
-function voirHistorique(recuId) {
-    document.getElementById('historiqueContent').innerHTML =
-        '<div class="text-center py-4"><div class="spinner-border text-primary"></div></div>';
-    document.getElementById('histNumeroRecu').textContent =
-        '#' + String(recuId).padStart(5, '0');
-
-    // GET_HISTORIQUE_URL = ".../ajax_get_historique.php" → ? puis params
-    const url = GET_HISTORIQUE_URL + '?recu_id=' + encodeURIComponent(recuId);
-
-    fetch(url, { credentials: 'same-origin' })
-    .then(function(r) {
-        const ct = r.headers.get('Content-Type') || '';
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        if (!ct.includes('application/json')) {
-            return r.text().then(function(t) {
-                throw new Error('Non-JSON : ' + t.substring(0, 300));
-            });
-        }
-        return r.json();
-    })
-    .then(function(data) {
-        if (data.html) {
-            document.getElementById('historiqueContent').innerHTML = data.html;
+        if (isOrphelin && total > 0) {
+            document.getElementById('totalPharma').innerHTML =
+                '<s>' + new Intl.NumberFormat('fr-FR').format(total) + ' F</s> ' +
+                '<strong class="text-danger ms-1">0 F (GRATUIT)</strong>';
         } else {
-            document.getElementById('historiqueContent').innerHTML =
-                '<p class="text-muted text-center py-3">Aucune modification trouvée.</p>';
+            document.getElementById('totalPharma').textContent =
+                new Intl.NumberFormat('fr-FR').format(total) + ' F';
         }
-    })
-    .catch(function(err) {
+        document.getElementById('nbProduitsSelec').textContent = count;
+        document.getElementById('nbProduitsSelec').className   =
+            'badge ' + (count > 15 ? 'bg-danger' : (count > 0 ? 'bg-success' : 'bg-secondary'));
+    };
+
+    window.savePharmacie = function() {
+        const items  = [];
+        const recuId = document.getElementById('pharmaRecuId').value;
+        document.querySelectorAll('.produit-qte').forEach(inp => {
+            const qty = parseInt(inp.value) || 0;
+            if (qty > 0) items.push({
+                id: inp.dataset.id, qte: qty,
+                nom: inp.dataset.nom, forme: inp.dataset.forme, prix: inp.dataset.prix
+            });
+        });
+        if (!items.length)     { showToast('warning', 'Aucun produit sélectionné.');      return; }
+        if (items.length > 15) { showToast('danger',  'Maximum 15 produits par reçu.');   return; }
+        if (!recuId)           { showToast('warning', 'Aucun reçu de consultation lié.'); return; }
+        ajaxPost(SAVE_PHARMA_URL, { recu_id: recuId, produits: JSON.stringify(items) }, function(res) {
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPharmacie')).hide();
+            if (res.pdf_url) window.open(res.pdf_url, '_blank');
+            setTimeout(() => location.reload(), 1000);
+        });
+    };
+
+    // ── Récap ────────────────────────────────────────────────────────────
+    window.openRecapModal = function(recuId) {
+        document.getElementById('recapContent').innerHTML =
+            '<div class="text-center py-4"><div class="spinner-border text-secondary"></div></div>';
+        fetch(GET_RECAP_URL + '?recu_id=' + recuId, {
+            headers: { 'X-CSRF-TOKEN': CSRF_TOKEN }
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.html) document.getElementById('recapContent').innerHTML = data.html;
+            else           document.getElementById('recapContent').innerHTML = '<p class="text-muted">Aucune donnée.</p>';
+        });
+    };
+
+    // ══════════════════════════════════════════════════════════════════════
+    //  MODIFICATION & HISTORIQUE
+    // ══════════════════════════════════════════════════════════════════════
+
+    window.ouvrirModification = function(recuId, typeRecu) {
+        document.getElementById('modifRecuId').value      = recuId;
+        document.getElementById('modifTypeRecu').value    = typeRecu;
+        document.getElementById('modifMotifSelect').value = '';
+        document.getElementById('modifMotifAutre').value  = '';
+        document.getElementById('modifMotifAutre').classList.add('d-none');
+
+        document.getElementById('modifFormContainer').innerHTML =
+            '<div class="text-center py-4"><div class="spinner-border text-warning"></div></div>';
+
+        const url = GET_MODIF_FORM_URL
+            + '?recu_id=' + encodeURIComponent(recuId)
+            + '&type='    + encodeURIComponent(typeRecu);
+
+        fetch(url, { credentials: 'same-origin' })
+        .then(function(r) {
+            const ct = r.headers.get('Content-Type') || '';
+            if (!r.ok) throw new Error('HTTP ' + r.status + ' — ' + r.statusText);
+            if (!ct.includes('application/json')) {
+                return r.text().then(function(t) {
+                    throw new Error('Réponse non-JSON : ' + t.substring(0, 300));
+                });
+            }
+            return r.json();
+        })
+        .then(function(data) {
+            if (data.html) {
+                document.getElementById('modifFormContainer').innerHTML = data.html;
+                document.getElementById('modifNumeroRecu').textContent =
+                    '#' + String(data.numero_recu || recuId).padStart(5, '0');
+                if (typeRecu === 'pharmacie') initModifPharmacieEvents();
+            } else {
+                document.getElementById('modifFormContainer').innerHTML =
+                    '<div class="alert alert-danger">Erreur : ' + (data.error || '?') + '</div>';
+            }
+        })
+        .catch(function(err) {
+            document.getElementById('modifFormContainer').innerHTML =
+                '<div class="alert alert-danger"><strong>Erreur :</strong> ' + err.message + '</div>';
+        });
+
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalModification')).show();
+    };
+
+    window.toggleMotifAutre = function() {
+        const sel = document.getElementById('modifMotifSelect');
+        const txt = document.getElementById('modifMotifAutre');
+        if (sel.value === 'autre') {
+            txt.classList.remove('d-none');
+            txt.focus();
+        } else {
+            txt.classList.add('d-none');
+        }
+    };
+
+    function initModifPharmacieEvents() {
+        document.querySelectorAll('.modif-produit-qte').forEach(function(inp) {
+            inp.addEventListener('input', updateModifTotalPharma);
+        });
+        updateModifTotalPharma();
+    }
+
+    function updateModifTotalPharma() {
+        let total = 0, count = 0;
+        document.querySelectorAll('.modif-produit-qte').forEach(function(inp) {
+            const qty = parseInt(inp.value) || 0;
+            const td  = inp.closest('tr') ? inp.closest('tr').querySelector('.modif-ligne-total') : null;
+            if (qty > 0) {
+                const ligneTot = qty * (parseInt(inp.dataset.prix) || 0);
+                total += ligneTot;
+                count++;
+                if (td) td.textContent = new Intl.NumberFormat('fr-FR').format(ligneTot) + ' F';
+            } else {
+                if (td) td.textContent = '0 F';
+            }
+        });
+        const totalEl = document.getElementById('modifTotalPharma');
+        if (totalEl) totalEl.textContent = new Intl.NumberFormat('fr-FR').format(total) + ' F';
+        const countEl = document.getElementById('modifNbProduits');
+        if (countEl) {
+            countEl.textContent = count;
+            countEl.className   = 'badge ' + (count > 15 ? 'bg-danger' : count > 0 ? 'bg-success' : 'bg-secondary');
+        }
+    }
+
+    window.validerModification = function() {
+        const recuId   = document.getElementById('modifRecuId').value;
+        const typeRecu = document.getElementById('modifTypeRecu').value;
+        const motifSel = document.getElementById('modifMotifSelect').value;
+        const motifTxt = document.getElementById('modifMotifAutre').value.trim();
+
+        if (!motifSel) {
+            showToast('warning', 'Veuillez sélectionner un motif de modification.');
+            return;
+        }
+        const motifFinal = (motifSel === 'autre') ? motifTxt : motifSel;
+        if (!motifFinal) {
+            showToast('warning', 'Veuillez préciser le motif de modification.');
+            return;
+        }
+
+        const container = document.getElementById('modifFormContainer');
+        if (container.querySelector('.spinner-border')) {
+            showToast('warning', 'Le formulaire est encore en cours de chargement, patientez.');
+            return;
+        }
+
+        let payload = { recu_id: recuId, type_recu: typeRecu, motif: motifFinal };
+
+        if (typeRecu === 'consultation') {
+            const avecCarnet = container.querySelector('input[name="modif_avec_carnet"]:checked');
+            if (!avecCarnet) {
+                showToast('warning', 'Veuillez sélectionner le type de consultation.');
+                return;
+            }
+            payload.avec_carnet = avecCarnet.value;
+
+        } else if (typeRecu === 'examen') {
+            const chks = container.querySelectorAll('.modif-examen-chk:checked');
+            if (chks.length === 0) {
+                showToast('warning', 'Veuillez sélectionner au moins un examen.');
+                return;
+            }
+            payload.examens = [...chks].map(c => c.value).join(',');
+
+        } else if (typeRecu === 'pharmacie') {
+            const items = [];
+            container.querySelectorAll('.modif-produit-qte').forEach(function(inp) {
+                const qty = parseInt(inp.value) || 0;
+                if (qty > 0) items.push({ id: inp.dataset.id, qte: qty });
+            });
+            if (items.length === 0) {
+                showToast('warning', 'Veuillez saisir au moins une quantité.');
+                return;
+            }
+            if (items.length > 15) {
+                showToast('danger', 'Maximum 15 produits par reçu.');
+                return;
+            }
+            payload.produits = JSON.stringify(items);
+        }
+
+        if (!confirm('Confirmer la modification ?\nMotif : ' + motifFinal + '\n\nCette action sera enregistrée dans l\'historique.')) {
+            return;
+        }
+
+        ajaxPost(SAVE_MODIF_URL, payload, function(res) {
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('modalModification')).hide();
+            showToast('success', 'Modification enregistrée avec succès.');
+            if (res.pdf_url) window.open(res.pdf_url, '_blank');
+            setTimeout(() => location.reload(), 1200);
+        });
+    };
+
+    window.voirHistorique = function(recuId) {
         document.getElementById('historiqueContent').innerHTML =
-            '<div class="alert alert-danger"><strong>Erreur :</strong> ' + err.message + '</div>';
-    });
+            '<div class="text-center py-4"><div class="spinner-border text-primary"></div></div>';
+        document.getElementById('histNumeroRecu').textContent =
+            '#' + String(recuId).padStart(5, '0');
 
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalHistorique')).show();
-}
+        const url = GET_HISTORIQUE_URL + '?recu_id=' + encodeURIComponent(recuId);
 
+        fetch(url, { credentials: 'same-origin' })
+        .then(function(r) {
+            const ct = r.headers.get('Content-Type') || '';
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            if (!ct.includes('application/json')) {
+                return r.text().then(function(t) {
+                    throw new Error('Non-JSON : ' + t.substring(0, 300));
+                });
+            }
+            return r.json();
+        })
+        .then(function(data) {
+            if (data.html) {
+                document.getElementById('historiqueContent').innerHTML = data.html;
+            } else {
+                document.getElementById('historiqueContent').innerHTML =
+                    '<p class="text-muted text-center py-3">Aucune modification trouvée.</p>';
+            }
+        })
+        .catch(function(err) {
+            document.getElementById('historiqueContent').innerHTML =
+                '<div class="alert alert-danger"><strong>Erreur :</strong> ' + err.message + '</div>';
+        });
+
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalHistorique')).show();
+    };
+
+}); // fin DOMContentLoaded
 </script>
-
-<?php include ROOT_PATH . '/templates/layouts/footer.php'; ?>
+<?php require __DIR__ . '/../../templates/layouts/footer.php'; ?>
