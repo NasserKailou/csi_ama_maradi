@@ -76,7 +76,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <?= csrfMeta() ?>
-    <title>Connexion – CSI AMA Maradi</title>
+    <title>Connexion – CSI DirectAid Maradi</title>
     <!-- Bootstrap 5 CSS (local) -->
     <link href="<?= asset('bootstrap/css/bootstrap.min.css') ?>" rel="stylesheet">
     <!-- Bootstrap Icons (local) -->

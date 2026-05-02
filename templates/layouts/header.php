@@ -50,7 +50,7 @@
         <div class="collapse navbar-collapse" id="navMain">
             <!-- Nav gauche -->
             <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-                <?php if (Session::hasRole('admin')): ?>
+                <?php if (Session::hasRole('admin', 'comptable')): ?>
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle <?= in_array($page, ['dashboard','analytics']) ? 'active' : '' ?>"
                        href="#" data-bs-toggle="dropdown">
@@ -61,10 +61,12 @@
                                href="<?= url('index.php?page=dashboard') ?>">
                             <i class="bi bi-house-door me-2"></i>Vue principale
                         </a></li>
+                        <?php if (Session::hasRole('admin')): ?>
                         <li><a class="dropdown-item <?= $page==='analytics' ? 'active' : '' ?>"
                                href="<?= url('index.php?page=analytics') ?>">
                             <i class="bi bi-graph-up-arrow me-2"></i>Analytique avancée
                         </a></li>
+                        <?php endif; ?>
                     </ul>
                 </li>
                 <?php endif; ?>
