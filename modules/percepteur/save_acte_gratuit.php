@@ -2,6 +2,8 @@
 /**
  * API : Sauvegarde Acte Gratuit (CPN, Nourrissons, etc.)
  * POST : type_patient=acte_gratuit, telephone, nom, sexe, age, provenance, acte_id
+ *
+ * Statut de règlement : toujours 'regle' (rien à recouvrer auprès de DirectAid AMA)
  */
 ob_start();
 ini_set('display_errors', '0');
@@ -19,21 +21,18 @@ header('Content-Type: application/json');
 $pdo        = Database::getInstance();
 $userId     = Session::getUserId();
 $telephone  = preg_replace('/\D/', '', trim($_POST['telephone'] ?? ''));
-$nom        = trim($_POST['nom']       ?? '');
+$nom        = trim($_POST['nom'] ?? '');
 $sexe       = in_array($_POST['sexe'] ?? 'F', ['M','F']) ? $_POST['sexe'] : 'F';
-$age        = max(0, (int)($_POST['age']       ?? 0));
+$age        = max(0, (int)($_POST['age'] ?? 0));
 $provenance = trim($_POST['provenance'] ?? '');
-$acteId     = (int)($_POST['acte_id']   ?? 0);
+$acteId     = (int)($_POST['acte_id'] ?? 0);
 
-if (!$telephone || !$nom || !$acteId) {
-    jsonError('Téléphone, nom et acte obligatoires.');
-}
+if (!$telephone || !$nom || !$acteId) jsonError('Téléphone, nom et acte obligatoires.');
 if (strlen($telephone) !== 8 || !ctype_digit($telephone)) {
     jsonError('Le numéro de téléphone doit contenir exactement 8 chiffres.');
 }
 
 try {
-    // Vérifier que l'acte est bien gratuit
     $acte = $pdo->prepare("SELECT id, libelle, tarif FROM actes_medicaux WHERE id=:id AND est_gratuit=1 AND isDeleted=0 LIMIT 1");
     $acte->execute([':id' => $acteId]);
     $acteData = $acte->fetch();
@@ -55,7 +54,7 @@ try {
         $patientId = (int)$pdo->lastInsertId();
     }
 
-    // ── 2. Numéro de reçu séquentiel ──────────────────────────────────────
+    // ── 2. Numéro de reçu ─────────────────────────────────────────────────
     $numRecu = getNextNumeroRecu($pdo);
 
     // ── 3. Reçu (montant_total = tarif réel, montant_encaisse = 0) ────────
@@ -63,28 +62,38 @@ try {
     $montantEncaisse = 0;
 
     $pdo->prepare("
-        INSERT INTO recus (numero_recu, patient_id, type_recu, type_patient,
-                           montant_total, montant_encaisse, whodone)
-        VALUES (:num, :pat, 'consultation', 'acte_gratuit', :mt, :me, :who)
+        INSERT INTO recus
+            (numero_recu, patient_id, type_recu, type_patient,
+             statut_reglement, date_reglement,
+             montant_total, montant_encaisse, whodone)
+        VALUES
+            (:num, :pat, 'consultation', 'acte_gratuit',
+             'regle', NOW(),
+             :mt, :me, :who)
     ")->execute([
-        ':num'=>$numRecu, ':pat'=>$patientId,
-        ':mt'=>$montantTotal, ':me'=>$montantEncaisse, ':who'=>$userId
+        ':num' => $numRecu,
+        ':pat' => $patientId,
+        ':mt'  => $montantTotal,
+        ':me'  => $montantEncaisse,
+        ':who' => $userId,
     ]);
     $recuId = (int)$pdo->lastInsertId();
 
     // ── 4. Ligne consultation ─────────────────────────────────────────────
     $pdo->prepare("
-        INSERT INTO lignes_consultation (recu_id, acte_id, libelle, tarif, est_gratuit, avec_carnet, tarif_carnet, whodone)
+        INSERT INTO lignes_consultation
+            (recu_id, acte_id, libelle, tarif, est_gratuit, avec_carnet, tarif_carnet, whodone)
         VALUES (:rid, :aid, :lib, :tarif, 1, 0, 0, :who)
     ")->execute([
-        ':rid'=>$recuId, ':aid'=>$acteData['id'],
-        ':lib'=>$acteData['libelle'], ':tarif'=>$acteData['tarif'],
-        ':who'=>$userId
+        ':rid'   => $recuId,
+        ':aid'   => $acteData['id'],
+        ':lib'   => $acteData['libelle'],
+        ':tarif' => $acteData['tarif'],
+        ':who'   => $userId,
     ]);
 
     $pdo->commit();
 
-    // ── 5. PDF ────────────────────────────────────────────────────────────
     require_once ROOT_PATH . '/modules/pdf/PdfGenerator.php';
     $pdf     = new PdfGenerator($pdo);
     $pdfFile = $pdf->generateConsultation($recuId);
@@ -92,7 +101,7 @@ try {
     jsonSuccess('Acte gratuit enregistré.', [
         'recu_id'     => $recuId,
         'numero_recu' => $numRecu,
-        'pdf_url'     => url('uploads/pdf/' . basename($pdfFile))
+        'pdf_url'     => url('uploads/pdf/' . basename($pdfFile)),
     ]);
 
 } catch (PDOException $e) {

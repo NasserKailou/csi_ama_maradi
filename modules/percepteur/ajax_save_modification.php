@@ -66,6 +66,7 @@ $stmtRecu = $pdo->prepare("
     SELECT r.id,
            r.numero_recu,
            r.type_patient,
+           r.statut_reglement,
            r.montant_total,
            r.montant_encaisse
     FROM recus r
@@ -80,6 +81,17 @@ if (!$recu) {
     echo json_encode(['success' => false, 'message' => 'Reçu introuvable']);
     exit;
 }
+
+// Protection : interdire la modification d'un reçu orphelin déjà réglé par DirectAid AMA
+if ($recu['type_patient'] === 'orphelin' && $recu['statut_reglement'] === 'regle') {
+    echo json_encode([
+        'success' => false,
+        'message' => 'Ce reçu a déjà été réglé par DirectAid AMA. Modification interdite.'
+    ]);
+    exit;
+}
+
+
 
 // Source de vérité unique : recus.type_patient
 $isOrphelin  = ($recu['type_patient'] === 'orphelin');

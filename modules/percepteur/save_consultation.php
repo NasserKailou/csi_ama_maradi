@@ -2,13 +2,13 @@
 /**
  * API : Sauvegarde Consultation (Normal / Orphelin)
  * POST : type_patient, telephone, nom, sexe, age, provenance, avec_carnet
- * 
+ *
  * RÈGLES ORPHELIN :
- *  - sexe forcé à 'M' (côté serveur, ignorer le POST)
- *  - provenance forcée à 'Maradi' (côté serveur, ignorer le POST)
- *  - est_orphelin = 1 en base (table patients)
+ *  - sexe forcé à 'M' (côté serveur)
+ *  - provenance forcée à 'Maradi' (côté serveur)
+ *  - est_orphelin = 1 en base
  *  - montant_encaisse = 0 (gratuité totale)
- *  - montant_total conservé pour reporting bailleur
+ *  - statut_reglement = 'en_instance' (à régler par DirectAid AMA)
  */
 ob_start();
 ini_set('display_errors', '0');
@@ -32,10 +32,10 @@ $nom         = trim($_POST['nom'] ?? '');
 $age         = max(0, (int)($_POST['age'] ?? 0));
 $avecCarnet  = (int)($_POST['avec_carnet'] ?? 1);
 
-// ── Règles métier orphelin (serveur, ne pas faire confiance au POST) ────────
+// ── Règles métier orphelin ──────────────────────────────────────────────────
 if ($typePatient === 'orphelin') {
-    $sexe        = 'M';         // toujours masculin
-    $provenance  = 'Maradi';    // toujours Maradi
+    $sexe        = 'M';
+    $provenance  = 'Maradi';
     $estOrphelin = 1;
 } else {
     $sexe        = in_array($_POST['sexe'] ?? 'M', ['M','F']) ? $_POST['sexe'] : 'M';
@@ -51,82 +51,67 @@ if (strlen($telephone) !== 8 || !ctype_digit($telephone)) {
 try {
     $pdo->beginTransaction();
 
-    // ── 1. Upsert patient (déduplication par téléphone) ──────────────────
-    $stmtP = $pdo->prepare("
-        SELECT id FROM patients
-        WHERE telephone = :tel AND isDeleted = 0
-        LIMIT 1
-    ");
+    // ── 1. Upsert patient ─────────────────────────────────────────────────
+    $stmtP = $pdo->prepare("SELECT id FROM patients WHERE telephone = :tel AND isDeleted = 0 LIMIT 1");
     $stmtP->execute([':tel' => $telephone]);
     $patientId = $stmtP->fetchColumn();
 
     if ($patientId) {
-        // UPDATE existant — on met à jour est_orphelin si c'est un orphelin
         $pdo->prepare("
             UPDATE patients
-            SET nom          = :nom,
-                sexe         = :sexe,
-                age          = :age,
-                provenance   = :prov,
-                est_orphelin = :orp,
-                whodone      = :who
-            WHERE id = :id
+            SET nom=:nom, sexe=:sexe, age=:age, provenance=:prov, est_orphelin=:orp, whodone=:who
+            WHERE id=:id
         ")->execute([
-            ':nom'  => $nom,
-            ':sexe' => $sexe,
-            ':age'  => $age,
-            ':prov' => $provenance,
-            ':orp'  => $estOrphelin,
-            ':who'  => $userId,
-            ':id'   => $patientId,
+            ':nom'=>$nom, ':sexe'=>$sexe, ':age'=>$age, ':prov'=>$provenance,
+            ':orp'=>$estOrphelin, ':who'=>$userId, ':id'=>$patientId,
         ]);
     } else {
-        // INSERT nouveau patient avec est_orphelin
         $pdo->prepare("
-            INSERT INTO patients
-                (telephone, nom, sexe, age, provenance, est_orphelin, whodone)
-            VALUES
-                (:tel, :nom, :sexe, :age, :prov, :orp, :who)
+            INSERT INTO patients (telephone, nom, sexe, age, provenance, est_orphelin, whodone)
+            VALUES (:tel, :nom, :sexe, :age, :prov, :orp, :who)
         ")->execute([
-            ':tel'  => $telephone,
-            ':nom'  => $nom,
-            ':sexe' => $sexe,
-            ':age'  => $age,
-            ':prov' => $provenance,
-            ':orp'  => $estOrphelin,
-            ':who'  => $userId,
+            ':tel'=>$telephone, ':nom'=>$nom, ':sexe'=>$sexe, ':age'=>$age,
+            ':prov'=>$provenance, ':orp'=>$estOrphelin, ':who'=>$userId,
         ]);
         $patientId = (int)$pdo->lastInsertId();
     }
 
-    // ── 2. Numéro de reçu séquentiel global ─────────────────────────────
+    // ── 2. Numéro de reçu séquentiel global ───────────────────────────────
     $numRecu = getNextNumeroRecu($pdo);
 
-    // ── 3. Calcul montants ───────────────────────────────────────────────
-    $tarifConsult = TARIF_CONSULTATION;
-    $tarifCarnet  = ($avecCarnet && $typePatient === 'normal') ? TARIF_CARNET_SOINS : 0;
-    $montantTotal = $tarifConsult + $tarifCarnet;
-    // Orphelin : encaissé = 0, montant_total conservé pour reporting bailleur
+    // ── 3. Calcul des montants ────────────────────────────────────────────
+    $tarifConsult    = TARIF_CONSULTATION;
+    $tarifCarnet     = ($avecCarnet && $typePatient === 'normal') ? TARIF_CARNET_SOINS : 0;
+    $montantTotal    = $tarifConsult + $tarifCarnet;
     $montantEncaisse = ($typePatient === 'orphelin') ? 0 : $montantTotal;
 
-    // ── 4. Insérer le reçu ───────────────────────────────────────────────
+    // ── 4. Statut de règlement ────────────────────────────────────────────
+    $statutReglement = ($typePatient === 'orphelin') ? 'en_instance' : 'regle';
+    $dateReglement   = ($typePatient === 'orphelin') ? null : date('Y-m-d H:i:s');
+
+    // ── 5. Insertion du reçu ──────────────────────────────────────────────
     $pdo->prepare("
         INSERT INTO recus
             (numero_recu, patient_id, type_recu, type_patient,
+             statut_reglement, date_reglement,
              montant_total, montant_encaisse, whodone)
         VALUES
-            (:num, :pat, 'consultation', :tp, :mt, :me, :who)
+            (:num, :pat, 'consultation', :tp,
+             :sr, :dr,
+             :mt, :me, :who)
     ")->execute([
         ':num' => $numRecu,
         ':pat' => $patientId,
         ':tp'  => $typePatient,
+        ':sr'  => $statutReglement,
+        ':dr'  => $dateReglement,
         ':mt'  => $montantTotal,
         ':me'  => $montantEncaisse,
         ':who' => $userId,
     ]);
     $recuId = (int)$pdo->lastInsertId();
 
-    // ── 5. Ligne consultation ────────────────────────────────────────────
+    // ── 6. Ligne consultation ─────────────────────────────────────────────
     $acteBase = $pdo->query("
         SELECT id, libelle FROM actes_medicaux
         WHERE est_gratuit = 0 AND isDeleted = 0
@@ -136,8 +121,7 @@ try {
     if ($acteBase) {
         $pdo->prepare("
             INSERT INTO lignes_consultation
-                (recu_id, acte_id, libelle, tarif, est_gratuit,
-                 avec_carnet, tarif_carnet, whodone)
+                (recu_id, acte_id, libelle, tarif, est_gratuit, avec_carnet, tarif_carnet, whodone)
             VALUES
                 (:rid, :aid, :lib, :tarif, :eg, :ac, :tc, :who)
         ")->execute([
@@ -145,7 +129,7 @@ try {
             ':aid'   => $acteBase['id'],
             ':lib'   => $acteBase['libelle'],
             ':tarif' => $tarifConsult,
-            ':eg'    => $estOrphelin,           // 1 si orphelin, 0 sinon
+            ':eg'    => $estOrphelin,
             ':ac'    => (int)($avecCarnet && $typePatient === 'normal'),
             ':tc'    => $tarifCarnet,
             ':who'   => $userId,
@@ -154,7 +138,7 @@ try {
 
     $pdo->commit();
 
-    // ── 6. Générer le PDF ────────────────────────────────────────────────
+    // ── 7. Génération du PDF ──────────────────────────────────────────────
     require_once ROOT_PATH . '/modules/pdf/PdfGenerator.php';
     $pdf     = new PdfGenerator($pdo);
     $pdfFile = $pdf->generateConsultation($recuId);
@@ -167,7 +151,5 @@ try {
 
 } catch (PDOException $e) {
     if ($pdo->inTransaction()) $pdo->rollBack();
-    jsonError('Erreur BDD : ' . (APP_ENV === 'development'
-        ? $e->getMessage()
-        : 'Contactez l\'administrateur.'));
+    jsonError('Erreur BDD : ' . (APP_ENV === 'development' ? $e->getMessage() : 'Contactez l\'administrateur.'));
 }
