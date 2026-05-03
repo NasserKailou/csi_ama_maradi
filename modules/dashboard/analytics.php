@@ -9,6 +9,16 @@ requireRole('admin');
 $pdo       = Database::getInstance();
 $pageTitle = 'Analytique Avancée';
 
+if (!defined('TARIF_SUPPLEMENT_ADULTE')) {
+    define('TARIF_SUPPLEMENT_ADULTE', 100);
+}
+if (!defined('AGE_LIMITE_SUPPLEMENT')) {
+    define('AGE_LIMITE_SUPPLEMENT', 5);
+}
+if (!defined('TARIF_OBSERVATION')) {
+    define('TARIF_OBSERVATION', 1000);
+}
+
 /**
  * Formate un nombre en sécurité (gère NULL, chaînes vides, etc.)
  */
@@ -449,6 +459,46 @@ foreach ($evolution as $e) {
         $record = ['jour'=>$e['jour'], 'patients'=>(int)$e['nb_patients'], 'recettes'=>(float)$e['recettes']];
     }
 }
+// ════════════════════════════════════════════════════════════════════════════
+// 19. ✅ Redevances Ministère de la Santé (supplément âge > 5 ans)
+// ════════════════════════════════════════════════════════════════════════════
+$redevances = $pdo->prepare("
+    SELECT 
+        COUNT(lc.id) AS nb_redevances,
+        COALESCE(SUM(lc.tarif), 0) AS total_redevances,
+        COUNT(DISTINCT DATE(r.whendone)) AS nb_jours_actifs
+    FROM lignes_consultation lc
+    JOIN recus r ON r.id = lc.recu_id
+    WHERE lc.type_ligne = 'redevance'
+      AND lc.isDeleted = 0
+      AND r.isDeleted = 0
+      AND r.type_patient = 'normal'
+      AND DATE(r.whendone) BETWEEN :d AND :f
+");
+$redevances->execute([':d' => $filtreDebut, ':f' => $filtreFin]);
+$redevances = $redevances->fetch() ?: ['nb_redevances'=>0,'total_redevances'=>0,'nb_jours_actifs'=>0];
+
+// Détail jour par jour des redevances
+$redevancesJour = $pdo->prepare("
+    SELECT 
+        DATE(r.whendone) AS jour,
+        COUNT(lc.id) AS nb,
+        SUM(lc.tarif) AS total,
+        u.nom AS percepteur,
+        u.prenom AS percepteur_prenom
+    FROM lignes_consultation lc
+    JOIN recus r ON r.id = lc.recu_id
+    LEFT JOIN utilisateurs u ON u.id = lc.whodone
+    WHERE lc.type_ligne = 'redevance'
+      AND lc.isDeleted = 0
+      AND r.isDeleted = 0
+      AND r.type_patient = 'normal'
+      AND DATE(r.whendone) BETWEEN :d AND :f
+    GROUP BY DATE(r.whendone), u.id
+    ORDER BY jour DESC, percepteur
+");
+$redevancesJour->execute([':d' => $filtreDebut, ':f' => $filtreFin]);
+$redevancesJour = $redevancesJour->fetchAll();
 
 // ── Données JSON pour Chart.js ─────────────────────────────────────────────
 $labelsEvo       = array_map(fn($r) => date('d/m', strtotime($r['jour'])), $evolution);
@@ -665,7 +715,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
 
     <!-- KPI tertiaires -->
     <div class="row g-3 mb-4">
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="card border-0 shadow-sm h-100" style="border-left:4px solid #1976d2 !important;">
                 <div class="card-body">
                     <div class="text-muted small text-uppercase">Taux d'utilisation des carnets</div>
@@ -677,7 +727,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="card border-0 shadow-sm h-100" style="border-left:4px solid #006064 !important;">
                 <div class="card-body">
                     <div class="text-muted small text-uppercase">Part Laboratoire (examens)</div>
@@ -686,7 +736,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                 </div>
             </div>
         </div>
-        <div class="col-md-4">
+        <div class="col-md-3">
             <div class="card border-0 shadow-sm h-100" style="border-left:4px solid #7b1fa2 !important;">
                 <div class="card-body">
                     <div class="text-muted small text-uppercase">Orphelins DirectAid AMA</div>
@@ -695,6 +745,23 @@ include ROOT_PATH . '/templates/layouts/header.php';
                 </div>
             </div>
         </div>
+
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm h-100" style="border-left:4px solid #f57f17 !important;">
+                <div class="card-body">
+                    <div class="text-muted small text-uppercase">Redevance Ministère</div>
+                    <div class="fw-bold fs-5" style="color:#f57f17;">
+                        <?= fmt($redevances['total_redevances']) ?> F
+                    </div>
+                    <small class="text-muted">
+                        <?= (int)$redevances['nb_redevances'] ?> patients · 
+                        <a href="#section-redevances" class="text-decoration-none">voir détail</a>
+                    </small>
+                </div>
+            </div>
+        </div>
+
+
     </div>
 
     <!-- Record de la période -->
@@ -1244,6 +1311,107 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         </li>
                     </ul>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ✅ Redevances Ministère de la Santé -->
+    <div class="card border-0 shadow-sm mb-4" id="section-redevances">
+        <div class="card-header border-0 d-flex justify-content-between align-items-center"
+             style="background:linear-gradient(90deg,#f57f17,#ff8f00);color:#fff;">
+            <h6 class="mb-0">
+                <i class="bi bi-bank me-2"></i>
+                Redevances à reverser au Ministère de la Santé
+                <small class="ms-2 opacity-75">(supplément 100 F · âge &gt; <?= AGE_LIMITE_SUPPLEMENT ?> ans · patients normaux)</small>
+            </h6>
+            <a href="<?= url('modules/dashboard/imprimer_redevances.php?date_debut=' . $filtreDebut . '&date_fin=' . $filtreFin) ?>"
+               target="_blank" class="btn btn-sm btn-light fw-bold">
+                <i class="bi bi-printer-fill me-1"></i>Imprimer la situation
+            </a>
+        </div>
+        <div class="card-body">
+            <!-- Synthèse globale -->
+            <div class="row g-3 text-center mb-4">
+                <div class="col-md-4">
+                    <div class="p-3 rounded" style="background:#fff8e1;border-left:4px solid #f57f17;">
+                        <div class="text-muted small text-uppercase">Total à reverser</div>
+                        <div class="fs-3 fw-bold" style="color:#e65100;">
+                            <?= fmt($redevances['total_redevances']) ?> F
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="p-3 rounded" style="background:#e3f2fd;border-left:4px solid #1565c0;">
+                        <div class="text-muted small text-uppercase">Nombre de patients concernés</div>
+                        <div class="fs-3 fw-bold" style="color:#1565c0;">
+                            <?= fmt($redevances['nb_redevances']) ?>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="p-3 rounded" style="background:#e8f5e9;border-left:4px solid #2e7d32;">
+                        <div class="text-muted small text-uppercase">Jours actifs</div>
+                        <div class="fs-3 fw-bold" style="color:#2e7d32;">
+                            <?= (int)$redevances['nb_jours_actifs'] ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Détail jour par jour -->
+            <h6 class="text-muted small text-uppercase mb-2">
+                <i class="bi bi-calendar-date me-1"></i>Détail journalier par percepteur
+            </h6>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle table-sm mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Date</th>
+                            <th>Percepteur</th>
+                            <th class="text-center">Nb redevances</th>
+                            <th class="text-end">Montant</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    <?php if ($redevancesJour): foreach ($redevancesJour as $rj): ?>
+                        <tr>
+                            <td><?= date('d/m/Y', strtotime($rj['jour'])) ?></td>
+                            <td>
+                                <i class="bi bi-person-badge me-1" style="color:#1565c0;"></i>
+                                <?= h(($rj['percepteur'] ?? '—') . ' ' . ($rj['percepteur_prenom'] ?? '')) ?>
+                            </td>
+                            <td class="text-center">
+                                <span class="badge" style="background:#f57f17;"><?= $rj['nb'] ?></span>
+                            </td>
+                            <td class="text-end fw-bold" style="color:#e65100;">
+                                <?= fmt($rj['total']) ?> F
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                        <tr style="background:#fff8e1;">
+                            <td colspan="2" class="text-end fw-bold">TOTAL DE LA PÉRIODE :</td>
+                            <td class="text-center fw-bold"><?= (int)$redevances['nb_redevances'] ?></td>
+                            <td class="text-end fw-bold fs-5" style="color:#e65100;">
+                                <?= fmt($redevances['total_redevances']) ?> F
+                            </td>
+                        </tr>
+                    <?php else: ?>
+                        <tr>
+                            <td colspan="4" class="text-center text-muted py-3">
+                                <i class="bi bi-info-circle me-1"></i>
+                                Aucune redevance sur cette période 
+                                (aucun patient normal de plus de <?= AGE_LIMITE_SUPPLEMENT ?> ans).
+                            </td>
+                        </tr>
+                    <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="alert alert-info mt-3 mb-0" style="font-size:0.85rem;">
+                <i class="bi bi-info-circle-fill me-1"></i>
+                Le supplément de <strong><?= TARIF_SUPPLEMENT_ADULTE ?> F</strong> est collecté pour chaque patient normal de plus de <?= AGE_LIMITE_SUPPLEMENT ?> ans 
+                et doit être reversé au Ministère de la Santé selon la périodicité fixée par votre direction.
             </div>
         </div>
     </div>

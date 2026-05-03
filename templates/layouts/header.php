@@ -91,7 +91,7 @@
                 </li>
 
                 <!-- ── Règlements DirectAid AMA (admin + comptable) ── -->
-                <?php if (Session::hasRole('admin', 'comptable')): ?>
+                <?php if (Session::hasRole('admin', 'comptable','percepteur')): ?>
                 <li class="nav-item">
                     <a class="nav-link position-relative <?= ($page === 'reglements') ? 'active' : '' ?>"
                        href="<?= url('index.php?page=reglements') ?>">
