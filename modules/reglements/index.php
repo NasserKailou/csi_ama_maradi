@@ -4,12 +4,15 @@ ini_set('display_startup_errors', '1');
 error_reporting(E_ALL);
 
 requireRole('admin', 'comptable');
+
+// ✅ Récupérer la connexion PDO
 $pdo = Database::getInstance();
+
 $action = $_GET['action'] ?? 'liste';
 
-// =====================================================================
-// DISPATCHER
-// =====================================================================
+// ============================================================
+//  DISPATCHER UNIQUE — ⚠️ NE PAS DUPLIQUER
+// ============================================================
 switch ($action) {
     case 'ajax_details':
         ajaxDetails($pdo);
@@ -19,7 +22,7 @@ switch ($action) {
         exit;
     case 'enregistrer':
         enregistrerReglement($pdo);
-        exit;
+        exit;  // par sécurité même si redirect() fait déjà exit
     case 'facture':
         afficherFacture($pdo);
         exit;
@@ -28,6 +31,8 @@ switch ($action) {
         afficherListe($pdo);
         break;
 }
+
+
 
 // =====================================================================
 // AJAX : détails des reçus en instance d'un orphelin
