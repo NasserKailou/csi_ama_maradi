@@ -3,6 +3,12 @@
  * Module Percepteur – Interface principale (Cœur de métier)
  * AJOUT : Modification de reçu avec traçabilité (motif + historique)
  * AJOUT : Réimpression d'un reçu existant (bouton vert imprimante)
+ * AJOUT : Choix carnet / fiche au remplissage du formulaire Acte Gratuit
+ * AJOUT : Badge GRATUIT dans la liste du jour et les archives
+ * AJOUT : Supplément 100 F si âge > 5 ans pour patient normal (consultation standard)
+ * AJOUT : Badge GRATUIT limité aux types : consultation, examen, pharmacie
+ * AJOUT : Téléphone facultatif. Si vide, 99999999 est envoyé au serveur.
+ * AJOUT : Type de consultation "Mise en observation" (1000 F, sans redevance ni carnet)
  */
 requireRole('percepteur', 'admin', 'comptable');
 $pdo       = Database::getInstance();
@@ -20,7 +26,6 @@ if ($action === 'reimprimer' && !empty($_GET['recu_id'])) {
 
 /**
  * Réimprime un reçu existant en régénérant son PDF.
- * Utilise la classe PdfGenerator déjà existante (modules/pdf/PdfGenerator.php).
  */
 function reimprimerRecu(PDO $pdo, int $recuId): void {
     if ($recuId <= 0) {
@@ -28,7 +33,6 @@ function reimprimerRecu(PDO $pdo, int $recuId): void {
         die('Reçu invalide.');
     }
 
-    // Récupérer le reçu
     $stmt = $pdo->prepare("
         SELECT r.*, p.nom AS patient_nom
         FROM recus r
@@ -43,8 +47,6 @@ function reimprimerRecu(PDO $pdo, int $recuId): void {
         die('Reçu introuvable.');
     }
 
-    // Sécurité : un percepteur ne peut réimprimer que ses propres reçus
-    // Admin et comptable peuvent réimprimer n'importe quel reçu
     $role   = Session::getRole();
     $userId = Session::getUserId();
     if ($role === 'percepteur' && (int)$recu['whodone'] !== (int)$userId) {
@@ -52,7 +54,6 @@ function reimprimerRecu(PDO $pdo, int $recuId): void {
         die('Accès refusé : ce reçu ne vous appartient pas.');
     }
 
-    // Génération du PDF selon le type de reçu
     require_once ROOT_PATH . '/modules/pdf/PdfGenerator.php';
 
     try {
@@ -86,7 +87,7 @@ function reimprimerRecu(PDO $pdo, int $recuId): void {
 // SUITE DU MODULE
 // ═══════════════════════════════════════════════════════════════════════
 
-// ── Récupérer les actes médicaux configurés ────────────────────────────────
+// ── Récupérer les actes médicaux configurés ───────────────────────────────
 $actes         = $pdo->query("SELECT id, libelle, tarif, est_gratuit FROM actes_medicaux WHERE isDeleted=0 ORDER BY libelle")->fetchAll();
 $actesGratuits = array_filter($actes, fn($a) => $a['est_gratuit']);
 
@@ -128,21 +129,26 @@ $recusArchives = [];
 $dateDebut = $_GET['date_debut'] ?? '';
 $dateFin   = $_GET['date_fin']   ?? '';
 if ($dateDebut && $dateFin) {
-   $stmtArch = $pdo->prepare("
-    SELECT r.id, r.numero_recu, p.nom AS patient_nom, p.telephone,
-           r.type_recu, r.type_patient, r.montant_total, r.montant_encaisse,
-           r.whendone, r.statut_reglement, r.date_reglement,
-           (SELECT COUNT(*) FROM modifications_recus mr WHERE mr.recu_id = r.id) AS nb_modifs
-    FROM recus r
-    JOIN patients p ON p.id = r.patient_id
-    WHERE r.isDeleted = 0
-      AND r.whodone = :uid
-      AND DATE(r.whendone) BETWEEN :deb AND :fin
-    ORDER BY r.whendone DESC
-");
+    $stmtArch = $pdo->prepare("
+        SELECT r.id, r.numero_recu, p.nom AS patient_nom, p.telephone,
+               r.type_recu, r.type_patient, r.montant_total, r.montant_encaisse,
+               r.whendone, r.statut_reglement, r.date_reglement,
+               (SELECT COUNT(*) FROM modifications_recus mr WHERE mr.recu_id = r.id) AS nb_modifs
+        FROM recus r
+        JOIN patients p ON p.id = r.patient_id
+        WHERE r.isDeleted = 0
+          AND r.whodone = :uid
+          AND DATE(r.whendone) BETWEEN :deb AND :fin
+        ORDER BY r.whendone DESC
+    ");
     $stmtArch->execute([':uid' => $userId, ':deb' => $dateDebut, ':fin' => $dateFin]);
     $recusArchives = $stmtArch->fetchAll();
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// ✅ Helper pour le badge GRATUIT — limite aux types autorisés
+// ═══════════════════════════════════════════════════════════════════════
+$typesAvecBadgeGratuit = ['consultation', 'examen', 'pharmacie'];
 
 include ROOT_PATH . '/templates/layouts/header.php';
 ?>
@@ -156,6 +162,103 @@ include ROOT_PATH . '/templates/layouts/header.php';
 .modif-row td:first-child { border-left: 3px solid #ff6f00; }
 .historique-item { border-left: 3px solid #1565c0; padding-left: 10px; margin-bottom: 8px; }
 .historique-item .date-modif { font-size: .78rem; color: #888; }
+
+/* ═══ Boutons d'action — design moderne ═══ */
+.actions-recu { min-width: 200px; }
+
+.btn-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 8px;
+    color: #fff;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.2s ease-in-out;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    position: relative;
+}
+
+.btn-action:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    filter: brightness(1.1);
+}
+
+.btn-action:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+}
+
+.btn-action i { font-size: 1.05rem; }
+
+.btn-action-edit    { background: linear-gradient(135deg, #ff9800, #f57c00); }
+.btn-action-locked  { background: linear-gradient(135deg, #9e9e9e, #757575); cursor: not-allowed; opacity: 0.7; }
+.btn-action-exam    { background: linear-gradient(135deg, #ff7043, #e65100); }
+.btn-action-pharma  { background: linear-gradient(135deg, #00acc1, #006064); }
+.btn-action-recap   { background: linear-gradient(135deg, #546e7a, #263238); }
+.btn-action-print   { background: linear-gradient(135deg, #43a047, #2e7d32); }
+
+.btn-action:not(:disabled)::after {
+    content: '';
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.6);
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+.btn-action:hover:not(:disabled)::after { opacity: 1; }
+
+/* ═══ Options carnet / fiche acte gratuit ═══ */
+.ag-option-card {
+    transition: all 0.2s;
+    cursor: pointer;
+}
+.ag-option-card:hover {
+    border-color: #1565c0 !important;
+    background: #f5f9fc;
+}
+
+/* ═══ Encart récap montant consultation ═══ */
+.recap-montant-consult {
+    background: #e8f5e9;
+    border-left: 4px solid #2e7d32;
+    border-radius: 6px;
+    padding: 12px 16px;
+}
+.recap-montant-consult.with-supplement {
+    background: #fff3e0;
+    border-left-color: #ff9800;
+}
+.recap-montant-consult.with-observation {
+    background: #fff8e1;
+    border-left-color: #f9a825;
+}
+
+/* ═══ Choix type de consultation (standard / observation) ═══ */
+.tc-option-card {
+    transition: all 0.2s;
+    cursor: pointer;
+}
+.tc-option-card:hover {
+    border-color: #f57c00 !important;
+    background: #fffaf0;
+}
+.tc-option-card.active-standard {
+    border-color: #2e7d32 !important;
+    background: #e8f5e9;
+}
+.tc-option-card.active-observation {
+    border-color: #f57c00 !important;
+    background: #fff3e0;
+}
 </style>
 
 <div class="mt-4">
@@ -174,19 +277,19 @@ include ROOT_PATH . '/templates/layouts/header.php';
         <div class="col-md-4 col-lg-3 text-center">
             <button class="btn btn-normal btn-percepteur w-100" data-bs-toggle="modal" data-bs-target="#modalPatient" onclick="setTypeRecu('normal')">
                 <i class="bi bi-person-plus"></i> Reçu Patient Normal
-                <div class="small fw-normal mt-1 opacity-75">Consultation 300F / 400F</div>
+                <div class="small fw-normal mt-1 opacity-75">Consultation 300F / Observation 1000F</div>
             </button>
         </div>
         <div class="col-md-4 col-lg-3 text-center">
             <button class="btn btn-orphelin btn-percepteur w-100" data-bs-toggle="modal" data-bs-target="#modalPatient" onclick="setTypeRecu('orphelin')">
                 <i class="bi bi-heart"></i> Reçu Orphelin
-                <div class="small fw-normal mt-1 opacity-75"></div>
+                <div class="small fw-normal mt-1 opacity-75">Téléphone facultatif</div>
             </button>
         </div>
         <div class="col-md-4 col-lg-3 text-center">
             <button class="btn btn-gratuit btn-percepteur w-100" data-bs-toggle="modal" data-bs-target="#modalActeGratuit" onclick="setTypeRecu('acte_gratuit')">
                 <i class="bi bi-clipboard2-heart"></i> Reçu Actes Gratuits
-                <div class="small fw-normal mt-1 opacity-75">CPN, Nourrissons, etc.</div>
+                <div class="small fw-normal mt-1 opacity-75">Seul / + Carnet / + Carnet + Fiche</div>
             </button>
         </div>
     </div>
@@ -220,7 +323,11 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                 <?php endif; ?>
                             </td>
                             <td><?= h($r['patient_nom']) ?></td>
-                            <td><small><?= h($r['telephone']) ?></small></td>
+                            <td>
+                                <small>
+                                    <?= h(($r['telephone'] ?? '') === '99999999' ? 'Non renseigné' : $r['telephone']) ?>
+                                </small>
+                            </td>
                             <td>
                                 <?php
                                 $badgeTypes = [
@@ -229,8 +336,46 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                     'pharmacie'    => ['color' => '#006064', 'label' => 'Pharmacie'],
                                 ];
                                 $bt = $badgeTypes[$r['type_recu']] ?? ['color' => '#757575', 'label' => $r['type_recu']];
+
+                                // ✅ Détection observation : montant_encaisse 1000 F + type consultation
+                                $estObservation = (
+                                    $r['type_recu'] === 'consultation' &&
+                                    $r['type_patient'] !== 'acte_gratuit' &&
+                                    (int)$r['montant_total'] === 1000
+                                );
+
+                                // ✅ Badge GRATUIT seulement pour les types autorisés
+                                $afficheGratuit = (
+                                    $r['type_patient'] === 'acte_gratuit' &&
+                                    in_array($r['type_recu'], $typesAvecBadgeGratuit, true)
+                                );
                                 ?>
                                 <span class="badge" style="background:<?= $bt['color'] ?>"><?= $bt['label'] ?></span>
+
+                                <?php if ($estObservation): ?>
+                                    <span class="badge" style="background:#f9a825;color:#000;" title="Mise en observation (1000 F)">
+                                        <i class="bi bi-clipboard2-pulse"></i> OBSERVATION
+                                    </span>
+                                <?php endif; ?>
+
+                                <?php if ($afficheGratuit): ?>
+                                    <span class="badge" style="background:#1565c0;color:#fff;" title="Acte gratuit">
+                                        <i class="bi bi-gift"></i> GRATUIT
+                                    </span>
+
+                                    <?php if ($r['type_recu'] === 'consultation'): ?>
+                                        <?php if ((int)$r['montant_encaisse'] === 100): ?>
+                                            <span class="badge bg-info text-dark" title="Carnet inclus (100 F)">
+                                                <i class="bi bi-journal-medical"></i> + Carnet
+                                            </span>
+                                        <?php elseif ((int)$r['montant_encaisse'] === 400): ?>
+                                            <span class="badge bg-warning text-dark" title="Carnet + Fiche inclus (400 F)">
+                                                <i class="bi bi-file-earmark-medical"></i> + Carnet + Fiche
+                                            </span>
+                                        <?php endif; ?>
+                                    <?php endif; ?>
+                                <?php endif; ?>
+
                                 <?php if ($r['type_patient'] === 'orphelin'): ?>
                                     <span class="badge bg-secondary">DirectAid</span>
                                     <?php if (($r['statut_reglement'] ?? 'en_instance') === 'regle'): ?>
@@ -254,40 +399,40 @@ include ROOT_PATH . '/templates/layouts/header.php';
                             </td>
                             <td><small class="text-muted"><?= date('H:i', strtotime($r['whendone'])) ?></small></td>
                             <td>
-                                <div class="btn-group btn-group-sm" role="group" aria-label="Actions">
+                                <div class="actions-recu d-flex flex-wrap gap-1 justify-content-center">
                                     <?php $estVerrouille = ($r['type_patient'] === 'orphelin' && ($r['statut_reglement'] ?? '') === 'regle'); ?>
+
                                     <?php if ($estVerrouille): ?>
-                                        <button class="btn btn-secondary" title="Reçu déjà réglé par DirectAid AMA — modification interdite" disabled>
+                                        <button class="btn-action btn-action-locked"
+                                                title="Reçu déjà réglé par DirectAid AMA — modification interdite" disabled>
                                             <i class="bi bi-lock-fill"></i>
                                         </button>
                                     <?php else: ?>
-                                        <button class="btn btn-warning" title="Modifier ce reçu"
+                                        <button class="btn-action btn-action-edit" title="Modifier ce reçu"
                                                 onclick="ouvrirModification(<?= (int)$r['id'] ?>, '<?= h($r['type_recu']) ?>')">
                                             <i class="bi bi-pencil-fill"></i>
                                         </button>
                                     <?php endif; ?>
 
-                                    <button class="btn btn-warning text-white" title="Prescrire des examens"
-                                            style="background:#e65100; border-color:#e65100;"
+                                    <button class="btn-action btn-action-exam" title="Prescrire des examens"
                                             data-bs-toggle="modal" data-bs-target="#modalExamens"
                                             onclick="openExamensModal(<?= (int)$r['id'] ?>, '<?= h($r['patient_nom']) ?>', <?= (int)$r['numero_recu'] ?>, '<?= h($r['type_patient']) ?>')">
                                         <i class="bi bi-droplet-half"></i>
                                     </button>
 
-                                    <button class="btn btn-info text-white" title="Pharmacie"
-                                            style="background:#006064; border-color:#006064;"
+                                    <button class="btn-action btn-action-pharma" title="Pharmacie"
                                             data-bs-toggle="modal" data-bs-target="#modalPharmacie"
                                             onclick="openPharmacieModal(<?= (int)$r['id'] ?>, '<?= h($r['patient_nom']) ?>', <?= (int)$r['numero_recu'] ?>, '<?= h($r['type_patient']) ?>')">
                                         <i class="bi bi-capsule"></i>
                                     </button>
 
-                                    <button class="btn btn-dark" title="Récapitulatif"
+                                    <button class="btn-action btn-action-recap" title="Récapitulatif"
                                             data-bs-toggle="modal" data-bs-target="#modalRecap"
                                             onclick="openRecapModal(<?= (int)$r['id'] ?>)">
                                         <i class="bi bi-file-text-fill"></i>
                                     </button>
 
-                                    <button class="btn btn-success" title="Réimprimer le reçu"
+                                    <button class="btn-action btn-action-print" title="Réimprimer le reçu"
                                             onclick="reimprimerRecu(<?= (int)$r['id'] ?>)">
                                         <i class="bi bi-printer-fill"></i>
                                     </button>
@@ -345,9 +490,48 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                 <?php endif; ?>
                             </td>
                             <td><?= h($r['patient_nom']) ?></td>
-                            <td><?= h($r['telephone']) ?></td>
-                            <td><?= h(ucfirst($r['type_recu'])) ?></td>
-                            <td><?= $r['type_patient'] === 'orphelin' ? '<span class="text-danger fw-bold">0 F (GRATUIT)</span>' : formatMontant($r['montant_encaisse']) ?></td>
+                            <td><?= h(($r['telephone'] ?? '') === '99999999' ? 'Non renseigné' : $r['telephone']) ?></td>
+                            <td>
+                                <?= h(ucfirst($r['type_recu'])) ?>
+                                <?php
+                                $estObservationArch = (
+                                    $r['type_recu'] === 'consultation' &&
+                                    $r['type_patient'] !== 'acte_gratuit' &&
+                                    (int)$r['montant_total'] === 1000
+                                );
+
+                                $afficheGratuitArch = (
+                                    $r['type_patient'] === 'acte_gratuit' &&
+                                    in_array($r['type_recu'], $typesAvecBadgeGratuit, true)
+                                );
+                                ?>
+                                <?php if ($estObservationArch): ?>
+                                    <span class="badge ms-1" style="background:#f9a825;color:#000;font-size:.65rem;">
+                                        <i class="bi bi-clipboard2-pulse"></i> OBSERVATION
+                                    </span>
+                                <?php endif; ?>
+
+                                <?php if ($afficheGratuitArch): ?>
+                                    <span class="badge ms-1" style="background:#1565c0;color:#fff;font-size:.65rem;">
+                                        <i class="bi bi-gift"></i> GRATUIT
+                                    </span>
+
+                                    <?php if ($r['type_recu'] === 'consultation'): ?>
+                                        <?php if ((int)$r['montant_encaisse'] === 100): ?>
+                                            <span class="badge bg-info text-dark" style="font-size:.65rem;">+ Carnet</span>
+                                        <?php elseif ((int)$r['montant_encaisse'] === 400): ?>
+                                            <span class="badge bg-warning text-dark" style="font-size:.65rem;">+ Carnet + Fiche</span>
+                                        <?php endif; ?>
+                                    <?php endif; ?>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <?php if ($r['type_patient'] === 'orphelin'): ?>
+                                    <span class="text-danger fw-bold">0 F (GRATUIT)</span>
+                                <?php else: ?>
+                                    <?= formatMontant($r['montant_encaisse']) ?>
+                                <?php endif; ?>
+                            </td>
                             <td><?= formatDate($r['whendone']) ?></td>
                             <td>
                                 <?php if ($r['type_patient'] === 'orphelin'): ?>
@@ -399,7 +583,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
     </div>
 </div>
 
-<!-- ═══ TOUS LES MODAUX (inchangés) ═══ -->
+<!-- ═══ MODAUX ═══ -->
 
 <!-- MODAL : Formulaire Patient -->
 <div class="modal fade" id="modalPatient" tabindex="-1" data-bs-backdrop="static">
@@ -412,10 +596,14 @@ include ROOT_PATH . '/templates/layouts/header.php';
             <div class="modal-body">
                 <form id="formPatient" novalidate>
                     <input type="hidden" id="typeRecuHidden" name="type_patient" value="normal">
+                    
                     <div class="row g-3">
                         <div class="col-md-6">
-                            <label class="form-label">Téléphone <span class="text-danger">*</span> <small class="text-muted">(autocomplete dès 3 chiffres)</small></label>
-                            <input type="text" class="form-control" id="fTelephone" name="telephone" placeholder="Ex: 90 00 00 00" required autocomplete="off">
+                            <label class="form-label">
+                                Téléphone
+                                <small class="text-muted">(facultatif — 99999999 si non renseigné)</small>
+                            </label>
+                            <input type="text" class="form-control" id="fTelephone" name="telephone" placeholder="Ex: 90 00 00 00" autocomplete="off">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">Nom et Prénom <span class="text-danger">*</span></label>
@@ -437,38 +625,91 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         <div class="col-md-4">
                             <label class="form-label">Âge <span class="text-danger">*</span></label>
                             <input type="number" class="form-control" id="fAge" name="age" min="0" max="120" placeholder="0" required>
+                            <small class="text-muted" id="hintAgeSupp" style="display:none;">
+                                <i class="bi bi-info-circle"></i> +100 F supplément (âge &gt; 5 ans)
+                            </small>
                         </div>
                         <div class="col-md-4" id="provenanceBlock">
                             <label class="form-label">Provenance</label>
                             <input type="text" class="form-control" id="fProvenance" name="provenance" placeholder="Ville / Village">
                         </div>
-                        <div class="col-12" id="typeConsultBlock">
-                            <label class="form-label">Type de consultation <span class="text-danger">*</span></label>
-                            <div class="row g-2">
-                                <div class="col-md-6">
-                                    <div class="form-check border rounded p-3 h-100 typeConsultOption" id="optAvecCarnet">
-                                        <input class="form-check-input" type="radio" name="avec_carnet" id="consAvec" value="1" checked>
-                                        <label class="form-check-label fw-semibold" for="consAvec">
-                                            Consultation + Carnet de Soins
-                                            <div class="text-success">300 F + 100 F = <strong>400 F</strong></div>
-                                        </label>
-                                    </div>
-                                </div>
-                                <div class="col-md-6">
-                                    <div class="form-check border rounded p-3 h-100 typeConsultOption" id="optSansCarnet">
-                                        <input class="form-check-input" type="radio" name="avec_carnet" id="consSans" value="0">
-                                        <label class="form-check-label fw-semibold" for="consSans">
-                                            Consultation sans Carnet
-                                            <div class="text-success"><strong>300 F</strong></div>
-                                        </label>
-                                    </div>
-                                </div>
+<input type="hidden" id="typeConsultHidden" name="type_consultation" value="standard">
+
+                      <!-- ✅ Trois options sur la même ligne : Avec carnet / Sans carnet / Observation -->
+<div class="col-12" id="typeConsultBlock">
+    <label class="form-label">Type de prestation <span class="text-danger">*</span></label>
+    <div class="row g-2">
+        <!-- Option 1 : Consultation + Carnet -->
+        <div class="col-md-4">
+            <div class="form-check border rounded p-3 h-100 typeConsultOption" id="optAvecCarnet"
+                 onclick="selectPrestation('standard', '1')">
+                <input class="form-check-input" type="radio" name="prestation_choix" id="consAvec" value="std-1" checked>
+                <label class="form-check-label fw-semibold w-100" for="consAvec" style="cursor:pointer;">
+                    <i class="bi bi-journal-medical text-success me-1"></i>
+                    Consultation + Carnet
+                    <div class="text-success small mt-1" id="lblAvecCarnet">
+                        300 F + 100 F = <strong>400 F</strong>
+                    </div>
+                </label>
+            </div>
+        </div>
+
+        <!-- Option 2 : Consultation seule -->
+        <div class="col-md-4">
+            <div class="form-check border rounded p-3 h-100 typeConsultOption" id="optSansCarnet"
+                 onclick="selectPrestation('standard', '0')">
+                <input class="form-check-input" type="radio" name="prestation_choix" id="consSans" value="std-0">
+                <label class="form-check-label fw-semibold w-100" for="consSans" style="cursor:pointer;">
+                    <i class="bi bi-file-medical text-success me-1"></i>
+                    Consultation sans Carnet
+                    <div class="text-success small mt-1" id="lblSansCarnet">
+                        <strong>300 F</strong>
+                    </div>
+                </label>
+            </div>
+        </div>
+
+        <!-- Option 3 : Mise en observation -->
+        <div class="col-md-4">
+            <div class="form-check border rounded p-3 h-100 typeConsultOption" id="optObservation"
+                 onclick="selectPrestation('observation', '0')">
+                <input class="form-check-input" type="radio" name="prestation_choix" id="consObs" value="obs">
+                <label class="form-check-label fw-semibold w-100" for="consObs" style="cursor:pointer;">
+                    <i class="bi bi-clipboard2-pulse text-warning me-1"></i>
+                    Mise en observation
+                    <div class="text-warning small mt-1">
+                        <strong>1 000 F</strong>
+                    </div>
+                    <div class="text-muted small">Sans carnet ni redevance</div>
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <!-- Champs cachés pour soumission -->
+    <input type="hidden" id="fAvecCarnetHidden" name="avec_carnet" value="1">
+</div>
+
+
+                        <!-- ✅ Récap montant total en temps réel pour patient normal -->
+                        <div class="col-12" id="recapMontantBlock">
+                            <div class="recap-montant-consult d-flex justify-content-between align-items-center" id="recapMontantBox">
+                                <span class="fw-semibold">
+                                    <i class="bi bi-cash-coin me-1"></i>
+                                    Montant total à encaisser :
+                                </span>
+                                <span class="fs-4 fw-bold text-success" id="montantConsultationAffiche">400 F</span>
                             </div>
+                            <small class="text-muted d-block mt-1" id="detailMontantConsult">
+                                Consultation 300 F + Carnet 100 F
+                            </small>
                         </div>
+
                         <div class="col-12 d-none" id="gratuitBanner">
                             <div class="alert alert-warning mb-0">
                                 <i class="bi bi-gift me-2"></i><strong>ORPHELIN </strong>
                                 Le montant encaissé sera <strong>0 F</strong>. Les prix sont conservés pour le reporting bailleur.
+                                <br><small>Le téléphone est facultatif.</small>
                             </div>
                         </div>
                     </div>
@@ -497,8 +738,11 @@ include ROOT_PATH . '/templates/layouts/header.php';
                     <input type="hidden" name="type_patient" value="acte_gratuit">
                     <div class="row g-3">
                         <div class="col-md-6">
-                            <label class="form-label">Téléphone <span class="text-danger">*</span></label>
-                            <input type="text" class="form-control" id="fTelAG" name="telephone" required autocomplete="off">
+                            <label class="form-label">
+                                Téléphone
+                                <small class="text-muted">(facultatif — 99999999 si non renseigné)</small>
+                            </label>
+                            <input type="text" class="form-control" id="fTelAG" name="telephone" autocomplete="off">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">Nom et Prénom <span class="text-danger">*</span></label>
@@ -513,20 +757,80 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         </div>
                         <div class="col-md-4">
                             <label class="form-label">Âge <span class="text-danger">*</span></label>
-                            <input type="number" class="form-control" id="fAgeAG" name="age" min="0" required>
+                            <input type="number" class="form-control" id="fAgeAG" name="age" min="0" max="120" required>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label">Provenance</label>
-                            <input type="text" class="form-control" name="provenance">
+                            <input type="text" class="form-control" id="fProvenanceAG" name="provenance">
                         </div>
                         <div class="col-12">
                             <label class="form-label">Acte gratuit <span class="text-danger">*</span></label>
-                            <select class="form-select" name="acte_id" required>
+                            <select class="form-select" name="acte_id" id="fActeIdAG" required>
                                 <option value="">-- Sélectionner un acte --</option>
                                 <?php foreach ($actesGratuits as $a): ?>
                                 <option value="<?= (int)$a['id'] ?>"><?= h($a['libelle']) ?></option>
                                 <?php endforeach; ?>
                             </select>
+                        </div>
+
+                        <!-- ✅ Choix carnet / fiche -->
+                        <div class="col-12">
+                            <label class="form-label">Option de gratuité <span class="text-danger">*</span></label>
+                            <div class="row g-2">
+                                <div class="col-md-4">
+                                    <div class="form-check border rounded p-3 h-100 ag-option-card" id="optAGSansCarnet">
+                                        <input class="form-check-input ag-carnet-radio" type="radio"
+                                               name="option_gratuite" id="agSansCarnet" value="0" checked>
+                                        <label class="form-check-label fw-semibold w-100" for="agSansCarnet">
+                                            <i class="bi bi-gift text-success me-1"></i>
+                                            Acte gratuit seul
+                                            <div class="text-muted small">Sans carnet, sans fiche</div>
+                                            <div class="fw-bold text-success mt-1"><strong>0 F</strong></div>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="col-md-4">
+                                    <div class="form-check border rounded p-3 h-100 ag-option-card" id="optAGAvecCarnet">
+                                        <input class="form-check-input ag-carnet-radio" type="radio"
+                                               name="option_gratuite" id="agAvecCarnet" value="1">
+                                        <label class="form-check-label fw-semibold w-100" for="agAvecCarnet">
+                                            <i class="bi bi-journal-medical text-primary me-1"></i>
+                                            Acte gratuit + Carnet
+                                            <div class="text-muted small">Carnet uniquement</div>
+                                            <div class="fw-bold text-primary mt-1"><strong>100 F</strong></div>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="col-md-4">
+                                    <div class="form-check border rounded p-3 h-100 ag-option-card" id="optAGAvecCarnetFiche">
+                                        <input class="form-check-input ag-carnet-radio" type="radio"
+                                               name="option_gratuite" id="agAvecCarnetFiche" value="2">
+                                        <label class="form-check-label fw-semibold w-100" for="agAvecCarnetFiche">
+                                            <i class="bi bi-file-earmark-medical text-warning me-1"></i>
+                                            Acte gratuit + Carnet + Fiche
+                                            <div class="text-muted small">Carnet 100 F + Fiche 300 F</div>
+                                            <div class="fw-bold text-warning mt-1"><strong>400 F</strong></div>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ✅ Récap montant en temps réel -->
+                        <div class="col-12">
+                            <div class="d-flex justify-content-between align-items-center p-3 rounded"
+                                 style="background:#e3f2fd; border-left:4px solid #1565c0;">
+                                <span class="fw-semibold">
+                                    <i class="bi bi-cash-coin me-1"></i>
+                                    Montant à encaisser :
+                                </span>
+                                <span class="fs-4 fw-bold text-success" id="agMontantAffiche">0 F</span>
+                            </div>
+                            <small class="text-muted d-block mt-1" id="agMontantDetail">
+                                Acte gratuit seul
+                            </small>
                         </div>
                     </div>
                 </form>
@@ -756,8 +1060,6 @@ $getRecapUrl      = url('modules/percepteur/get_recap.php');
 $getModifFormUrl  = url('modules/percepteur/ajax_get_modif_form.php');
 $saveModifUrl     = url('modules/percepteur/ajax_save_modification.php');
 $getHistoriqueUrl = url('modules/percepteur/ajax_get_historique.php');
-
-// ✅ URL de réimpression via le routeur central (DOIT contenir page=percepteur&action=reimprimer)
 $reprintRecuUrl   = url('index.php?page=percepteur&action=reimprimer');
 
 $jsUrls = [
@@ -781,7 +1083,19 @@ foreach ($jsUrls as $constName => $urlValue) {
 <script>
 <?= $jsUrlDeclarations ?>
 
+// ═══════════════════════════════════════════════════════════════════════
+// ✅ Constantes tarifaires côté client
+// ═══════════════════════════════════════════════════════════════════════
+const TARIF_CONSULTATION      = 300;
+const TARIF_CARNET_SANTE      = 100;
+const TARIF_FICHE             = 300;
+const TARIF_SUPPLEMENT_ADULTE = 100;   // +100 F si âge > 5 ans
+const AGE_LIMITE_SUPPLEMENT   = 5;     // seuil d'âge inclusif (0-5 = pas de supplément)
+const TARIF_OBSERVATION       = 1000;  // ✅ Mise en observation (tarif fixe, sans redevance)
+const TELEPHONE_PAR_DEFAUT    = '99999999';
+
 let currentTypeRecu = 'normal';
+let currentTypeConsult = 'standard';   // ✅ standard | observation
 
 window.addEventListener('load', function () {
 
@@ -794,11 +1108,23 @@ window.addEventListener('load', function () {
         const banner = document.getElementById('gratuitBanner');
         const sexeBlock = document.getElementById('sexeBlock');
         const provenanceBlk = document.getElementById('provenanceBlock');
+        const recapBlock = document.getElementById('recapMontantBlock');
+        const tcBlock = document.getElementById('typeConsultationBlock');
 
-        document.getElementById('fTelephone').value = '';
-        document.getElementById('fNomPatient').value = '';
-        document.getElementById('fAge').value = '';
-        document.getElementById('consAvec').checked = true;
+        if (document.getElementById('fTelephone')) {
+            document.getElementById('fTelephone').value = '';
+            document.getElementById('fNomPatient').value = '';
+            document.getElementById('fAge').value = '';
+            selectPrestation('standard', '1');
+            //document.getElementById('consAvec').checked = true;
+        }
+
+        // ✅ Reset type consultation à "standard" à chaque ouverture
+        const tcStd = document.getElementById('tcStandard');
+        if (tcStd) { tcStd.checked = true; }
+        currentTypeConsult = 'standard';
+        const hidConsult = document.getElementById('typeConsultHidden');
+        if (hidConsult) hidConsult.value = 'standard';
 
         if (type === 'orphelin') {
             header.style.background = '#7b1fa2';
@@ -806,20 +1132,186 @@ window.addEventListener('load', function () {
             block.style.display = 'none';
             sexeBlock.style.display = 'none';
             provenanceBlk.style.display = 'none';
+            if (recapBlock) recapBlock.style.display = 'none';
+            if (tcBlock) tcBlock.style.display = '';   // ✅ Observation possible aussi pour orphelin
             banner.classList.remove('d-none');
             document.getElementById('sexeM').checked = true;
             document.getElementById('fProvenance').value = 'Maradi';
-        } else {
+        } else if (type === 'normal') {
             header.style.background = 'var(--csi-green)';
             title.innerHTML = '<i class="bi bi-person-plus me-2"></i>Nouveau Patient Normal';
             block.style.display = '';
             sexeBlock.style.display = '';
             provenanceBlk.style.display = '';
+            if (recapBlock) recapBlock.style.display = '';
+            if (tcBlock) tcBlock.style.display = '';
             banner.classList.add('d-none');
             document.getElementById('fProvenance').value = '';
         }
-        document.getElementById('typeRecuHidden').value = type;
+
+        if (document.getElementById('typeRecuHidden')) {
+            document.getElementById('typeRecuHidden').value = type;
+        }
+
+        // Re-applique le visuel "standard"
+        appliquerVisuelTypeConsult('standard');
+        updateMontantConsultation();
     };
+
+// ✅ Sélection unifiée de la prestation (3 options sur la même ligne)
+window.selectPrestation = function(typeConsult, avecCarnet) {
+    currentTypeConsult = typeConsult;
+
+    const hidConsult = document.getElementById('typeConsultHidden');
+    const hidCarnet  = document.getElementById('fAvecCarnetHidden');
+    if (hidConsult) hidConsult.value = typeConsult;
+    if (hidCarnet)  hidCarnet.value  = avecCarnet;
+
+    // Coche le bon radio
+    if (typeConsult === 'observation') {
+        document.getElementById('consObs').checked = true;
+    } else if (avecCarnet === '1') {
+        document.getElementById('consAvec').checked = true;
+    } else {
+        document.getElementById('consSans').checked = true;
+    }
+
+    // Visuel actif
+    ['optAvecCarnet','optSansCarnet','optObservation'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.remove('active-standard','active-observation');
+    });
+    if (typeConsult === 'observation') {
+        document.getElementById('optObservation')?.classList.add('active-observation');
+    } else if (avecCarnet === '1') {
+        document.getElementById('optAvecCarnet')?.classList.add('active-standard');
+    } else {
+        document.getElementById('optSansCarnet')?.classList.add('active-standard');
+    }
+
+    updateMontantConsultation();
+};
+
+    // ══════════════════════════════════════════════════════════════════
+    // ✅ Helpers téléphone
+    // ══════════════════════════════════════════════════════════════════
+    function nettoyerTelephone(valeur) {
+        let tel = (valeur || '').replace(/\D/g, '').trim();
+        if (!tel) tel = TELEPHONE_PAR_DEFAUT;
+        return tel;
+    }
+
+    function telephoneValideOuVide(tel) {
+        return /^\d{8}$/.test(tel);
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // ✅ Visuel actif sur les cartes "Standard / Observation"
+    // ══════════════════════════════════════════════════════════════════
+    function appliquerVisuelTypeConsult(type) {
+        const cardStd = document.getElementById('optTcStandard');
+        const cardObs = document.getElementById('optTcObservation');
+        if (!cardStd || !cardObs) return;
+
+        cardStd.classList.remove('active-standard', 'active-observation');
+        cardObs.classList.remove('active-standard', 'active-observation');
+
+        if (type === 'observation') {
+            cardObs.classList.add('active-observation');
+        } else {
+            cardStd.classList.add('active-standard');
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  ✅ MONTANT CONSULTATION EN TEMPS RÉEL
+    //     - Standard   : 300 F (+ carnet 100, + supplément âge 100 si > 5)
+    //     - Observation: 1000 F fixe (pas de carnet, pas de supplément)
+    // ══════════════════════════════════════════════════════════════════
+    function updateMontantConsultation() {
+    if (currentTypeRecu !== 'normal' && currentTypeRecu !== 'orphelin') return;
+
+    const fAge     = document.getElementById('fAge');
+    const display  = document.getElementById('montantConsultationAffiche');
+    const detail   = document.getElementById('detailMontantConsult');
+    const lblAvec  = document.getElementById('lblAvecCarnet');
+    const lblSans  = document.getElementById('lblSansCarnet');
+    const recapBox = document.getElementById('recapMontantBox');
+    const hintAge  = document.getElementById('hintAgeSupp');
+    const hidCarnet = document.getElementById('fAvecCarnetHidden');
+
+    if (!fAge || !display) return;
+
+    const ageVal    = parseInt(fAge.value, 10);
+    const ageValide = !isNaN(ageVal) && ageVal >= 0;
+
+    // ── CAS OBSERVATION ──
+    if (currentTypeConsult === 'observation') {
+        if (hintAge) hintAge.style.display = 'none';
+        if (recapBox) {
+            recapBox.classList.remove('with-supplement');
+            recapBox.classList.add('with-observation');
+        }
+        display.textContent = TARIF_OBSERVATION + ' F';
+        if (detail) detail.innerHTML = 'Mise en observation (tarif fixe) — pas de redevance ni carnet';
+        return;
+    }
+
+    // ── CAS STANDARD ──
+    if (recapBox) recapBox.classList.remove('with-observation');
+
+    const supplement = (ageValide && ageVal > AGE_LIMITE_SUPPLEMENT) ? TARIF_SUPPLEMENT_ADULTE : 0;
+    const avecCarnet = (hidCarnet && hidCarnet.value === '1');
+
+    // Mise à jour des libellés des cartes
+    if (lblAvec) {
+        const totalAvec = TARIF_CONSULTATION + TARIF_CARNET_SANTE + supplement;
+        lblAvec.innerHTML = supplement > 0
+            ? `${TARIF_CONSULTATION} F + ${TARIF_CARNET_SANTE} F + ${supplement} F = <strong>${totalAvec} F</strong>`
+            : `${TARIF_CONSULTATION} F + ${TARIF_CARNET_SANTE} F = <strong>${totalAvec} F</strong>`;
+    }
+    if (lblSans) {
+        const totalSans = TARIF_CONSULTATION + supplement;
+        lblSans.innerHTML = supplement > 0
+            ? `${TARIF_CONSULTATION} F + ${supplement} F = <strong>${totalSans} F</strong>`
+            : `<strong>${TARIF_CONSULTATION} F</strong>`;
+    }
+
+    let total = TARIF_CONSULTATION;
+    let parts = [`Consultation ${TARIF_CONSULTATION} F`];
+
+    if (avecCarnet) { total += TARIF_CARNET_SANTE; parts.push(`Carnet ${TARIF_CARNET_SANTE} F`); }
+    if (supplement > 0) { total += supplement; parts.push(`Supplément âge &gt; ${AGE_LIMITE_SUPPLEMENT} ans ${supplement} F`); }
+
+    display.textContent = total + ' F';
+    if (detail) detail.innerHTML = parts.join(' + ');
+
+    if (recapBox) {
+        if (supplement > 0) recapBox.classList.add('with-supplement');
+        else recapBox.classList.remove('with-supplement');
+    }
+    if (hintAge) {
+        hintAge.style.display = (ageValide && ageVal > AGE_LIMITE_SUPPLEMENT) ? '' : 'none';
+    }
+}
+
+
+    // ══════════════════════════════════════════════════════════════════
+    // ✅ Listeners radios "Standard / Observation"
+    // ══════════════════════════════════════════════════════════════════
+  
+
+    // Listeners pour le calcul en temps réel
+    const ageInput = document.getElementById('fAge');
+    if (ageInput) ageInput.addEventListener('input', updateMontantConsultation);
+
+   
+
+    // Initialisation à l'ouverture du modal patient
+    const modalPatientEl = document.getElementById('modalPatient');
+    if (modalPatientEl) {
+        modalPatientEl.addEventListener('shown.bs.modal', updateMontantConsultation);
+    }
 
     // ── Autocomplete téléphone ──
     if (typeof initPhoneAutocomplete === 'function') {
@@ -831,25 +1323,61 @@ window.addEventListener('load', function () {
                 const sexeRadio = document.querySelector('input[name="sexe"][value="' + p.sexe + '"]');
                 if (sexeRadio) sexeRadio.checked = true;
             }
+            updateMontantConsultation();
         });
+
         initPhoneAutocomplete('fTelAG', function(p) {
             document.getElementById('fNomAG').value = p.nom;
             document.getElementById('fAgeAG').value = p.age;
+            if (document.getElementById('fProvenanceAG')) {
+                document.getElementById('fProvenanceAG').value = p.provenance || '';
+            }
+            if (document.getElementById('fSexeAG')) {
+                document.getElementById('fSexeAG').value = p.sexe || 'M';
+            }
         });
     }
 
-    // ── Bouton Enregistrer Patient ──
+    // ── Bouton Enregistrer Patient normal / orphelin ──
     document.getElementById('btnEnregistrerPatient').addEventListener('click', function() {
         const form = document.getElementById('formPatient');
         const data = Object.fromEntries(new FormData(form));
-        if (!data.telephone || !data.nom || data.age === '' || data.age === undefined) {
-            showToast('warning', 'Veuillez remplir tous les champs obligatoires.');
+
+        data.telephone = nettoyerTelephone(data.telephone);
+
+        // ✅ Forcer le type_consultation à partir de l'état courant
+        data.type_consultation = currentTypeConsult || 'standard';
+
+        if (!data.nom || data.age === '' || data.age === undefined) {
+            showToast('warning', 'Veuillez renseigner le nom et l’âge du patient.');
             return;
         }
-        if (data.telephone.replace(/\D/g, '').length !== 8) {
-            showToast('warning', 'Le numéro de téléphone doit contenir exactement 8 chiffres.');
+
+        if (!telephoneValideOuVide(data.telephone)) {
+            showToast('warning', 'Le numéro de téléphone doit contenir exactement 8 chiffres, ou être laissé vide.');
             return;
         }
+
+        // ✅ Confirmation avec montant calculé
+        if (currentTypeRecu === 'normal') {
+            if (data.type_consultation === 'observation') {
+                if (!confirm(`Confirmer l'enregistrement ?\nType : Mise en observation\nMontant : ${TARIF_OBSERVATION} F (tarif fixe, pas de redevance)`)) return;
+            } else {
+                const ageVal     = parseInt(data.age, 10);
+                const supplement = (!isNaN(ageVal) && ageVal > AGE_LIMITE_SUPPLEMENT) ? TARIF_SUPPLEMENT_ADULTE : 0;
+                const avecCarnet = data.avec_carnet === '1';
+                let total = TARIF_CONSULTATION + (avecCarnet ? TARIF_CARNET_SANTE : 0) + supplement;
+                let detail = `${TARIF_CONSULTATION} F`;
+
+                if (avecCarnet) detail += ` + ${TARIF_CARNET_SANTE} F (carnet)`;
+                if (supplement > 0) detail += ` + ${supplement} F (âge > ${AGE_LIMITE_SUPPLEMENT} ans)`;
+
+                if (!confirm(`Confirmer l'enregistrement ?\nMontant : ${total} F\nDétail : ${detail}`)) return;
+            }
+        } else if (currentTypeRecu === 'orphelin' && data.type_consultation === 'observation') {
+            if (!confirm(`Confirmer l'enregistrement ?\nType : Mise en observation (orphelin)\nMontant théorique : ${TARIF_OBSERVATION} F — encaissé : 0 F`)) return;
+        }
+
         ajaxPost(SAVE_CONSULT_URL, data, function(res) {
             bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPatient')).hide();
             if (res.pdf_url) window.open(res.pdf_url, '_blank');
@@ -857,18 +1385,108 @@ window.addEventListener('load', function () {
         });
     });
 
-    // ── Acte gratuit ──
+    // ══════════════════════════════════════════════════════════════════
+    // ✅ ACTE GRATUIT — gestion choix carnet / fiche en temps réel
+    // ══════════════════════════════════════════════════════════════════
+    function updateMontantActeGratuit() {
+        const checked = document.querySelector('.ag-carnet-radio:checked');
+        const display = document.getElementById('agMontantAffiche');
+        const detail  = document.getElementById('agMontantDetail');
+
+        if (!checked || !display) return;
+
+        const option = checked.value;
+        let montant = 0;
+        let colorClass = 'text-success';
+        let detailText = 'Acte gratuit seul';
+
+        if (option === '1') {
+            montant = TARIF_CARNET_SANTE;
+            colorClass = 'text-primary';
+            detailText = `Acte gratuit + Carnet ${TARIF_CARNET_SANTE} F`;
+        } else if (option === '2') {
+            montant = TARIF_CARNET_SANTE + TARIF_FICHE;
+            colorClass = 'text-warning';
+            detailText = `Acte gratuit + Carnet ${TARIF_CARNET_SANTE} F + Fiche ${TARIF_FICHE} F`;
+        }
+
+        display.textContent = montant + ' F';
+        display.className = 'fs-4 fw-bold ' + colorClass;
+
+        if (detail) detail.textContent = detailText;
+
+        const optSans = document.getElementById('optAGSansCarnet');
+        const optAvec = document.getElementById('optAGAvecCarnet');
+        const optAvecFiche = document.getElementById('optAGAvecCarnetFiche');
+
+        if (optSans) optSans.style.background = '';
+        if (optAvec) optAvec.style.background = '';
+        if (optAvecFiche) optAvecFiche.style.background = '';
+
+        if (option === '0' && optSans) optSans.style.background = '#e8f5e9';
+        if (option === '1' && optAvec) optAvec.style.background = '#e3f2fd';
+        if (option === '2' && optAvecFiche) optAvecFiche.style.background = '#fff8e1';
+    }
+
+    document.querySelectorAll('.ag-carnet-radio').forEach(r =>
+        r.addEventListener('change', updateMontantActeGratuit)
+    );
+
+    // Réinitialisation à l'ouverture du modal Acte Gratuit
+    const modalAGEl = document.getElementById('modalActeGratuit');
+    if (modalAGEl) {
+        modalAGEl.addEventListener('show.bs.modal', function() {
+            const r = document.getElementById('agSansCarnet');
+            if (r) r.checked = true;
+
+            const tel  = document.getElementById('fTelAG');
+            const nom  = document.getElementById('fNomAG');
+            const age  = document.getElementById('fAgeAG');
+            const sexe = document.getElementById('fSexeAG');
+            const prov = document.getElementById('fProvenanceAG');
+            const acte = document.getElementById('fActeIdAG');
+
+            if (tel) tel.value = '';
+            if (nom) nom.value = '';
+            if (age) age.value = '';
+            if (sexe) sexe.value = 'M';
+            if (prov) prov.value = '';
+            if (acte) acte.value = '';
+
+            updateMontantActeGratuit();
+        });
+    }
+
     window.saveActeGratuit = function() {
         const form = document.getElementById('formActeGratuit');
         const data = Object.fromEntries(new FormData(form));
-        if (!data.telephone || !data.nom || !data.acte_id) {
-            showToast('warning', 'Champs obligatoires manquants.');
+
+        data.telephone = nettoyerTelephone(data.telephone);
+
+        if (!data.nom || data.age === '' || data.age === undefined || !data.acte_id) {
+            showToast('warning', 'Veuillez renseigner le nom, l’âge et l’acte gratuit.');
             return;
         }
-        if (data.telephone.replace(/\D/g, '').length !== 8) {
-            showToast('warning', 'Le numéro de téléphone doit contenir exactement 8 chiffres.');
+
+        if (!telephoneValideOuVide(data.telephone)) {
+            showToast('warning', 'Le numéro de téléphone doit contenir exactement 8 chiffres, ou être laissé vide.');
             return;
         }
+
+        if (data.option_gratuite === undefined) {
+            showToast('warning', 'Veuillez choisir une option de gratuité.');
+            return;
+        }
+
+        let libelleMontant = '0 F (acte gratuit seul)';
+        if (data.option_gratuite === '1') {
+            libelleMontant = '100 F (acte gratuit + carnet)';
+        } else if (data.option_gratuite === '2') {
+            libelleMontant = '400 F (acte gratuit + carnet + fiche)';
+        }
+
+        if (!confirm('Confirmer l\'enregistrement ?\nMontant : ' + libelleMontant)) return;
+
         ajaxPost(SAVE_ACTE_GRAT_URL, data, function(res) {
             bootstrap.Modal.getOrCreateInstance(document.getElementById('modalActeGratuit')).hide();
             if (res.pdf_url) window.open(res.pdf_url, '_blank');
@@ -881,6 +1499,7 @@ window.addEventListener('load', function () {
         document.getElementById('examRecuId').value = recuId;
         document.getElementById('examPatientNom').textContent = nom;
         document.getElementById('examNumeroRecu').textContent = '#' + String(num).padStart(5, '0');
+
         document.querySelectorAll('.examen-chk').forEach(c => c.checked = false);
 
         const isOrphelin = (typePatient === 'orphelin');
@@ -897,6 +1516,7 @@ window.addEventListener('load', function () {
                 badge.textContent = badge.dataset.prixOriginal;
             });
         }
+
         document.getElementById('examRecuId').dataset.orphelin = isOrphelin ? '1' : '0';
         updateSousTotal();
     };
@@ -904,23 +1524,46 @@ window.addEventListener('load', function () {
     document.querySelectorAll('.examen-chk').forEach(chk => chk.addEventListener('change', updateSousTotal));
 
     function updateSousTotal() {
-        const isOrphelin = document.getElementById('examRecuId').dataset.orphelin === '1';
+        const examRecu = document.getElementById('examRecuId');
+        const isOrphelin = examRecu && examRecu.dataset.orphelin === '1';
+
         let total = 0;
-        document.querySelectorAll('.examen-chk:checked').forEach(c => total += parseInt(c.dataset.cout));
+        document.querySelectorAll('.examen-chk:checked').forEach(c => {
+            total += parseInt(c.dataset.cout, 10) || 0;
+        });
+
+        const sousTotal = document.getElementById('sousTotal');
+        if (!sousTotal) return;
+
         if (isOrphelin && total > 0) {
-            document.getElementById('sousTotal').innerHTML = '<s>' + new Intl.NumberFormat('fr-FR').format(total) + ' F</s> <strong class="text-danger ms-1">0 F (GRATUIT)</strong>';
+            sousTotal.innerHTML =
+                '<s>' + new Intl.NumberFormat('fr-FR').format(total) + ' F</s>' +
+                ' <strong class="text-danger ms-1">0 F (GRATUIT)</strong>';
         } else {
-            document.getElementById('sousTotal').textContent = new Intl.NumberFormat('fr-FR').format(total) + ' F';
+            sousTotal.textContent = new Intl.NumberFormat('fr-FR').format(total) + ' F';
         }
     }
+
     window.updateSousTotal = updateSousTotal;
 
     window.saveExamens = function() {
         const ids = [...document.querySelectorAll('.examen-chk:checked')].map(c => c.value);
         const recuId = document.getElementById('examRecuId').value;
-        if (!ids.length) { showToast('warning', 'Sélectionnez au moins un examen.'); return; }
-        if (!recuId) { showToast('warning', 'Aucun reçu lié.'); return; }
-        ajaxPost(SAVE_EXAMENS_URL, { recu_id: recuId, examens: ids.join(',') }, function(res) {
+
+        if (!ids.length) {
+            showToast('warning', 'Sélectionnez au moins un examen.');
+            return;
+        }
+
+        if (!recuId) {
+            showToast('warning', 'Aucun reçu lié.');
+            return;
+        }
+
+        ajaxPost(SAVE_EXAMENS_URL, {
+            recu_id: recuId,
+            examens: ids.join(',')
+        }, function(res) {
             bootstrap.Modal.getOrCreateInstance(document.getElementById('modalExamens')).hide();
             if (res.pdf_url) window.open(res.pdf_url, '_blank');
             setTimeout(() => location.reload(), 1000);
@@ -930,58 +1573,124 @@ window.addEventListener('load', function () {
     // ── Pharmacie ──
     window.openPharmacieModal = function(recuId, nom, num, typePatient) {
         const isOrphelin = (typePatient === 'orphelin');
+
         document.getElementById('pharmaRecuId').value = recuId;
         document.getElementById('pharmaRecuId').dataset.orphelin = isOrphelin ? '1' : '0';
         document.getElementById('pharmaPatientNom').textContent = nom;
         document.getElementById('pharmaNumeroRecu').textContent = '#' + String(num).padStart(5, '0');
+
         document.querySelectorAll('.produit-qte').forEach(i => i.value = 0);
+
         const banner = document.getElementById('pharmaGratuitBanner');
-        if (isOrphelin) banner.classList.remove('d-none');
-        else banner.classList.add('d-none');
+        if (isOrphelin) {
+            banner.classList.remove('d-none');
+        } else {
+            banner.classList.add('d-none');
+        }
+
         updateTotalPharma();
     };
 
     window.updateTotalPharma = function() {
-        const isOrphelin = document.getElementById('pharmaRecuId').dataset.orphelin === '1';
-        let total = 0, count = 0;
+        const pharmaRecu = document.getElementById('pharmaRecuId');
+        const isOrphelin = pharmaRecu && pharmaRecu.dataset.orphelin === '1';
+
+        let total = 0;
+        let count = 0;
+
         document.querySelectorAll('.produit-qte').forEach(inp => {
-            const qty = parseInt(inp.value) || 0;
-            if (qty > 0) { total += qty * parseInt(inp.dataset.prix); count++; }
+            const qty = parseInt(inp.value, 10) || 0;
+            const prix = parseInt(inp.dataset.prix, 10) || 0;
+
+            if (qty > 0) {
+                total += qty * prix;
+                count++;
+            }
         });
-        if (isOrphelin && total > 0) {
-            document.getElementById('totalPharma').innerHTML = '<s>' + new Intl.NumberFormat('fr-FR').format(total) + ' F</s> <strong class="text-danger ms-1">0 F (GRATUIT)</strong>';
-        } else {
-            document.getElementById('totalPharma').textContent = new Intl.NumberFormat('fr-FR').format(total) + ' F';
+
+        const totalPharma = document.getElementById('totalPharma');
+        const nbProduits = document.getElementById('nbProduitsSelec');
+
+        if (totalPharma) {
+            if (isOrphelin && total > 0) {
+                totalPharma.innerHTML =
+                    '<s>' + new Intl.NumberFormat('fr-FR').format(total) + ' F</s>' +
+                    ' <strong class="text-danger ms-1">0 F (GRATUIT)</strong>';
+            } else {
+                totalPharma.textContent = new Intl.NumberFormat('fr-FR').format(total) + ' F';
+            }
         }
-        document.getElementById('nbProduitsSelec').textContent = count;
-        document.getElementById('nbProduitsSelec').className = 'badge ' + (count > 15 ? 'bg-danger' : (count > 0 ? 'bg-success' : 'bg-secondary'));
+
+        if (nbProduits) {
+            nbProduits.textContent = count;
+            nbProduits.className = 'badge ' + (
+                count > 15 ? 'bg-danger' : (count > 0 ? 'bg-success' : 'bg-secondary')
+            );
+        }
     };
 
     window.savePharmacie = function() {
         const items = [];
         const recuId = document.getElementById('pharmaRecuId').value;
+
         document.querySelectorAll('.produit-qte').forEach(inp => {
-            const qty = parseInt(inp.value) || 0;
-            if (qty > 0) items.push({ id: inp.dataset.id, qte: qty, nom: inp.dataset.nom, forme: inp.dataset.forme, prix: inp.dataset.prix });
+            const qty = parseInt(inp.value, 10) || 0;
+
+            if (qty > 0) {
+                items.push({
+                    id: inp.dataset.id,
+                    qte: qty,
+                    nom: inp.dataset.nom,
+                    forme: inp.dataset.forme,
+                    prix: inp.dataset.prix
+                });
+            }
         });
-        if (!items.length) { showToast('warning', 'Aucun produit sélectionné.'); return; }
-        if (items.length > 15) { showToast('danger', 'Maximum 15 produits.'); return; }
-        if (!recuId) { showToast('warning', 'Aucun reçu lié.'); return; }
-        ajaxPost(SAVE_PHARMA_URL, { recu_id: recuId, produits: JSON.stringify(items) }, function(res) {
+
+        if (!items.length) {
+            showToast('warning', 'Aucun produit sélectionné.');
+            return;
+        }
+
+        if (items.length > 15) {
+            showToast('danger', 'Maximum 15 produits.');
+            return;
+        }
+
+        if (!recuId) {
+            showToast('warning', 'Aucun reçu lié.');
+            return;
+        }
+
+        ajaxPost(SAVE_PHARMA_URL, {
+            recu_id: recuId,
+            produits: JSON.stringify(items)
+        }, function(res) {
             bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPharmacie')).hide();
             if (res.pdf_url) window.open(res.pdf_url, '_blank');
             setTimeout(() => location.reload(), 1000);
         });
     };
 
-    // ── Récap ──
+    // ── Récapitulatif ──
     window.openRecapModal = function(recuId) {
-        document.getElementById('recapContent').innerHTML = '<div class="text-center py-4"><div class="spinner-border text-secondary"></div></div>';
-        fetch(GET_RECAP_URL + '?recu_id=' + recuId, { headers: { 'X-CSRF-TOKEN': CSRF_TOKEN } })
-            .then(r => r.json())
-            .then(data => {
-                document.getElementById('recapContent').innerHTML = data.html || '<p class="text-muted">Aucune donnée.</p>';
-            });
+        const recapContent = document.getElementById('recapContent');
+
+        recapContent.innerHTML =
+            '<div class="text-center py-4"><div class="spinner-border text-secondary"></div></div>';
+
+        fetch(GET_RECAP_URL + '?recu_id=' + encodeURIComponent(recuId), {
+            headers: { 'X-CSRF-TOKEN': CSRF_TOKEN },
+            credentials: 'same-origin'
+        })
+        .then(r => r.json())
+        .then(data => {
+            recapContent.innerHTML = data.html || '<p class="text-muted">Aucune donnée.</p>';
+        })
+        .catch(err => {
+            recapContent.innerHTML =
+                '<div class="alert alert-danger"><strong>Erreur :</strong> ' + err.message + '</div>';
+        });
     };
 
     // ── Modification ──
@@ -991,28 +1700,52 @@ window.addEventListener('load', function () {
         document.getElementById('modifMotifSelect').value = '';
         document.getElementById('modifMotifAutre').value = '';
         document.getElementById('modifMotifAutre').classList.add('d-none');
-        document.getElementById('modifFormContainer').innerHTML = '<div class="text-center py-4"><div class="spinner-border text-warning"></div></div>';
 
-        const url = GET_MODIF_FORM_URL + '?recu_id=' + encodeURIComponent(recuId) + '&type=' + encodeURIComponent(typeRecu);
+        document.getElementById('modifFormContainer').innerHTML =
+            '<div class="text-center py-4"><div class="spinner-border text-warning"></div></div>';
+
+        const url = GET_MODIF_FORM_URL
+            + '?recu_id=' + encodeURIComponent(recuId)
+            + '&type=' + encodeURIComponent(typeRecu);
 
         fetch(url, { credentials: 'same-origin' })
             .then(r => {
                 const ct = r.headers.get('Content-Type') || '';
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                if (!ct.includes('application/json')) return r.text().then(t => { throw new Error('Non-JSON : ' + t.substring(0, 300)); });
+
+                if (!r.ok) {
+                    throw new Error('HTTP ' + r.status);
+                }
+
+                if (!ct.includes('application/json')) {
+                    return r.text().then(t => {
+                        throw new Error('Non-JSON : ' + t.substring(0, 300));
+                    });
+                }
+
                 return r.json();
             })
             .then(data => {
                 if (data.html) {
                     document.getElementById('modifFormContainer').innerHTML = data.html;
-                    document.getElementById('modifNumeroRecu').textContent = '#' + String(data.numero_recu || recuId).padStart(5, '0');
-                    if (typeRecu === 'pharmacie') initModifPharmacieEvents();
+                    document.getElementById('modifNumeroRecu').textContent =
+                        '#' + String(data.numero_recu || recuId).padStart(5, '0');
+
+                    if (typeRecu === 'pharmacie') {
+                        initModifPharmacieEvents();
+                    }
+
+                    if (typeRecu === 'consultation') {
+                        initModifConsultationEvents();
+                    }
+
                 } else {
-                    document.getElementById('modifFormContainer').innerHTML = '<div class="alert alert-danger">Erreur : ' + (data.error || '?') + '</div>';
+                    document.getElementById('modifFormContainer').innerHTML =
+                        '<div class="alert alert-danger">Erreur : ' + (data.error || '?') + '</div>';
                 }
             })
             .catch(err => {
-                document.getElementById('modifFormContainer').innerHTML = '<div class="alert alert-danger"><strong>Erreur :</strong> ' + err.message + '</div>';
+                document.getElementById('modifFormContainer').innerHTML =
+                    '<div class="alert alert-danger"><strong>Erreur :</strong> ' + err.message + '</div>';
             });
 
         bootstrap.Modal.getOrCreateInstance(document.getElementById('modalModification')).show();
@@ -1021,32 +1754,79 @@ window.addEventListener('load', function () {
     window.toggleMotifAutre = function() {
         const sel = document.getElementById('modifMotifSelect');
         const txt = document.getElementById('modifMotifAutre');
-        if (sel.value === 'autre') { txt.classList.remove('d-none'); txt.focus(); }
-        else txt.classList.add('d-none');
+
+        if (sel.value === 'autre') {
+            txt.classList.remove('d-none');
+            txt.focus();
+        } else {
+            txt.classList.add('d-none');
+        }
     };
 
+    function initModifConsultationEvents() {
+        const container = document.getElementById('modifFormContainer');
+
+        container.querySelectorAll('input[name="modif_avec_carnet"]').forEach(r => {
+            r.addEventListener('change', function() {
+                const totalEl = container.querySelector('#modifTotalConsultation');
+                if (!totalEl) return;
+
+                let montant = 0;
+
+                if (this.value === '1') {
+                    montant = 100;
+                } else if (this.value === '2') {
+                    montant = 400;
+                } else {
+                    montant = 0;
+                }
+
+                totalEl.textContent = new Intl.NumberFormat('fr-FR').format(montant) + ' F';
+            });
+        });
+    }
+
     function initModifPharmacieEvents() {
-        document.querySelectorAll('.modif-produit-qte').forEach(inp => inp.addEventListener('input', updateModifTotalPharma));
+        document.querySelectorAll('.modif-produit-qte').forEach(inp => {
+            inp.addEventListener('input', updateModifTotalPharma);
+        });
+
         updateModifTotalPharma();
     }
 
     function updateModifTotalPharma() {
-        let total = 0, count = 0;
+        let total = 0;
+        let count = 0;
+
         document.querySelectorAll('.modif-produit-qte').forEach(inp => {
-            const qty = parseInt(inp.value) || 0;
+            const qty = parseInt(inp.value, 10) || 0;
+            const prix = parseInt(inp.dataset.prix, 10) || 0;
             const td = inp.closest('tr') ? inp.closest('tr').querySelector('.modif-ligne-total') : null;
+
             if (qty > 0) {
-                const ligneTot = qty * (parseInt(inp.dataset.prix) || 0);
-                total += ligneTot; count++;
-                if (td) td.textContent = new Intl.NumberFormat('fr-FR').format(ligneTot) + ' F';
-            } else if (td) td.textContent = '0 F';
+                const ligneTot = qty * prix;
+                total += ligneTot;
+                count++;
+
+                if (td) {
+                    td.textContent = new Intl.NumberFormat('fr-FR').format(ligneTot) + ' F';
+                }
+            } else if (td) {
+                td.textContent = '0 F';
+            }
         });
+
         const totalEl = document.getElementById('modifTotalPharma');
-        if (totalEl) totalEl.textContent = new Intl.NumberFormat('fr-FR').format(total) + ' F';
+        if (totalEl) {
+            totalEl.textContent = new Intl.NumberFormat('fr-FR').format(total) + ' F';
+        }
+
         const countEl = document.getElementById('modifNbProduits');
         if (countEl) {
             countEl.textContent = count;
-            countEl.className = 'badge ' + (count > 15 ? 'bg-danger' : count > 0 ? 'bg-success' : 'bg-secondary');
+            countEl.className = 'badge ' + (
+                count > 15 ? 'bg-danger' : count > 0 ? 'bg-success' : 'bg-secondary'
+            );
         }
     }
 
@@ -1056,78 +1836,144 @@ window.addEventListener('load', function () {
         const motifSel = document.getElementById('modifMotifSelect').value;
         const motifTxt = document.getElementById('modifMotifAutre').value.trim();
 
-        if (!motifSel) { showToast('warning', 'Sélectionnez un motif.'); return; }
+        if (!motifSel) {
+            showToast('warning', 'Sélectionnez un motif.');
+            return;
+        }
+
         const motifFinal = (motifSel === 'autre') ? motifTxt : motifSel;
-        if (!motifFinal) { showToast('warning', 'Précisez le motif.'); return; }
+
+        if (!motifFinal) {
+            showToast('warning', 'Précisez le motif.');
+            return;
+        }
 
         const container = document.getElementById('modifFormContainer');
+
         if (container.querySelector('.spinner-border')) {
             showToast('warning', 'Formulaire en chargement, patientez.');
             return;
         }
 
-        let payload = { recu_id: recuId, type_recu: typeRecu, motif: motifFinal };
+        let payload = {
+            recu_id: recuId,
+            type_recu: typeRecu,
+            motif: motifFinal
+        };
 
         if (typeRecu === 'consultation') {
             const ac = container.querySelector('input[name="modif_avec_carnet"]:checked');
-            if (!ac) { showToast('warning', 'Sélectionnez le type de consultation.'); return; }
+
+            if (!ac) {
+                showToast('warning', 'Sélectionnez le type de consultation.');
+                return;
+            }
+
             payload.avec_carnet = ac.value;
+
         } else if (typeRecu === 'examen') {
             const chks = container.querySelectorAll('.modif-examen-chk:checked');
-            if (chks.length === 0) { showToast('warning', 'Sélectionnez au moins un examen.'); return; }
+
+            if (chks.length === 0) {
+                showToast('warning', 'Sélectionnez au moins un examen.');
+                return;
+            }
+
             payload.examens = [...chks].map(c => c.value).join(',');
+
         } else if (typeRecu === 'pharmacie') {
             const items = [];
+
             container.querySelectorAll('.modif-produit-qte').forEach(inp => {
-                const qty = parseInt(inp.value) || 0;
-                if (qty > 0) items.push({ id: inp.dataset.id, qte: qty });
+                const qty = parseInt(inp.value, 10) || 0;
+
+                if (qty > 0) {
+                    items.push({
+                        id: inp.dataset.id,
+                        qte: qty
+                    });
+                }
             });
-            if (items.length === 0) { showToast('warning', 'Saisissez au moins une quantité.'); return; }
-            if (items.length > 15) { showToast('danger', 'Maximum 15 produits.'); return; }
+
+            if (items.length === 0) {
+                showToast('warning', 'Saisissez au moins une quantité.');
+                return;
+            }
+
+            if (items.length > 15) {
+                showToast('danger', 'Maximum 15 produits.');
+                return;
+            }
+
             payload.produits = JSON.stringify(items);
         }
 
-        if (!confirm('Confirmer la modification ?\nMotif : ' + motifFinal)) return;
+        if (!confirm('Confirmer la modification ?\nMotif : ' + motifFinal)) {
+            return;
+        }
 
         ajaxPost(SAVE_MODIF_URL, payload, function(res) {
             bootstrap.Modal.getOrCreateInstance(document.getElementById('modalModification')).hide();
             showToast('success', 'Modification enregistrée.');
-            if (res.pdf_url) window.open(res.pdf_url, '_blank');
+
+            if (res.pdf_url) {
+                window.open(res.pdf_url, '_blank');
+            }
+
             setTimeout(() => location.reload(), 1200);
         });
     };
 
+    // ── Historique modifications ──
     window.voirHistorique = function(recuId) {
-        document.getElementById('historiqueContent').innerHTML = '<div class="text-center py-4"><div class="spinner-border text-primary"></div></div>';
-        document.getElementById('histNumeroRecu').textContent = '#' + String(recuId).padStart(5, '0');
+        document.getElementById('historiqueContent').innerHTML =
+            '<div class="text-center py-4"><div class="spinner-border text-primary"></div></div>';
+
+        document.getElementById('histNumeroRecu').textContent =
+            '#' + String(recuId).padStart(5, '0');
+
         const url = GET_HISTORIQUE_URL + '?recu_id=' + encodeURIComponent(recuId);
+
         fetch(url, { credentials: 'same-origin' })
             .then(r => {
                 const ct = r.headers.get('Content-Type') || '';
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                if (!ct.includes('application/json')) return r.text().then(t => { throw new Error('Non-JSON : ' + t.substring(0, 300)); });
+
+                if (!r.ok) {
+                    throw new Error('HTTP ' + r.status);
+                }
+
+                if (!ct.includes('application/json')) {
+                    return r.text().then(t => {
+                        throw new Error('Non-JSON : ' + t.substring(0, 300));
+                    });
+                }
+
                 return r.json();
             })
             .then(data => {
-                document.getElementById('historiqueContent').innerHTML = data.html || '<p class="text-muted text-center py-3">Aucune modification trouvée.</p>';
+                document.getElementById('historiqueContent').innerHTML =
+                    data.html || '<p class="text-muted text-center py-3">Aucune modification trouvée.</p>';
             })
             .catch(err => {
-                document.getElementById('historiqueContent').innerHTML = '<div class="alert alert-danger"><strong>Erreur :</strong> ' + err.message + '</div>';
+                document.getElementById('historiqueContent').innerHTML =
+                    '<div class="alert alert-danger"><strong>Erreur :</strong> ' + err.message + '</div>';
             });
+
         bootstrap.Modal.getOrCreateInstance(document.getElementById('modalHistorique')).show();
     };
 
     // ══════════════════════════════════════════════════════════════════
-    //  ✅ RÉIMPRESSION D'UN REÇU (corrigée : utilise & au lieu de ?)
+    // ✅ RÉIMPRESSION D'UN REÇU
     // ══════════════════════════════════════════════════════════════════
     window.reimprimerRecu = function(recuId) {
         if (!recuId) return;
-        // ⚠️ REPRINT_RECU_URL contient déjà "?page=percepteur&action=reimprimer"
-        // donc on ajoute le paramètre avec & et non ?
+
+        // REPRINT_RECU_URL contient déjà "?page=percepteur&action=reimprimer"
         const url = REPRINT_RECU_URL + '&recu_id=' + encodeURIComponent(recuId);
         window.open(url, '_blank');
     };
 
 });
 </script>
+
 <?php require __DIR__ . '/../../templates/layouts/footer.php'; ?>
