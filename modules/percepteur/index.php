@@ -91,10 +91,12 @@ function reimprimerRecu(PDO $pdo, int $recuId): void {
 $actes         = $pdo->query("SELECT id, libelle, tarif, est_gratuit FROM actes_medicaux WHERE isDeleted=0 ORDER BY libelle")->fetchAll();
 $actesGratuits = array_filter($actes, fn($a) => $a['est_gratuit']);
 
-// ── Stock carnets ─────────────────────────────────────────────────────────
-$cfgStockRows   = $pdo->query("SELECT cle, valeur FROM config_systeme WHERE cle IN ('stock_carnets','seuil_alerte_carnets') AND isDeleted=0")->fetchAll(PDO::FETCH_KEY_PAIR);
-$stockCarnets   = (int)($cfgStockRows['stock_carnets']        ?? 0);
-$seuilCarnets   = (int)($cfgStockRows['seuil_alerte_carnets'] ?? 10);
+// ── Stock carnets + fiches AG ─────────────────────────────────────────────
+$cfgStockRows   = $pdo->query("SELECT cle, valeur FROM config_systeme WHERE cle IN ('stock_carnets','seuil_alerte_carnets','stock_fiches_ag','seuil_alerte_fiches_ag') AND isDeleted=0")->fetchAll(PDO::FETCH_KEY_PAIR);
+$stockCarnets   = (int)($cfgStockRows['stock_carnets']           ?? 0);
+$seuilCarnets   = (int)($cfgStockRows['seuil_alerte_carnets']    ?? 10);
+$stockFichesAg  = (int)($cfgStockRows['stock_fiches_ag']         ?? 0);
+$seuilFichesAg  = (int)($cfgStockRows['seuil_alerte_fiches_ag']  ?? 10);
 $alerteCarnets  = ($stockCarnets === 0) ? 'danger' : ($stockCarnets <= $seuilCarnets ? 'warning' : '');
 
 // ── Récupérer les examens configurés ──────────────────────────────────────
@@ -903,6 +905,23 @@ include ROOT_PATH . '/templates/layouts/header.php';
                             <div class="alert alert-<?= $agAlertCls ?> py-2 mb-0 d-flex align-items-center gap-2">
                                 <i class="bi bi-<?= $agAlertIcon ?> flex-shrink-0"></i>
                                 <span class="small"><?= $agAlertTxt ?></span>
+                            </div>
+                        </div>
+
+                        <!-- ✅ Situation stock fiches AG dans le formulaire acte gratuit -->
+                        <div class="col-12">
+                            <?php
+                            $fagAlertCls  = $stockFichesAg === 0 ? 'danger' : ($stockFichesAg <= $seuilFichesAg ? 'warning' : 'info');
+                            $fagAlertIcon = $stockFichesAg === 0 ? 'exclamation-octagon-fill' : ($stockFichesAg <= $seuilFichesAg ? 'exclamation-triangle-fill' : 'file-medical');
+                            $fagAlertTxt  = $stockFichesAg === 0
+                                ? 'Aucune fiche AG disponible — l\'option "Carnet + Fiche" reste accessible (priorité patient).'
+                                : ($stockFichesAg <= $seuilFichesAg
+                                    ? "Stock fiches bas : <strong>{$stockFichesAg}</strong> fiche(s) restante(s) (seuil : {$seuilFichesAg})."
+                                    : "Stock fiches AG disponible : <strong>{$stockFichesAg}</strong> fiche(s).");
+                            ?>
+                            <div class="alert alert-<?= $fagAlertCls ?> py-2 mb-0 d-flex align-items-center gap-2">
+                                <i class="bi bi-<?= $fagAlertIcon ?> flex-shrink-0"></i>
+                                <span class="small"><?= $fagAlertTxt ?></span>
                             </div>
                         </div>
 
