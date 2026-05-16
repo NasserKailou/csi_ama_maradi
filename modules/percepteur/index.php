@@ -10,10 +10,14 @@
  * AJOUT : Téléphone facultatif. Si vide, 99999999 est envoyé au serveur.
  * AJOUT : Type de consultation "Mise en observation" (1000 F, sans redevance ni carnet)
  */
-requireRole('percepteur', 'admin');
+requireRole('percepteur', 'admin', 'major');
 $pdo       = Database::getInstance();
 $userId    = Session::getUserId();
 $pageTitle = 'Espace Percepteur';
+
+// Rôles utiles pour conditionner l'affichage
+$isMajor = Session::hasRole('major');
+$isAdmin = Session::hasRole('admin');
 
 // ═══════════════════════════════════════════════════════════════════════
 // ✅ ACTIONS SPÉCIFIQUES — DOIT ÊTRE TOUT EN HAUT, AVANT TOUT HTML
@@ -116,8 +120,9 @@ $produits = $pdo->query("
 ")->fetchAll();
 
 // ── Liste journalière ─────────────────────────────────────────────────────
-// Admin voit tous les percepteurs, percepteur voit uniquement ses opérations
-$isAdmin = (Session::getRole() === 'admin');
+// Admin + Major voient tous les reçus, percepteur voit uniquement les siens
+// $isAdmin et $isMajor déjà définis en haut du fichier
+$voitTous = ($isAdmin || $isMajor);  // admin et major voient tous les reçus
 
 $sqlJour = "
     SELECT r.id, r.numero_recu, p.nom AS patient_nom, p.telephone,
@@ -132,13 +137,13 @@ $sqlJour = "
     WHERE r.isDeleted = 0
       AND DATE(r.whendone) = CURDATE()
 ";
-if (!$isAdmin) {
+if (!$voitTous) {
     $sqlJour .= " AND r.whodone = :uid";
 }
 $sqlJour .= " ORDER BY r.whendone DESC";
 
 $listeJour = $pdo->prepare($sqlJour);
-if (!$isAdmin) {
+if (!$voitTous) {
     $listeJour->execute([':uid' => $userId]);
 } else {
     $listeJour->execute();
@@ -162,12 +167,12 @@ if ($dateDebut && $dateFin) {
         WHERE r.isDeleted = 0
           AND DATE(r.whendone) BETWEEN :deb AND :fin
     ";
-    if (!$isAdmin) {
+    if (!$voitTous) {
         $sqlArch .= " AND r.whodone = :uid";
     }
     $sqlArch .= " ORDER BY r.whendone DESC";
     $stmtArch = $pdo->prepare($sqlArch);
-    if (!$isAdmin) {
+    if (!$voitTous) {
         $stmtArch->execute([':uid' => $userId, ':deb' => $dateDebut, ':fin' => $dateFin]);
     } else {
         $stmtArch->execute([':deb' => $dateDebut, ':fin' => $dateFin]);
@@ -302,8 +307,8 @@ include ROOT_PATH . '/templates/layouts/header.php';
         </div>
     </div>
 
-    <!-- Indicateur Stock Carnets -->
-    <?php if ($alerteCarnets): ?>
+    <!-- Indicateur Stock Carnets — masqué pour le major (lecture seule) -->
+    <?php if (!$isMajor && $alerteCarnets): ?>
     <div class="alert alert-<?= $alerteCarnets === 'danger' ? 'danger' : 'warning' ?> py-2 mb-3 d-flex align-items-center gap-2">
         <i class="bi bi-journal-medical fs-5"></i>
         <div>
@@ -316,14 +321,15 @@ include ROOT_PATH . '/templates/layouts/header.php';
             <?php endif; ?>
         </div>
     </div>
-    <?php elseif ($stockCarnets > 0): ?>
+    <?php elseif (!$isMajor && $stockCarnets > 0): ?>
     <div class="alert alert-light border py-1 mb-3 d-flex align-items-center gap-2">
         <i class="bi bi-journal-check text-success"></i>
         <small class="text-muted">Stock carnets : <strong><?= $stockCarnets ?></strong> carnet(s) disponible(s).</small>
     </div>
     <?php endif; ?>
 
-    <!-- 3 Grands Boutons d'Action -->
+    <!-- 3 Grands Boutons d'Action — masqués pour le major (pas de saisie) -->
+    <?php if (!$isMajor): ?>
     <div class="row g-3 mb-5 justify-content-center">
         <div class="col-md-4 col-lg-3 text-center">
             <button class="btn btn-normal btn-percepteur w-100" data-bs-toggle="modal" data-bs-target="#modalPatient" onclick="setTypeRecu('normal')">
@@ -344,6 +350,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
             </button>
         </div>
     </div>
+    <?php endif; // fin masquage boutons major ?>
 
     <!-- Liste Journalière -->
     <div class="card mb-4">
@@ -360,7 +367,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         <tr>
                             <th>N° Reçu</th><th>Nom patient</th><th>Téléphone</th>
                             <th>Type</th><th>Montant</th><th>Heure</th>
-                            <?php if ($isAdmin): ?><th>Percepteur</th><?php endif; ?>
+                            <?php if ($isAdmin || $isMajor): ?><th>Percepteur</th><?php endif; ?>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -452,7 +459,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                 <?php endif; ?>
                             </td>
                             <td><small class="text-muted"><?= date('H:i', strtotime($r['whendone'])) ?></small></td>
-                            <?php if ($isAdmin): ?>
+                            <?php if ($isAdmin || $isMajor): ?>
                             <td>
                                 <small class="text-muted">
                                     <?= h(($r['percep_nom'] ?? '') . ' ' . ($r['percep_prenom'] ?? '')) ?>
@@ -475,6 +482,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                         </button>
                                     <?php endif; ?>
 
+                                    <?php if (!$isMajor): ?>
                                     <button class="btn-action btn-action-exam" title="Prescrire des examens"
                                             data-bs-toggle="modal" data-bs-target="#modalExamens"
                                             onclick="openExamensModal(<?= (int)$r['id'] ?>, '<?= h($r['patient_nom']) ?>', <?= (int)$r['numero_recu'] ?>, '<?= h($r['type_patient']) ?>')">
@@ -486,6 +494,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                             onclick="openPharmacieModal(<?= (int)$r['id'] ?>, '<?= h($r['patient_nom']) ?>', <?= (int)$r['numero_recu'] ?>, '<?= h($r['type_patient']) ?>')">
                                         <i class="bi bi-capsule"></i>
                                     </button>
+                                    <?php endif; ?>
 
                                     <button class="btn-action btn-action-recap" title="Récapitulatif"
                                             data-bs-toggle="modal" data-bs-target="#modalRecap"
@@ -498,10 +507,10 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                         <i class="bi bi-printer-fill"></i>
                                     </button>
 
-                                    <?php if ($isAdmin): ?>
+                                    <?php if ($isAdmin || $isMajor): ?>
                                     <button class="btn-action"
                                             style="background:#d32f2f;color:#fff;"
-                                            title="Annuler ce reçu (admin)"
+                                            title="Annuler ce reçu"
                                             onclick="confirmerAnnulation(<?= (int)$r['id'] ?>, '<?= h($r['type_recu']) ?>', <?= (int)$r['numero_recu'] ?>)">
                                         <i class="bi bi-x-circle-fill"></i>
                                     </button>
@@ -546,7 +555,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         <tr>
                             <th>N° Reçu</th><th>Patient</th><th>Tél.</th><th>Type</th>
                             <th>Montant</th><th>Date</th><th>Statut</th><th>Modif.</th>
-                            <?php if ($isAdmin): ?><th>Percepteur</th><?php endif; ?>
+                            <?php if ($isAdmin || $isMajor): ?><th>Percepteur</th><?php endif; ?>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -605,7 +614,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                 <?php endif; ?>
                             </td>
                             <td><?= formatDate($r['whendone']) ?></td>
-                            <?php if ($isAdmin): ?>
+                            <?php if ($isAdmin || $isMajor): ?>
                             <td>
                                 <small class="text-muted">
                                     <?= h(trim(($r['percep_nom'] ?? '') . ' ' . ($r['percep_prenom'] ?? ''))) ?: '—' ?>
@@ -641,7 +650,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                             onclick="reimprimerRecu(<?= (int)$r['id'] ?>)">
                                         <i class="bi bi-printer-fill"></i> Imprimer
                                     </button>
-                                    <?php if ($r['type_recu'] === 'consultation'): ?>
+                                    <?php if (!$isMajor && $r['type_recu'] === 'consultation'): ?>
                                     <button class="btn btn-outline-danger" title="Prescrire examens (visite retour)"
                                             data-bs-toggle="modal" data-bs-target="#modalExamens"
                                             onclick="openExamensModal(<?= (int)$r['id'] ?>, '<?= h($r['patient_nom']) ?>', <?= (int)$r['numero_recu'] ?>, '<?= h($r['type_patient']) ?>')">
@@ -658,8 +667,12 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                             onclick="openRecapModal(<?= (int)$r['id'] ?>)">
                                         <i class="bi bi-file-text-fill"></i>
                                     </button>
-                                    <?php if ($isAdmin): ?>
-                                    <button class="btn btn-danger btn-sm" title="Annuler ce reçu (admin)"
+                                    <?php if ($isAdmin || $isMajor): ?>
+                                    <button class="btn btn-outline-warning btn-sm" title="Modifier ce reçu"
+                                            onclick="ouvrirModification(<?= (int)$r['id'] ?>, '<?= h($r['type_recu']) ?>')">
+                                        <i class="bi bi-pencil-fill"></i>
+                                    </button>
+                                    <button class="btn btn-danger btn-sm" title="Annuler ce reçu"
                                             onclick="confirmerAnnulation(<?= (int)$r['id'] ?>, '<?= h($r['type_recu']) ?>', <?= (int)$r['numero_recu'] ?>)">
                                         <i class="bi bi-x-circle-fill"></i>
                                     </button>
