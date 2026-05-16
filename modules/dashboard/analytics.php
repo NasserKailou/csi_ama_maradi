@@ -1598,7 +1598,9 @@ include ROOT_PATH . '/templates/layouts/header.php';
             </div>
         </div>
     </div>
-</div>       = json_encode($labelsEvo);
+</div>
+<?php
+$jsLabelsEvo       = json_encode($labelsEvo);
 $jsDataPatientsEvo = json_encode($dataPatientsEvo);
 $jsDataRecettesEvo = json_encode($dataRecettesEvo);
 $jsDataCumulEvo    = json_encode($dataCumulEvo);
@@ -1622,7 +1624,7 @@ $jsLabelsAge       = json_encode($labelsAge);
 $jsDataAge         = json_encode($dataAge);
 
 $jsImprimerRedevancesUrl = json_encode(url('modules/dashboard/imprimer_redevances.php'));
-$jsImprimerPharmacieUrl  = url('modules/dashboard/imprimer_pharmacie.php');
+$jsImprimerPharmacieUrl  = json_encode(url('modules/dashboard/imprimer_pharmacie.php'));
 
 $extraJs = <<<HEREDOC
 <script>
@@ -1788,8 +1790,8 @@ function lancerImpressionPharmacie() {
         return;
     }
     bootstrap.Modal.getInstance(document.getElementById('modalImprimerPharmacie')).hide();
-    const url = '{$jsImprimerPharmacieUrl}';
-    window.open(url + '?date_debut=' + encodeURIComponent(deb) + '&date_fin=' + encodeURIComponent(fin), '_blank');
+    const urlPharma = {$jsImprimerPharmacieUrl};
+    window.open(urlPharma + '?date_debut=' + encodeURIComponent(deb) + '&date_fin=' + encodeURIComponent(fin), '_blank');
 }
 </script>
 HEREDOC;

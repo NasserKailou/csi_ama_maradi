@@ -222,14 +222,54 @@ try {
         }
     }
 
+    // ── 7. Décrémentation stock fiches AG si option 2 (carnet + fiche) ──────
+    $stockFichesAg  = 0;
+    $alerteFichesAg = '';
+    if ($optionGratuite === 2) {
+        $cfgFag = $pdo->query(
+            "SELECT cle, valeur FROM config_systeme WHERE cle IN ('stock_fiches_ag','seuil_alerte_fiches_ag') AND isDeleted=0"
+        )->fetchAll(PDO::FETCH_KEY_PAIR);
+        $stockFichesAg = (int)($cfgFag['stock_fiches_ag']         ?? 0);
+        $seuilFichesAg = (int)($cfgFag['seuil_alerte_fiches_ag']  ?? 10);
+
+        if ($stockFichesAg <= 0) {
+            $alerteFichesAg = 'ATTENTION : Stock de fiches AG épuisé — fiche non décomptée.';
+        } else {
+            $newStockFag = max(0, $stockFichesAg - 1);
+            $pdo->prepare(
+                "INSERT INTO config_systeme (cle, valeur, whodone) VALUES ('stock_fiches_ag',:v,:w)
+                 ON DUPLICATE KEY UPDATE valeur=:v2, whodone=:w2"
+            )->execute([':v' => $newStockFag, ':w' => $userId, ':v2' => $newStockFag, ':w2' => $userId]);
+
+            $pdo->prepare(
+                "INSERT INTO mouvements_fiches_ag
+                     (type_mvt, quantite, stock_avant, stock_apres, recu_id, commentaire, whodone)
+                 VALUES ('sortie', -1, :sb, :sa, :rid, :cmt, :who)"
+            )->execute([
+                ':sb'  => $stockFichesAg,
+                ':sa'  => $newStockFag,
+                ':rid' => $recuId,
+                ':cmt' => 'Fiche acte gratuit #' . $numRecu,
+                ':who' => $userId,
+            ]);
+            $stockFichesAg = $newStockFag;
+
+            if ($stockFichesAg === 0) {
+                $alerteFichesAg = 'ATTENTION : Plus aucune fiche AG disponible !';
+            } elseif ($stockFichesAg <= $seuilFichesAg) {
+                $alerteFichesAg = 'Attention : Stock fiches AG bas – Reste ' . $stockFichesAg . ' fiche(s).';
+            }
+        }
+    }
+
     $pdo->commit();
 
-    // ── 6. Génération du PDF ─────────────────────────────────────────────
+    // ── 8. Génération du PDF ─────────────────────────────────────────────
     require_once ROOT_PATH . '/modules/pdf/PdfGenerator.php';
     $pdf     = new PdfGenerator($pdo);
     $pdfFile = $pdf->generateConsultation($recuId);
 
-    // ── 7. Réponse JSON ──────────────────────────────────────────────────
+    // ── 9. Réponse JSON ──────────────────────────────────────────────────
     switch ($optionGratuite) {
         case 1:
             $message = 'Acte gratuit + Carnet (100 F) enregistré.';
@@ -242,14 +282,16 @@ try {
     }
 
     jsonSuccess($message, [
-        'recu_id'          => $recuId,
-        'numero_recu'      => $numRecu,
-        'option_gratuite'  => $optionGratuite,
-        'montant_total'    => $montantTotal,
-        'montant_encaisse' => $montantEncaisse,
-        'stock_carnets'    => $stockCarnets,
-        'alerte_carnets'   => $alerteCarnets,
-        'pdf_url'          => url('uploads/pdf/' . basename($pdfFile)),
+        'recu_id'           => $recuId,
+        'numero_recu'       => $numRecu,
+        'option_gratuite'   => $optionGratuite,
+        'montant_total'     => $montantTotal,
+        'montant_encaisse'  => $montantEncaisse,
+        'stock_carnets'     => $stockCarnets,
+        'alerte_carnets'    => $alerteCarnets,
+        'stock_fiches_ag'   => $stockFichesAg,
+        'alerte_fiches_ag'  => $alerteFichesAg,
+        'pdf_url'           => url('uploads/pdf/' . basename($pdfFile)),
     ]);
 
 } catch (PDOException $e) {
