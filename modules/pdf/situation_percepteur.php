@@ -10,7 +10,7 @@ require_once ROOT_PATH . '/core/autoload.php';
 require_once ROOT_PATH . '/core/helpers.php';
 
 Session::start();
-requireRole('admin');
+requireRole('admin', 'comptable', 'major');
 
 $pdo          = Database::getInstance();
 $percepteurId = (int)($_GET['percepteur_id'] ?? 0);

@@ -50,7 +50,7 @@
         <div class="collapse navbar-collapse" id="navMain">
             <!-- Nav gauche -->
             <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-                <?php if (Session::hasRole('admin', 'comptable')): ?>
+                <?php if (Session::hasRole('admin', 'comptable', 'major')): ?>
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle <?= in_array($page, ['dashboard','analytics']) ? 'active' : '' ?>"
                        href="#" data-bs-toggle="dropdown">
@@ -61,7 +61,7 @@
                                href="<?= url('index.php?page=dashboard') ?>">
                             <i class="bi bi-house-door me-2"></i>Vue principale
                         </a></li>
-                        <?php if (Session::hasRole('admin')): ?>
+                        <?php if (Session::hasRole('admin', 'comptable')): ?>
                         <li><a class="dropdown-item <?= $page==='analytics' ? 'active' : '' ?>"
                                href="<?= url('index.php?page=analytics') ?>">
                             <i class="bi bi-graph-up-arrow me-2"></i>Analytique avancée
@@ -131,6 +131,9 @@
                         <li><a class="dropdown-item" href="<?= url('index.php?page=parametrage&section=config') ?>"><i class="bi bi-building me-2"></i>Config. centre</a></li>
                         <li><a class="dropdown-item" href="<?= url('index.php?page=parametrage&section=inventaire') ?>"><i class="bi bi-clipboard-check me-2"></i>Inventaire</a></li>
                         <li><a class="dropdown-item" href="<?= url('index.php?page=parametrage&section=etat_labo') ?>"><i class="bi bi-file-earmark-pdf me-2"></i>État de paie labo</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item" href="<?= url('index.php?page=parametrage&section=carnets') ?>"><i class="bi bi-journal-medical me-2"></i>Carnets de soins</a></li>
+                        <li><a class="dropdown-item" href="<?= url('index.php?page=parametrage&section=fiches_ag') ?>"><i class="bi bi-file-medical me-2"></i>Fiches Actes Gratuits</a></li>
                     </ul>
                 </li>
                 <?php endif; ?>
@@ -149,8 +152,8 @@
 
                 <?php
                 $role = Session::getRole();
-                $badgeColor = match($role) { 'admin' => 'danger', 'comptable' => 'warning', default => 'info' };
-                $roleLabel  = match($role) { 'admin' => 'Administrateur', 'comptable' => 'Comptable', default => 'Percepteur' };
+                $badgeColor = match($role) { 'admin' => 'danger', 'comptable' => 'warning', 'major' => 'primary', default => 'info' };
+                $roleLabel  = match($role) { 'admin' => 'Administrateur', 'comptable' => 'Comptable', 'major' => 'Major', default => 'Percepteur' };
                 ?>
                 <li class="nav-item">
                     <span class="badge bg-<?= $badgeColor ?> px-3 py-2">

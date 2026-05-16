@@ -109,6 +109,30 @@ CREATE TABLE IF NOT EXISTS `mouvements_carnets` (
   KEY `idx_mvt_carnet_recu` (`recu_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 5. ── Stock Fiches Actes Gratuits ──────────────────────────────────────────
+-- Utilise config_systeme pour stocker :
+--   stock_fiches_ag          (int)  nombre actuel de fiches actes gratuits
+--   seuil_alerte_fiches_ag   (int)  seuil d'alerte
+INSERT IGNORE INTO `config_systeme` (`cle`, `valeur`, `whendone`, `whodone`) VALUES
+  ('stock_fiches_ag',        '0',  NOW(), 1),
+  ('seuil_alerte_fiches_ag', '10', NOW(), 1);
+
+-- 6. ── Mouvements fiches actes gratuits ──────────────────────────────────────
+CREATE TABLE IF NOT EXISTS `mouvements_fiches_ag` (
+  `id`           INT(10) UNSIGNED NOT NULL AUTO_INCREMENT,
+  `type_mvt`     ENUM('initialisation','sortie','correction') NOT NULL DEFAULT 'sortie',
+  `quantite`     INT(11) NOT NULL COMMENT 'Positif pour ajouts, négatif pour sorties',
+  `stock_avant`  INT(11) NOT NULL DEFAULT 0,
+  `stock_apres`  INT(11) NOT NULL DEFAULT 0,
+  `recu_id`      INT(10) UNSIGNED DEFAULT NULL COMMENT 'Reçu consultation lié (si sortie)',
+  `commentaire`  TEXT DEFAULT NULL,
+  `whendone`     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `whodone`      INT(10) UNSIGNED NOT NULL DEFAULT 0,
+  PRIMARY KEY (`id`),
+  KEY `idx_mvt_fiche_date` (`whendone`),
+  KEY `idx_mvt_fiche_recu` (`recu_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- ============================================================
 -- FIN MIGRATION 002
 -- ============================================================
