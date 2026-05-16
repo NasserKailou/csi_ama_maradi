@@ -395,10 +395,11 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                     (int)$r['montant_total'] === 1000
                                 );
 
-                                // ✅ Badge GRATUIT seulement pour les types autorisés
+                                // ✅ Badge GRATUIT uniquement pour la consultation acte gratuit
+                                // (les examens/pharmacie liés à un acte gratuit ne sont pas gratuits)
                                 $afficheGratuit = (
                                     $r['type_patient'] === 'acte_gratuit' &&
-                                    in_array($r['type_recu'], $typesAvecBadgeGratuit, true)
+                                    $r['type_recu'] === 'consultation'
                                 );
                                 ?>
                                 <span class="badge" style="background:<?= $bt['color'] ?>"><?= $bt['label'] ?></span>
@@ -571,7 +572,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
 
                                 $afficheGratuitArch = (
                                     $r['type_patient'] === 'acte_gratuit' &&
-                                    in_array($r['type_recu'], $typesAvecBadgeGratuit, true)
+                                    $r['type_recu'] === 'consultation'
                                 );
                                 ?>
                                 <?php if ($estObservationArch): ?>
@@ -692,14 +693,14 @@ include ROOT_PATH . '/templates/layouts/header.php';
                     <input type="hidden" id="typeRecuHidden" name="type_patient" value="normal">
                     
                     <div class="row g-3">
-                        <div class="col-md-6">
+                        <div class="col-md-6" id="telephoneBlock">
                             <label class="form-label">
                                 Téléphone
                                 <small class="text-muted">(facultatif — 99999999 si non renseigné)</small>
                             </label>
                             <input type="text" class="form-control" id="fTelephone" name="telephone" placeholder="Ex: 90 00 00 00" autocomplete="off">
                         </div>
-                        <div class="col-md-6">
+                        <div class="col-md-6" id="nomPatientBlock">
                             <label class="form-label">Nom et Prénom <span class="text-danger">*</span></label>
                             <input type="text" class="form-control" id="fNomPatient" name="nom" placeholder="Ex: Moussa Halima" required>
                         </div>
@@ -1249,6 +1250,7 @@ const TARIF_SUPPLEMENT_ADULTE = 100;   // +100 F si âge > 5 ans
 const AGE_LIMITE_SUPPLEMENT   = 5;     // seuil d'âge inclusif (0-5 = pas de supplément)
 const TARIF_OBSERVATION       = 1000;  // ✅ Mise en observation (tarif fixe, sans redevance)
 const TELEPHONE_PAR_DEFAUT    = '99999999';
+const STOCK_CARNETS           = <?= (int)$stockCarnets ?>;  // stock actuel côté serveur
 
 let currentTypeRecu = 'normal';
 let currentTypeConsult = 'standard';   // ✅ standard | observation
@@ -1271,8 +1273,12 @@ window.addEventListener('load', function () {
             document.getElementById('fTelephone').value = '';
             document.getElementById('fNomPatient').value = '';
             document.getElementById('fAge').value = '';
-            selectPrestation('standard', '1');
-            //document.getElementById('consAvec').checked = true;
+            // ✅ Si stock carnets = 0, pré-sélectionner "sans carnet" par défaut
+            if (STOCK_CARNETS <= 0) {
+                selectPrestation('standard', '0');
+            } else {
+                selectPrestation('standard', '1');
+            }
         }
 
         // ✅ Reset type consultation à "standard" à chaque ouverture
@@ -1281,6 +1287,9 @@ window.addEventListener('load', function () {
         currentTypeConsult = 'standard';
         const hidConsult = document.getElementById('typeConsultHidden');
         if (hidConsult) hidConsult.value = 'standard';
+
+        const telBlk  = document.getElementById('telephoneBlock');
+        const nomBlk  = document.getElementById('nomPatientBlock');
 
         if (type === 'orphelin') {
             header.style.background = '#7b1fa2';
@@ -1293,6 +1302,9 @@ window.addEventListener('load', function () {
             banner.classList.remove('d-none');
             document.getElementById('sexeM').checked = true;
             document.getElementById('fProvenance').value = 'Maradi';
+            // Orphelin : pas de téléphone — on masque le champ et on élargit le nom
+            if (telBlk) telBlk.style.display = 'none';
+            if (nomBlk) { nomBlk.classList.remove('col-md-6'); nomBlk.classList.add('col-md-12'); }
         } else if (type === 'normal') {
             header.style.background = 'var(--csi-green)';
             title.innerHTML = '<i class="bi bi-person-plus me-2"></i>Nouveau Patient Normal';
@@ -1303,6 +1315,9 @@ window.addEventListener('load', function () {
             if (tcBlock) tcBlock.style.display = '';
             banner.classList.add('d-none');
             document.getElementById('fProvenance').value = '';
+            // Normal : on réaffiche le téléphone et on remet le nom en col-6
+            if (telBlk) telBlk.style.display = '';
+            if (nomBlk) { nomBlk.classList.remove('col-md-12'); nomBlk.classList.add('col-md-6'); }
         }
 
         if (document.getElementById('typeRecuHidden')) {

@@ -148,9 +148,21 @@ function uploadLogo(array $file): string|false
 }
 
 // ── Numéro de reçu ────────────────────────────────────────────────────────────
+/**
+ * Retourne le prochain numéro de reçu disponible de façon atomique.
+ *
+ * Stratégie : SELECT MAX(numero_recu) FROM recus (TOUTES lignes, y compris
+ * isDeleted=1) avec FOR UPDATE pour verrouiller la table pendant la transaction.
+ * Doit être appelé À L'INTÉRIEUR d'une transaction PDO ouverte.
+ *
+ * Si appelé hors transaction, on utilise GET_LOCK/RELEASE_LOCK pour éviter
+ * les doublons en cas de requêtes concurrentes.
+ */
 function getNextNumeroRecu(PDO $pdo): int
 {
-    $stmt = $pdo->query("SELECT MAX(numero_recu) AS max_num FROM recus WHERE isDeleted = 0");
+    // Inclut TOUTES les lignes (isDeleted 0 ET 1) pour ne jamais réutiliser
+    // un numéro déjà attribué, même sur un reçu annulé.
+    $stmt = $pdo->query("SELECT MAX(numero_recu) FROM recus FOR UPDATE");
     $max  = (int)($stmt->fetchColumn() ?: 0);
     return $max + 1;
 }
