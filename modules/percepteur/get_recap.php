@@ -11,7 +11,7 @@ require_once ROOT_PATH . '/core/autoload.php';
 require_once ROOT_PATH . '/core/helpers.php';
 
 Session::start();
-requireRole('percepteur', 'admin', 'comptable');
+requireRole('percepteur', 'admin', 'comptable', 'major');
 
 header('Content-Type: application/json; charset=utf-8');
 
