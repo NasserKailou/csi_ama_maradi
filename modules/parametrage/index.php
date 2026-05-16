@@ -3,7 +3,7 @@
  * Module Paramétrage – Admin & Comptable
  * Sections : actes, examens, pharmacie, config, inventaire, etat_labo
  */
-requireRole('admin', 'comptable');
+requireRole('admin', 'comptable', 'major');
 
 $pdo     = Database::getInstance();
 $userId  = Session::getUserId();

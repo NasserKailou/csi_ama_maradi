@@ -5,7 +5,7 @@
  * Vision 360° : Finance | Opérationnel | RH | Stock | Qualité | Démographie
  * 100% aligné sur le schéma réel directaid (vérifié dump SQL).
  */
-requireRole('admin', 'comptable');
+requireRole('admin', 'comptable', 'major');
 $pdo       = Database::getInstance();
 $pageTitle = 'Analytique Avancée';
 
