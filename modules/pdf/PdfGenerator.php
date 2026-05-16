@@ -741,8 +741,8 @@ private function estConsultationObservation(array $items): bool
             $colspan  = $nbColsTotal - 1;
             $totalRow = "
                 <tr style='background:#e8f5e9;'>
-                    <td colspan='{$colspan}' style='padding:3pt 4pt;text-align:right;font-weight:bold;border:1pt solid #888;font-size:7.5pt;'>TOTAL :</td>
-                    <td style='padding:3pt 4pt;text-align:right;border:1pt solid #888;'>{$totalStr}</td>
+                    <td colspan='{$colspan}' style='padding:3pt 4pt;text-align:right;font-weight:bold;border:1pt solid #aaa;font-size:7.5pt;'>TOTAL :</td>
+                    <td style='padding:3pt 4pt;text-align:right;border:1pt solid #aaa;'>{$totalStr}</td>
                 </tr>";
         }
 
@@ -825,9 +825,11 @@ private function estConsultationObservation(array $items): bool
             </tr>
         </table>
 
-        <table border='1' cellpadding='0' cellspacing='0' width='100%' style='border-collapse:collapse;border:1pt solid #555;font-size:7.5pt;margin-top:2pt;'>
+        <table border='1' cellpadding='2' cellspacing='0' width='100%' style='border-collapse:collapse;border:1pt solid #555;font-size:7.5pt;margin-top:2pt;'>
+            <tbody>
             {$tableRows}
             {$totalRow}
+            </tbody>
         </table>
 
         {$ligneMontantLettres}
