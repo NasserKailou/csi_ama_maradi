@@ -453,14 +453,16 @@ private function estConsultationObservation(array $items): bool
         // ──────────────────────────────────────────────────────────────────
         error_log("[PdfGenerator] recu={$recu['numero_recu']} | isObservation=" . ($isObservation?'OUI':'NON') . " | tarif={$tarif} | libelle={$acteLibelle}");
 
+        $bdrC = 'border:1pt solid #aaa;';
+
         if ($isActeGratuit) {
             $rows = "
                 <tr>
-                    <td style='padding:3pt 4pt;'>
+                    <td style='padding:3pt 4pt;{$bdrC}'>
                         {$acteLibelle}
                         <span style='color:#1565c0;font-size:7pt;font-weight:bold;'> (ACTE GRATUIT)</span>
                     </td>
-                    <td style='padding:3pt 4pt;text-align:right;color:#2e7d32;font-weight:bold;'>Gratuit</td>
+                    <td style='padding:3pt 4pt;text-align:right;color:#2e7d32;font-weight:bold;{$bdrC}'>Gratuit</td>
                 </tr>";
 
             $totalAff = 0;
@@ -468,30 +470,30 @@ private function estConsultationObservation(array $items): bool
             if ($optionCarnet === 1) {
                 $rows .= "
                 <tr>
-                    <td style='padding:3pt 4pt;'>
+                    <td style='padding:3pt 4pt;{$bdrC}'>
                         Carnet de santé
                         <span style='color:#666;font-size:7pt;'> (obligatoire)</span>
                     </td>
-                    <td style='padding:3pt 4pt;text-align:right;font-weight:bold;'>"
+                    <td style='padding:3pt 4pt;text-align:right;font-weight:bold;{$bdrC}'>"
                     . number_format(self::TARIF_CARNET_AG, 0, ',', ' ') . " F</td>
                 </tr>";
                 $totalAff = self::TARIF_CARNET_AG;
             } elseif ($optionCarnet === 2) {
                 $rows .= "
                 <tr>
-                    <td style='padding:3pt 4pt;'>
+                    <td style='padding:3pt 4pt;{$bdrC}'>
                         Carnet de santé
                         <span style='color:#666;font-size:7pt;'> (obligatoire)</span>
                     </td>
-                    <td style='padding:3pt 4pt;text-align:right;font-weight:bold;'>"
+                    <td style='padding:3pt 4pt;text-align:right;font-weight:bold;{$bdrC}'>"
                     . number_format(self::TARIF_CARNET_AG, 0, ',', ' ') . " F</td>
                 </tr>
                 <tr>
-                    <td style='padding:3pt 4pt;'>
+                    <td style='padding:3pt 4pt;{$bdrC}'>
                         Fiche de consultation
                         <span style='color:#666;font-size:7pt;'> (premier passage)</span>
                     </td>
-                    <td style='padding:3pt 4pt;text-align:right;font-weight:bold;'>"
+                    <td style='padding:3pt 4pt;text-align:right;font-weight:bold;{$bdrC}'>"
                     . number_format(self::TARIF_FICHE_AG, 0, ',', ' ') . " F</td>
                 </tr>";
                 $totalAff = self::TARIF_CARNET_AG + self::TARIF_FICHE_AG;
@@ -509,11 +511,11 @@ private function estConsultationObservation(array $items): bool
 
             $rows = "
                 <tr>
-                    <td style=\"padding:3pt 4pt;\">
+                    <td style=\"padding:3pt 4pt;{$bdrC}\">
                         <b style='color:#e65100;'>{$libelleObs}</b>
                         <span style='color:#666;font-size:7pt;'> (tarif fixe)</span>
                     </td>
-                    <td style=\"padding:3pt 4pt;text-align:right;\">{$prixObsAff}</td>
+                    <td style=\"padding:3pt 4pt;text-align:right;{$bdrC}\">{$prixObsAff}</td>
                 </tr>";
 
             $totalAff = $isOrphelin ? 0 : $tarif;
@@ -543,8 +545,8 @@ private function estConsultationObservation(array $items): bool
             $prixCarnetAff = $this->fmtMontant($tarifCarnet, $isOrphelin);
             $carnetLine = "
                 <tr>
-                    <td style=\"padding:3pt 4pt;\">Carnet de Soins</td>
-                    <td style=\"padding:3pt 4pt;text-align:right;\">{$prixCarnetAff}</td>
+                    <td style=\"padding:3pt 4pt;{$bdrC}\">Carnet de Soins</td>
+                    <td style=\"padding:3pt 4pt;text-align:right;{$bdrC}\">{$prixCarnetAff}</td>
                 </tr>";
         }
 
@@ -559,18 +561,18 @@ private function estConsultationObservation(array $items): bool
 
             $supplementLine = "
                 <tr>
-                    <td style=\"padding:3pt 4pt;font-style:italic;color:#5d4037;\">
+                    <td style=\"padding:3pt 4pt;font-style:italic;color:#5d4037;{$bdrC}\">
                         {$libSupp}
                         <span style='color:#888;font-size:7pt;'> (reversée au ministère)</span>
                     </td>
-                    <td style=\"padding:3pt 4pt;text-align:right;\">{$prixSuppAff}</td>
+                    <td style=\"padding:3pt 4pt;text-align:right;{$bdrC}\">{$prixSuppAff}</td>
                 </tr>";
         }
 
         $rows = "
             <tr>
-                <td style=\"padding:3pt 4pt;\">{$acteLibelle}</td>
-                <td style=\"padding:3pt 4pt;text-align:right;\">{$prixConsultAff}</td>
+                <td style=\"padding:3pt 4pt;{$bdrC}\">{$acteLibelle}</td>
+                <td style=\"padding:3pt 4pt;text-align:right;{$bdrC}\">{$prixConsultAff}</td>
             </tr>
             {$carnetLine}
             {$supplementLine}";

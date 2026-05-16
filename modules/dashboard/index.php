@@ -146,6 +146,18 @@ foreach ($detailPharmRows as $row) {
     $detailPharmByUser[$uid]['lignes'][] = $row;
 }
 
+// ── Situation carnets de santé ───────────────────────────────────────────────
+$cfgCarnets      = $pdo->query("SELECT cle, valeur FROM config_systeme WHERE cle IN ('stock_carnets','seuil_alerte_carnets') AND isDeleted=0")->fetchAll(PDO::FETCH_KEY_PAIR);
+$stockCarnets    = (int)($cfgCarnets['stock_carnets']        ?? 0);
+$seuilCarnets    = (int)($cfgCarnets['seuil_alerte_carnets'] ?? 10);
+// Carnets distribués aujourd'hui = recus de type consultation avec avec_carnet=1 validés ce jour
+$carnetsJour     = (int)$pdo->query("SELECT COUNT(*) FROM recus WHERE isDeleted=0 AND type_recu='consultation' AND avec_carnet=1 AND DATE(whendone)=CURDATE()")->fetchColumn();
+$carnetsMois     = (int)$pdo->query("SELECT COUNT(*) FROM recus WHERE isDeleted=0 AND type_recu='consultation' AND avec_carnet=1 AND MONTH(whendone)=MONTH(CURDATE()) AND YEAR(whendone)=YEAR(CURDATE())")->fetchColumn();
+$statutCarnet    = $stockCarnets === 0 ? 'danger' : ($stockCarnets <= $seuilCarnets ? 'warning' : 'success');
+$iconCarnet      = $stockCarnets === 0 ? 'exclamation-octagon-fill' : ($stockCarnets <= $seuilCarnets ? 'exclamation-triangle-fill' : 'journal-medical');
+$colorCarnet     = $stockCarnets === 0 ? '#c62828' : ($stockCarnets <= $seuilCarnets ? '#e65100' : '#2e7d32');
+$bgCarnet        = $stockCarnets === 0 ? '#ffebee'  : ($stockCarnets <= $seuilCarnets ? '#fbe9e7'  : '#e8f5e9');
+
 // ── Alertes stock (regroupées par sévérité) ─────────────────────────────────
 $alertesStock = $pdo->query("
     SELECT nom, forme, stock_actuel, seuil_alerte, prix_unitaire, date_peremption,
@@ -318,7 +330,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
     </div>
 
     <!-- ── KPI secondaires : volumes + cumul mensuel ─────────────────────── -->
-    <div class="row g-3 mb-4">
+    <div class="row g-3 mb-3">
         <div class="col-md-3 col-sm-6">
             <div class="card border-0 shadow-sm h-100" style="border-left:4px solid #00695c !important;">
                 <div class="card-body py-2">
@@ -355,6 +367,48 @@ include ROOT_PATH . '/templates/layouts/header.php';
                     <small class="text-muted text-uppercase">Recettes d'hier</small>
                     <div class="fw-bold fs-5" style="color:#1976d2;"><?= number_format($recettesHier,0,',',' ') ?> F</div>
                     <small class="text-muted">référence J-1</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Situation Carnets de Santé ──────────────────────────────────────── -->
+    <div class="row g-3 mb-4">
+        <div class="col-12">
+            <div class="card border-0 shadow-sm" style="border-left:5px solid <?= $colorCarnet ?> !important;">
+                <div class="card-body py-2">
+                    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0"
+                                 style="width:40px;height:40px;background:<?= $bgCarnet ?>;color:<?= $colorCarnet ?>;">
+                                <i class="bi bi-<?= $iconCarnet ?> fs-5"></i>
+                            </div>
+                            <div>
+                                <div class="fw-bold" style="color:<?= $colorCarnet ?>;font-size:1.05rem;">
+                                    <?= $stockCarnets ?> carnet<?= $stockCarnets > 1 ? 's' : '' ?> en stock
+                                    <?php if ($stockCarnets === 0): ?>
+                                        <span class="badge bg-danger ms-1" style="font-size:.7rem;">RUPTURE</span>
+                                    <?php elseif ($stockCarnets <= $seuilCarnets): ?>
+                                        <span class="badge ms-1" style="background:#e65100;font-size:.7rem;">STOCK BAS</span>
+                                    <?php else: ?>
+                                        <span class="badge ms-1" style="background:#2e7d32;font-size:.7rem;">OK</span>
+                                    <?php endif; ?>
+                                </div>
+                                <small class="text-muted">
+                                    Seuil d'alerte : <strong><?= $seuilCarnets ?></strong>
+                                    &nbsp;·&nbsp;
+                                    Distribués aujourd'hui : <strong><?= $carnetsJour ?></strong>
+                                    &nbsp;·&nbsp;
+                                    Distribués ce mois : <strong><?= $carnetsMois ?></strong>
+                                </small>
+                            </div>
+                        </div>
+                        <a href="<?= url('index.php?page=parametrage#carnets') ?>"
+                           class="btn btn-sm"
+                           style="background:<?= $colorCarnet ?>;color:#fff;border:none;">
+                            <i class="bi bi-gear me-1"></i>Gérer le stock
+                        </a>
+                    </div>
                 </div>
             </div>
         </div>
