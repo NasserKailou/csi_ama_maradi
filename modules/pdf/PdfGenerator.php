@@ -453,7 +453,7 @@ private function estConsultationObservation(array $items): bool
         // ──────────────────────────────────────────────────────────────────
         error_log("[PdfGenerator] recu={$recu['numero_recu']} | isObservation=" . ($isObservation?'OUI':'NON') . " | tarif={$tarif} | libelle={$acteLibelle}");
 
-        $bdrC = 'border:1pt solid #aaa;';
+        $bdrC = 'border-top:1px solid #999;border-bottom:1px solid #999;border-left:1px solid #999;border-right:1px solid #999;';
 
         if ($isActeGratuit) {
             $rows = "
@@ -585,37 +585,39 @@ private function estConsultationObservation(array $items): bool
 
     private function buildBlocExamen(array $recu, array $lignes, bool $isOrphelin): string
     {
-        $bdr   = 'border:1pt solid #aaa;';
-        $thead = '
-            <thead>
-            <tr style="background:#fff3e0;font-weight:bold;font-size:7pt;">
-                <td style="padding:2pt 3pt;width:76%;' . $bdr . '">Examen prescrit</td>
-                <td style="padding:2pt 3pt;text-align:right;' . $bdr . '">Coût</td>
-            </tr>
-            </thead>';
+        // TCPDF: seule façon fiable d'avoir des bordures = style inline complet sur chaque <td>
+        // On n'utilise PAS <thead>/<tbody> — TCPDF les gère mal pour les bordures.
+        // On passe des <tr> simples avec style de fond sur la 1re ligne (en-tête manuelle).
+        $bdr  = 'border-top:1px solid #999;border-bottom:1px solid #999;border-left:1px solid #999;border-right:1px solid #999;';
         $rows = '';
+
+        // Ligne d'en-tête (simulée avec style de fond)
+        $rows .= "<tr style='background:#fff3e0;font-weight:bold;font-size:7pt;'>
+            <td style='padding:2pt 3pt;width:76%;{$bdr}'>Examen prescrit</td>
+            <td style='padding:2pt 3pt;text-align:right;{$bdr}'>Coût</td>
+        </tr>";
+
         $total = 0;
         foreach ($lignes as $l) {
             $cout    = (int)$l['cout_total'];
             $coutAff = $this->fmtMontant($cout, $isOrphelin);
             $rows   .= "<tr>
-                <td style='padding:2pt 3pt;{$bdr}font-size:7.5pt;'>{$l['libelle']}</td>
-                <td style='padding:2pt 3pt;text-align:right;{$bdr}font-size:7.5pt;'>{$coutAff}</td>
+                <td style='padding:2pt 3pt;font-size:7.5pt;{$bdr}'>{$l['libelle']}</td>
+                <td style='padding:2pt 3pt;text-align:right;font-size:7.5pt;{$bdr}'>{$coutAff}</td>
             </tr>";
             $total += $cout;
         }
 
-        // Ligne total visible dans le tableau (hideTotal=true → on la gère ici)
+        // Ligne total
         $totalAff   = $isOrphelin ? 0 : $total;
         $totalLigne = $isOrphelin
             ? '<span style="color:#d32f2f;font-weight:bold;">0 F</span>'
             : '<b>' . number_format($total, 0, ',', ' ') . ' F</b>';
         $rows .= "<tr style='background:#e8f5e9;'>
-                <td style='padding:3pt;text-align:right;font-weight:bold;{$bdr}font-size:7.5pt;'>TOTAL :</td>
-                <td style='padding:3pt;text-align:right;{$bdr}'>{$totalLigne}</td>
-            </tr>";
+            <td style='padding:3pt;text-align:right;font-weight:bold;font-size:7.5pt;{$bdr}'>TOTAL :</td>
+            <td style='padding:3pt;text-align:right;{$bdr}'>{$totalLigne}</td>
+        </tr>";
 
-        // ✅ Pas de zone observations — supprimée intentionnellement
         // Montant en lettres
         $lettres = '<table width="100%" cellpadding="0" cellspacing="0" style="margin-top:2pt;">
             <tr><td style="font-size:6.5pt;color:#444;font-style:italic;padding:2pt 0;">
@@ -623,23 +625,25 @@ private function estConsultationObservation(array $items): bool
             </td></tr>
         </table>';
 
-        return $this->blocRecu($recu, 'BON D\'EXAMEN', $thead . '<tbody>' . $rows . '</tbody>', $totalAff, $isOrphelin, true, $lettres, 2, false);
+        return $this->blocRecu($recu, 'BON D\'EXAMEN', $rows, $totalAff, $isOrphelin, true, $lettres, 2, false);
     }
 
     private function buildBlocPharmacie(array $recu, array $lignes, bool $isOrphelin): string
     {
-        $bdr   = 'border:1pt solid #aaa;';
-        $thead = '
-            <thead>
-            <tr style="background:#e0f2f1;font-weight:bold;font-size:6.5pt;">
-                <td style="padding:2pt 3pt;' . $bdr . '">Désignation</td>
-                <td style="padding:2pt 3pt;' . $bdr . '">Forme</td>
-                <td style="padding:2pt 3pt;text-align:center;' . $bdr . '">Qté</td>
-                <td style="padding:2pt 3pt;text-align:right;' . $bdr . '">P.U.</td>
-                <td style="padding:2pt 3pt;text-align:right;' . $bdr . '">Total</td>
-            </tr>
-            </thead>';
-        $rows  = '';
+        // TCPDF: seule façon fiable d'avoir des bordures = style inline complet sur chaque <td>
+        // On n'utilise PAS <thead>/<tbody> — TCPDF les gère mal pour les bordures.
+        $bdr  = 'border-top:1px solid #999;border-bottom:1px solid #999;border-left:1px solid #999;border-right:1px solid #999;';
+        $rows = '';
+
+        // Ligne d'en-tête (simulée avec style de fond)
+        $rows .= "<tr style='background:#e0f2f1;font-weight:bold;font-size:6.5pt;'>
+            <td style='padding:2pt 3pt;{$bdr}'>Désignation</td>
+            <td style='padding:2pt 3pt;{$bdr}'>Forme</td>
+            <td style='padding:2pt 3pt;text-align:center;{$bdr}'>Qté</td>
+            <td style='padding:2pt 3pt;text-align:right;{$bdr}'>P.U.</td>
+            <td style='padding:2pt 3pt;text-align:right;{$bdr}'>Total</td>
+        </tr>";
+
         $total = 0;
         foreach ($lignes as $l) {
             $pu       = (int)$l['prix_unitaire'];
@@ -648,24 +652,24 @@ private function estConsultationObservation(array $items): bool
             $totAff   = $this->fmtMontant($totLigne, $isOrphelin);
 
             $rows .= "<tr>
-                <td style='padding:2pt 3pt;{$bdr}font-size:7pt;'>{$l['nom']}</td>
+                <td style='padding:2pt 3pt;font-size:7pt;{$bdr}'>{$l['nom']}</td>
                 <td style='padding:2pt 3pt;font-size:6.5pt;color:#555;{$bdr}'>{$l['forme']}</td>
-                <td style='padding:2pt 3pt;text-align:center;{$bdr}font-size:7pt;'>{$l['quantite']}</td>
-                <td style='padding:2pt 3pt;text-align:right;{$bdr}font-size:7pt;'>{$puAff}</td>
-                <td style='padding:2pt 3pt;text-align:right;{$bdr}font-size:7pt;font-weight:bold;'>{$totAff}</td>
+                <td style='padding:2pt 3pt;text-align:center;font-size:7pt;{$bdr}'>{$l['quantite']}</td>
+                <td style='padding:2pt 3pt;text-align:right;font-size:7pt;{$bdr}'>{$puAff}</td>
+                <td style='padding:2pt 3pt;text-align:right;font-size:7pt;font-weight:bold;{$bdr}'>{$totAff}</td>
             </tr>";
             $total += $totLigne;
         }
 
-        // Ligne total dans le tableau (hideTotal=true → on gère ici)
+        // Ligne total
         $totalAff   = $isOrphelin ? 0 : $total;
         $totalLigne = $isOrphelin
             ? '<span style="color:#d32f2f;font-weight:bold;">0 F</span>'
             : '<b>' . number_format($total, 0, ',', ' ') . ' F</b>';
         $rows .= "<tr style='background:#e8f5e9;'>
-                <td colspan='4' style='padding:3pt;text-align:right;font-weight:bold;{$bdr}font-size:7pt;'>TOTAL :</td>
-                <td style='padding:3pt;text-align:right;{$bdr}'>{$totalLigne}</td>
-            </tr>";
+            <td colspan='4' style='padding:3pt;text-align:right;font-weight:bold;font-size:7pt;{$bdr}'>TOTAL :</td>
+            <td style='padding:3pt;text-align:right;{$bdr}'>{$totalLigne}</td>
+        </tr>";
 
         // Montant en lettres
         $lettres = '<table width="100%" cellpadding="0" cellspacing="0" style="margin-top:2pt;">
@@ -674,7 +678,7 @@ private function estConsultationObservation(array $items): bool
             </td></tr>
         </table>';
 
-        return $this->blocRecu($recu, 'REÇU PHARMACIE', $thead . '<tbody>' . $rows . '</tbody>', $totalAff, $isOrphelin, true, $lettres, 5, false);
+        return $this->blocRecu($recu, 'REÇU PHARMACIE', $rows, $totalAff, $isOrphelin, true, $lettres, 5, false);
     }
 
     private function buildEtatLaboHtml(array $lignes, string $debut, string $fin): string
@@ -747,8 +751,8 @@ private function estConsultationObservation(array $items): bool
             $colspan  = $nbColsTotal - 1;
             $totalRow = "
                 <tr style='background:#e8f5e9;'>
-                    <td colspan='{$colspan}' style='padding:3pt 4pt;text-align:right;font-weight:bold;border:1pt solid #aaa;font-size:7.5pt;'>TOTAL :</td>
-                    <td style='padding:3pt 4pt;text-align:right;border:1pt solid #aaa;'>{$totalStr}</td>
+                    <td colspan='{$colspan}' style='padding:3pt 4pt;text-align:right;font-weight:bold;border-top:1px solid #999;border-bottom:1px solid #999;border-left:1px solid #999;border-right:1px solid #999;font-size:7.5pt;'>TOTAL :</td>
+                    <td style='padding:3pt 4pt;text-align:right;border-top:1px solid #999;border-bottom:1px solid #999;border-left:1px solid #999;border-right:1px solid #999;'>{$totalStr}</td>
                 </tr>";
         }
 
@@ -831,8 +835,8 @@ private function estConsultationObservation(array $items): bool
             </tr>
         </table>
 
-        <table border='1' cellpadding='2' cellspacing='0' width='100%' style='border-collapse:collapse;border:1pt solid #555;font-size:7.5pt;margin-top:2pt;'>
-            " . (str_contains($tableRows, '<thead') ? $tableRows . $totalRow : '<tbody>' . $tableRows . $totalRow . '</tbody>') . "
+        <table border='1' cellpadding='2' cellspacing='0' width='100%' style='border-collapse:collapse;border:1px solid #555;font-size:7.5pt;margin-top:2pt;'>
+            <tbody>" . $tableRows . $totalRow . "</tbody>
         </table>
 
         {$ligneMontantLettres}
