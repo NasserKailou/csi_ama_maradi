@@ -61,7 +61,7 @@
                                href="<?= url('index.php?page=dashboard') ?>">
                             <i class="bi bi-house-door me-2"></i>Vue principale
                         </a></li>
-                        <?php if (Session::hasRole('admin', 'comptable')): ?>
+                        <?php if (Session::hasRole('admin', 'comptable', 'major')): ?>
                         <li><a class="dropdown-item <?= $page==='analytics' ? 'active' : '' ?>"
                                href="<?= url('index.php?page=analytics') ?>">
                             <i class="bi bi-graph-up-arrow me-2"></i>Analytique avancée
@@ -72,7 +72,7 @@
                 <?php endif; ?>
 
                 <?php /* Espace Percepteur : accessible au percepteur ET à l'admin (pour saisie de reçus) */ ?>
-                <?php if (Session::hasRole('admin', 'percepteur', 'major')): ?>
+                <?php if (Session::hasRole('admin', 'percepteur')): ?>
                 <li class="nav-item">
                     <a class="nav-link <?= ($page === 'percepteur') ? 'active' : '' ?>" href="<?= url('index.php?page=percepteur') ?>">
                         <i class="bi bi-person-badge"></i> Espace Percepteur
@@ -91,7 +91,7 @@
                 </li>
 
                 <!-- ── Règlements DirectAid AMA (admin + comptable) ── -->
-                <?php if (Session::hasRole('admin', 'comptable','percepteur')): ?>
+                <?php if (Session::hasRole('admin', 'comptable', 'major')): ?>
                 <li class="nav-item">
                     <a class="nav-link position-relative <?= ($page === 'reglements') ? 'active' : '' ?>"
                        href="<?= url('index.php?page=reglements') ?>">
@@ -117,7 +117,7 @@
                 </li>
                 <?php endif; ?>
 
-                <?php if (Session::hasRole('admin', 'comptable')): ?>
+                <?php if (Session::hasRole('admin', 'comptable', 'major')): ?>
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle <?= in_array($page, ['parametrage']) ? 'active' : '' ?>" 
                        href="#" data-bs-toggle="dropdown">
