@@ -147,9 +147,11 @@ foreach ($detailPharmRows as $row) {
 }
 
 // ── Situation carnets de santé ───────────────────────────────────────────────
-$cfgCarnets      = $pdo->query("SELECT cle, valeur FROM config_systeme WHERE cle IN ('stock_carnets','seuil_alerte_carnets') AND isDeleted=0")->fetchAll(PDO::FETCH_KEY_PAIR);
-$stockCarnets    = (int)($cfgCarnets['stock_carnets']        ?? 0);
-$seuilCarnets    = (int)($cfgCarnets['seuil_alerte_carnets'] ?? 10);
+$cfgCarnets      = $pdo->query("SELECT cle, valeur FROM config_systeme WHERE cle IN ('stock_carnets','seuil_alerte_carnets','stock_fiches_ag','seuil_alerte_fiches_ag') AND isDeleted=0")->fetchAll(PDO::FETCH_KEY_PAIR);
+$stockCarnets    = (int)($cfgCarnets['stock_carnets']           ?? 0);
+$seuilCarnets    = (int)($cfgCarnets['seuil_alerte_carnets']    ?? 10);
+$stockFichesAg   = (int)($cfgCarnets['stock_fiches_ag']         ?? 0);
+$seuilFichesAg   = (int)($cfgCarnets['seuil_alerte_fiches_ag']  ?? 10);
 // Carnets distribués : on compte les sorties de carnets via mouvements_carnets (type=sortie)
 // ou via lignes_consultation.avec_carnet >= 1 (inclut option 1 = carnet seul, 2 = carnet+fiche)
 $carnetsJour = (int)$pdo->query("
@@ -173,6 +175,29 @@ $statutCarnet    = $stockCarnets === 0 ? 'danger' : ($stockCarnets <= $seuilCarn
 $iconCarnet      = $stockCarnets === 0 ? 'exclamation-octagon-fill' : ($stockCarnets <= $seuilCarnets ? 'exclamation-triangle-fill' : 'journal-medical');
 $colorCarnet     = $stockCarnets === 0 ? '#c62828' : ($stockCarnets <= $seuilCarnets ? '#e65100' : '#2e7d32');
 $bgCarnet        = $stockCarnets === 0 ? '#ffebee'  : ($stockCarnets <= $seuilCarnets ? '#fbe9e7'  : '#e8f5e9');
+
+// ── Situation fiches AG ───────────────────────────────────────────────────────
+$fichesJour = (int)$pdo->query("
+    SELECT COUNT(*)
+    FROM lignes_consultation lc
+    JOIN recus r ON r.id = lc.recu_id AND r.isDeleted = 0
+    WHERE lc.isDeleted = 0
+      AND lc.avec_carnet = 2
+      AND DATE(r.whendone) = CURDATE()
+")->fetchColumn();
+$fichesMois = (int)$pdo->query("
+    SELECT COUNT(*)
+    FROM lignes_consultation lc
+    JOIN recus r ON r.id = lc.recu_id AND r.isDeleted = 0
+    WHERE lc.isDeleted = 0
+      AND lc.avec_carnet = 2
+      AND MONTH(r.whendone) = MONTH(CURDATE())
+      AND YEAR(r.whendone)  = YEAR(CURDATE())
+")->fetchColumn();
+$statutFiche = $stockFichesAg === 0 ? 'danger' : ($stockFichesAg <= $seuilFichesAg ? 'warning' : 'success');
+$iconFiche   = $stockFichesAg === 0 ? 'exclamation-octagon-fill' : ($stockFichesAg <= $seuilFichesAg ? 'exclamation-triangle-fill' : 'file-medical');
+$colorFiche  = $stockFichesAg === 0 ? '#c62828' : ($stockFichesAg <= $seuilFichesAg ? '#e65100' : '#00695c');
+$bgFiche     = $stockFichesAg === 0 ? '#ffebee'  : ($stockFichesAg <= $seuilFichesAg ? '#fbe9e7'  : '#e0f2f1');
 
 // ── Alertes stock (regroupées par sévérité) ─────────────────────────────────
 $alertesStock = $pdo->query("
@@ -419,9 +444,51 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                 </small>
                             </div>
                         </div>
-                        <a href="<?= url('index.php?page=parametrage#carnets') ?>"
+                        <a href="<?= url('index.php?page=parametrage&section=carnets') ?>"
                            class="btn btn-sm"
                            style="background:<?= $colorCarnet ?>;color:#fff;border:none;">
+                            <i class="bi bi-gear me-1"></i>Gérer le stock
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Situation Fiches Actes Gratuits ──────────────────────────────────── -->
+    <div class="row g-3 mb-4">
+        <div class="col-12">
+            <div class="card border-0 shadow-sm" style="border-left:5px solid <?= $colorFiche ?> !important;">
+                <div class="card-body py-2">
+                    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="rounded-circle d-flex align-items-center justify-content-center flex-shrink-0"
+                                 style="width:40px;height:40px;background:<?= $bgFiche ?>;color:<?= $colorFiche ?>;">
+                                <i class="bi bi-<?= $iconFiche ?> fs-5"></i>
+                            </div>
+                            <div>
+                                <div class="fw-bold" style="color:<?= $colorFiche ?>;font-size:1.05rem;">
+                                    <?= $stockFichesAg ?> fiche<?= $stockFichesAg > 1 ? 's' : '' ?> AG en stock
+                                    <?php if ($stockFichesAg === 0): ?>
+                                        <span class="badge bg-danger ms-1" style="font-size:.7rem;">RUPTURE</span>
+                                    <?php elseif ($stockFichesAg <= $seuilFichesAg): ?>
+                                        <span class="badge ms-1" style="background:#e65100;font-size:.7rem;">STOCK BAS</span>
+                                    <?php else: ?>
+                                        <span class="badge ms-1" style="background:#00695c;font-size:.7rem;">OK</span>
+                                    <?php endif; ?>
+                                </div>
+                                <small class="text-muted">
+                                    Seuil d'alerte : <strong><?= $seuilFichesAg ?></strong>
+                                    &nbsp;·&nbsp;
+                                    Distribuées aujourd'hui : <strong><?= $fichesJour ?></strong>
+                                    &nbsp;·&nbsp;
+                                    Distribuées ce mois : <strong><?= $fichesMois ?></strong>
+                                </small>
+                            </div>
+                        </div>
+                        <a href="<?= url('index.php?page=parametrage&section=fiches_ag') ?>"
+                           class="btn btn-sm"
+                           style="background:<?= $colorFiche ?>;color:#fff;border:none;">
                             <i class="bi bi-gear me-1"></i>Gérer le stock
                         </a>
                     </div>

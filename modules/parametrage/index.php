@@ -1331,7 +1331,6 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         <th class="text-center">Stock initial</th>
                         <th class="text-center">Approvisionnements</th>
                         <th class="text-center">Ventes</th>
-                        <th class="text-center">Stock théorique</th>
                         <th class="text-center">Stock actuel</th>
                         <th>Statut</th>
                     </tr>
@@ -1342,9 +1341,9 @@ include ROOT_PATH . '/templates/layouts/header.php';
                     // Calcul approvisionnements
                     $appro = (int)$pdo->prepare("SELECT COALESCE(SUM(quantite),0) FROM approvisionnements_pharmacie WHERE produit_id=:id AND isDeleted=0")->execute([':id'=>$p['id']]) ? $pdo->query("SELECT COALESCE(SUM(quantite),0) FROM approvisionnements_pharmacie WHERE produit_id={$p['id']} AND isDeleted=0")->fetchColumn() : 0;
                     // Calcul ventes
-                    $ventes = (int)$pdo->query("SELECT COALESCE(SUM(lp.quantite),0) FROM lignes_pharmacie lp JOIN recus r ON r.id=lp.recu_id WHERE lp.produit_id={$p['id']} AND lp.isDeleted=0 AND r.isDeleted=0")->fetchColumn();
+                    $ventes    = (int)$pdo->query("SELECT COALESCE(SUM(lp.quantite),0) FROM lignes_pharmacie lp JOIN recus r ON r.id=lp.recu_id WHERE lp.produit_id={$p['id']} AND lp.isDeleted=0 AND r.isDeleted=0")->fetchColumn();
                     $theorique = $p['stock_initial'] + $appro - $ventes;
-                    $ecart = $p['stock_actuel'] - $theorique;
+                    $ecart     = $p['stock_actuel'] - $theorique;
                 ?>
                     <tr>
                         <td><strong><?= h($p['nom']) ?></strong></td>
@@ -1352,7 +1351,6 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         <td class="text-center"><?= $p['stock_initial'] ?></td>
                         <td class="text-center text-success">+<?= $appro ?></td>
                         <td class="text-center text-danger">-<?= $ventes ?></td>
-                        <td class="text-center fw-bold"><?= $theorique ?></td>
                         <td class="text-center fw-bold <?= $p['stock_actuel'] <= $p['seuil_alerte'] ? 'text-warning' : '' ?>">
                             <?= $p['stock_actuel'] ?>
                         </td>
