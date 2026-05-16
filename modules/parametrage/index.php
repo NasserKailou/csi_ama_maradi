@@ -219,8 +219,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Recalcul : diff de quantité pour ajuster le stock
                 $diffQty  = $newQty - (int)$mvtRow['quantite'];
                 $pdo->beginTransaction();
-                $pdo->prepare("UPDATE mouvements_carnets SET quantite=:q, stock_apres=stock_avant+:q, commentaire=:c WHERE id=:id")
-                    ->execute([':q'=>$newQty, ':c'=>($newComment ?: $mvtRow['commentaire']), ':id'=>$mvtId]);
+                $pdo->prepare("UPDATE mouvements_carnets SET quantite=:q, stock_apres=stock_avant+:q2, commentaire=:c WHERE id=:id")
+                    ->execute([':q'=>$newQty, ':q2'=>$newQty, ':c'=>($newComment ?: $mvtRow['commentaire']), ':id'=>$mvtId]);
                 // Mettre à jour le stock actuel en appliquant la différence
                 if ($diffQty !== 0) {
                     $curStock = (int)$pdo->query("SELECT valeur FROM config_systeme WHERE cle='stock_carnets'")->fetchColumn();
