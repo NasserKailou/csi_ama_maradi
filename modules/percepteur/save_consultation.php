@@ -124,7 +124,14 @@ try {
     // ── 2. Numéro de reçu séquentiel global ───────────────────────────────
     $numRecu = getNextNumeroRecu($pdo);
 
-    // ── 3. Calcul des montants ────────────────────────────────────────────
+// ── 3. Calcul des montants ────────────────────────────────────────────
+    // Vérification stock carnets AVANT calcul (si carnet demandé)
+    $stockCarnets     = 0;
+    $seuilCarnets     = 10;
+    $carnetsStockRow  = $pdo->query("SELECT cle, valeur FROM config_systeme WHERE cle IN ('stock_carnets','seuil_alerte_carnets') AND isDeleted=0")->fetchAll(PDO::FETCH_KEY_PAIR);
+    $stockCarnets     = (int)($carnetsStockRow['stock_carnets'] ?? 0);
+    $seuilCarnets     = (int)($carnetsStockRow['seuil_alerte_carnets'] ?? 10);
+
     if ($typeConsult === 'observation') {
         // MISE EN OBSERVATION : 1000 F fixe, pas de carnet, pas de supplément âge
         $tarifConsult   = (int)TARIF_OBSERVATION;
@@ -139,6 +146,12 @@ try {
         $tarifCarnet    = ($avecCarnet && $typePatient === 'normal')
                           ? (int)TARIF_CARNET_SOINS
                           : 0;
+
+        // Bloquer si carnet demandé et stock = 0
+        if ($avecCarnet && $typePatient === 'normal' && $stockCarnets <= 0) {
+            $pdo->rollBack();
+            jsonError('Stock de carnets épuisé. Veuillez réapprovisionner les carnets (Paramétrage → Carnets).');
+        }
 
         $supplementAge = ($age > AGE_LIMITE_SUPPLEMENT) ? (int)TARIF_SUPPLEMENT_ADULTE : 0;
         $appliquerSupp = ($typePatient !== 'acte_gratuit');
@@ -239,7 +252,27 @@ if ($supplementAge > 0 && $typeConsult === 'standard') {
 
     $pdo->commit();
 
-    // ── 7. Génération du PDF ──────────────────────────────────────────────
+    // ── 7. Décrémentation stock carnets ──────────────────────────────────
+    // Si carnet utilisé (consultation normale avec carnet)
+    if ($avecCarnet && $typePatient === 'normal' && $typeConsult === 'standard' && $tarifCarnet > 0) {
+        try {
+            $newStockCarnets = max(0, $stockCarnets - 1);
+            $pdo->prepare("INSERT INTO config_systeme (cle, valeur, whodone) VALUES ('stock_carnets',:v,:w)
+                           ON DUPLICATE KEY UPDATE valeur=:v2, whodone=:w2")
+                ->execute([':v'=>$newStockCarnets,':w'=>$userId,':v2'=>$newStockCarnets,':w2'=>$userId]);
+            // Mouvement carnet
+            $commentaireMvt = 'Carnet consultation #' . $numRecu;
+            $pdo->prepare("INSERT INTO mouvements_carnets
+                (type_mvt, quantite, stock_avant, stock_apres, recu_id, commentaire, whodone)
+                VALUES ('sortie',-1,:sb,:sa,:rid,:commentaire,:w)")
+                ->execute([':sb'=>$stockCarnets,':sa'=>$newStockCarnets,':rid'=>$recuId,':commentaire'=>$commentaireMvt,':w'=>$userId]);
+            $stockCarnets = $newStockCarnets;
+        } catch (Exception $ignored) {
+            // Ne pas bloquer si table mouvements_carnets pas encore créée
+        }
+    }
+
+    // ── 8. Génération du PDF ──────────────────────────────────────────────
     require_once ROOT_PATH . '/modules/pdf/PdfGenerator.php';
     $pdf     = new PdfGenerator($pdo);
     $pdfFile = $pdf->generateConsultation($recuId);
@@ -258,6 +291,16 @@ if ($supplementAge > 0 && $typeConsult === 'standard') {
         ? 'Reçu orphelin enregistré (gratuité totale — montant théorique : ' . $montantTotal . ' F).'
         : 'Reçu enregistré : ' . $montantTotal . ' F = ' . implode(' + ', $details);
 
+    // Alerte carnets bas
+    $alertCarnets = '';
+    if ($avecCarnet && $typePatient === 'normal' && $typeConsult === 'standard') {
+        if ($stockCarnets === 0) {
+            $alertCarnets = 'ATTENTION : Plus aucun carnet disponible !';
+        } elseif ($stockCarnets <= $seuilCarnets) {
+            $alertCarnets = 'Attention : Stock carnets bas – Reste ' . $stockCarnets . ' carnet(s). Seuil d\'alerte : ' . $seuilCarnets . '.';
+        }
+    }
+
     jsonSuccess($message, [
         'recu_id'           => $recuId,
         'numero_recu'       => $numRecu,
@@ -269,6 +312,8 @@ if ($supplementAge > 0 && $typeConsult === 'standard') {
         'supplement_age'    => $supplementAge,
         'avec_carnet'       => (int)($avecCarnet && $typePatient === 'normal' && $typeConsult === 'standard'),
         'pdf_url'           => url('uploads/pdf/' . basename($pdfFile)),
+        'stock_carnets'     => $stockCarnets,
+        'alerte_carnets'    => $alertCarnets,
     ]);
 
 } catch (PDOException $e) {

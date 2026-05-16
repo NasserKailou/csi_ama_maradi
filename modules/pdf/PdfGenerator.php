@@ -51,6 +51,17 @@ class PdfGenerator
     private const SEUIL_DOUBLE_PAGE          = 8;
     private const SEUIL_EXAMEN_DOUBLE_PAGE   = 6;
     private const VALIDITE_CONSULTATION_JOURS = 3;
+
+    // ── Mots pour montant en lettres ───────────────────────────────────
+    private const UNITES = [
+        '', 'un', 'deux', 'trois', 'quatre', 'cinq', 'six', 'sept', 'huit', 'neuf',
+        'dix', 'onze', 'douze', 'treize', 'quatorze', 'quinze', 'seize',
+        'dix-sept', 'dix-huit', 'dix-neuf'
+    ];
+    private const DIZAINES = [
+        '', '', 'vingt', 'trente', 'quarante', 'cinquante',
+        'soixante', 'soixante', 'quatre-vingt', 'quatre-vingt'
+    ];
     private const TARIF_CARNET_AG            = 100;
     private const TARIF_FICHE_AG             = 300;
     private const TARIF_OBSERVATION          = 1000;   // ✅ Mise en observation
@@ -102,6 +113,60 @@ class PdfGenerator
     private function cfg(string $key, string $default = ''): string
     {
         return $this->config[$key] ?? $default;
+    }
+
+    // ═════════════════════════════════════════════════════════════════════
+    //  MONTANT EN LETTRES (F CFA)
+    // ═════════════════════════════════════════════════════════════════════
+
+    /**
+     * Convertit un entier en lettres françaises suivi de "F CFA".
+     * Ex: 1500 → "Mille cinq cents francs CFA"
+     */
+    public function montantEnLettres(int $montant): string
+    {
+        if ($montant === 0) return 'Zéro franc CFA';
+        if ($montant < 0)  return 'Moins ' . $this->montantEnLettres(-$montant);
+
+        $lettres = rtrim($this->nombreEnLettres($montant));
+        $franc   = ($montant > 1) ? 'francs' : 'franc';
+        return ucfirst($lettres) . ' ' . $franc . ' CFA';
+    }
+
+    private function nombreEnLettres(int $n): string
+    {
+        if ($n < 20) return self::UNITES[$n];
+
+        if ($n < 100) {
+            $d = intdiv($n, 10);
+            $u = $n % 10;
+            if ($d === 7 || $d === 9) {
+                return self::DIZAINES[$d] . '-' . self::UNITES[10 + $u];
+            }
+            $lien  = ($u === 1 && $d !== 8) ? '-et-' : ($u > 0 ? '-' : '');
+            $plurD = ($d === 8 && $u === 0) ? 's' : '';
+            return self::DIZAINES[$d] . $plurD . ($u > 0 ? $lien . self::UNITES[$u] : '');
+        }
+
+        if ($n < 1000) {
+            $c = intdiv($n, 100);
+            $r = $n % 100;
+            $centMot = ($c === 1) ? 'cent' : (self::UNITES[$c] . ' cent');
+            $plurC   = ($r === 0 && $c > 1) ? 's' : '';
+            return $centMot . $plurC . ($r > 0 ? ' ' . $this->nombreEnLettres($r) : '');
+        }
+
+        if ($n < 1_000_000) {
+            $m = intdiv($n, 1000);
+            $r = $n % 1000;
+            $milleMot = ($m === 1) ? 'mille' : ($this->nombreEnLettres($m) . ' mille');
+            return $milleMot . ($r > 0 ? ' ' . $this->nombreEnLettres($r) : '');
+        }
+
+        $mil = intdiv($n, 1_000_000);
+        $r   = $n % 1_000_000;
+        $milMot = $this->nombreEnLettres($mil) . ' million' . ($mil > 1 ? 's' : '');
+        return $milMot . ($r > 0 ? ' ' . $this->nombreEnLettres($r) : '');
     }
 
     private function fmtTelephone(?string $tel): string
@@ -229,7 +294,7 @@ private function estConsultationObservation(array $items): bool
         $supplementAge, $libelleSupplement
     );
 
-    return $this->renderDoubleExemplaire($block, 'recu_consult_' . $recu['numero_recu']);
+    return $this->renderExemplaire($block, 'recu_consult_' . $recu['numero_recu']);
 }
 
 
@@ -248,10 +313,7 @@ private function estConsultationObservation(array $items): bool
         $isOrphelin = ($recu['type_patient'] === 'orphelin');
         $block = $this->buildBlocExamen($recu, $lignes, $isOrphelin);
 
-        if (count($lignes) >= self::SEUIL_EXAMEN_DOUBLE_PAGE) {
-            return $this->renderDeuxPages($block, 'recu_exam_' . $recu['numero_recu']);
-        }
-        return $this->renderDoubleExemplaire($block, 'recu_exam_' . $recu['numero_recu']);
+        return $this->renderExemplaire($block, 'recu_exam_' . $recu['numero_recu']);
     }
 
     public function generateExamen(int $recuId): string
@@ -274,10 +336,7 @@ private function estConsultationObservation(array $items): bool
         $isOrphelin = ($recu['type_patient'] === 'orphelin');
         $block = $this->buildBlocPharmacie($recu, $lignes, $isOrphelin);
 
-        if (count($lignes) >= self::SEUIL_DOUBLE_PAGE) {
-            return $this->renderDeuxPages($block, 'recu_pharma_' . $recu['numero_recu']);
-        }
-        return $this->renderDoubleExemplaire($block, 'recu_pharma_' . $recu['numero_recu']);
+        return $this->renderExemplaire($block, 'recu_pharma_' . $recu['numero_recu']);
     }
 
     public function generateEtatLabo(string $dateDebut, string $dateFin): string
@@ -307,40 +366,33 @@ private function estConsultationObservation(array $items): bool
 
     private function buildEntete(): string
     {
-        $logoSize = 35;
+        // A6 compact : logos réduits, texte serré
+        $logoSize = 22;
 
         $logoMinTag = $this->logoMinistere
             ? "<img src=\"{$this->logoMinistere}\" width=\"{$logoSize}\" height=\"{$logoSize}\"/>"
-            : "<div style=\"width:{$logoSize}mm;height:{$logoSize}mm;\"></div>";
+            : '';
 
         $logoDaTag = $this->logoDirectAid
             ? "<img src=\"{$this->logoDirectAid}\" width=\"{$logoSize}\" height=\"{$logoSize}\"/>"
-            : "<div style=\"width:{$logoSize}mm;height:{$logoSize}mm;\"></div>";
+            : '';
 
-        $adresse = trim($this->cfg('adresse', ''));
-        $tel     = trim($this->cfg('telephone', ''));
-
-        $coordParts = [];
-        if ($adresse !== '') $coordParts[] = htmlspecialchars($adresse, ENT_QUOTES, 'UTF-8');
-        if ($tel !== '')     $coordParts[] = 'Tél : ' . htmlspecialchars($tel, ENT_QUOTES, 'UTF-8');
-
-        $ligneCoord = '';
-        if (!empty($coordParts)) {
-            $ligneCoord = '<br/><span style="font-size:7pt;color:#555;">'
-                . implode(' &nbsp;·&nbsp; ', $coordParts) . '</span>';
-        }
+        $tel = trim($this->cfg('telephone', ''));
+        $telSpan = $tel !== ''
+            ? '<br/><span style="font-size:6pt;color:#555;">Tél : ' . htmlspecialchars($tel, ENT_QUOTES, 'UTF-8') . '</span>'
+            : '';
 
         return '
-        <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1.5pt solid #2e7d32;padding-bottom:4pt;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:1.5pt solid #2e7d32;padding-bottom:2pt;">
             <tr>
-                <td width="26%" style="text-align:center;vertical-align:middle;">' . $logoMinTag . '</td>
-                <td width="48%" style="text-align:center;vertical-align:middle;line-height:1.4;">
-                    <span style="font-size:9.5pt;font-weight:bold;">RÉPUBLIQUE DU NIGER</span><br/>
-                    <span style="font-size:8pt;">Ministère de la Santé et de l\'Hygiène Publique</span><br/>
-                    <span style="font-size:10pt;font-weight:bold;color:#2e7d32;">CSI ZARIA I/Direct Aid - MARADI</span>'
-                    . $ligneCoord . '
+                <td width="15%" style="text-align:center;vertical-align:middle;">' . $logoMinTag . '</td>
+                <td width="70%" style="text-align:center;vertical-align:middle;line-height:1.3;">
+                    <span style="font-size:7pt;font-weight:bold;">RÉPUBLIQUE DU NIGER</span><br/>
+                    <span style="font-size:6pt;">Ministère de la Santé et de l\'Hygiène Publique</span><br/>
+                    <span style="font-size:7.5pt;font-weight:bold;color:#2e7d32;">CSI ZARIA I / Direct Aid – MARADI</span>'
+                    . $telSpan . '
                 </td>
-                <td width="26%" style="text-align:center;vertical-align:middle;">' . $logoDaTag . '</td>
+                <td width="15%" style="text-align:center;vertical-align:middle;">' . $logoDaTag . '</td>
             </tr>
         </table>';
     }
@@ -362,19 +414,17 @@ private function estConsultationObservation(array $items): bool
     {
         $dateEmission = strtotime($recu['whendone']);
         $dateFin      = strtotime('+' . self::VALIDITE_CONSULTATION_JOURS . ' days', $dateEmission);
-
-        $emissionFmt = date('d/m/Y', $dateEmission);
-        $finFmt      = date('d/m/Y', $dateFin);
+        $emissionFmt  = date('d/m/Y', $dateEmission);
+        $finFmt       = date('d/m/Y', $dateFin);
 
         return "
-        <table width='100%' cellpadding='3' cellspacing='0' style='margin-top:2pt;background:#fff8e1;border:1pt solid #f9a825;'>
+        <table width='100%' cellpadding='2' cellspacing='0' style='margin-top:2pt;background:#fff8e1;border:1pt solid #f9a825;'>
             <tr>
-                <td style='padding:3pt 5pt;font-size:7.5pt;color:#5d4037;'>
-                    <b style='color:#e65100;'>VALIDITÉ DU REÇU :</b>
-                    Ce reçu est valable <b>" . self::VALIDITE_CONSULTATION_JOURS . " jours</b>
-                    à compter de la date de délivrance.<br/>
-                    <b>Émis le :</b> {$emissionFmt} &nbsp;·&nbsp;
-                    <b>Valable jusqu'au :</b> <span style='color:#c62828;font-weight:bold;'>{$finFmt}</span>
+                <td style='padding:2pt 3pt;font-size:6.5pt;color:#5d4037;'>
+                    <b style='color:#e65100;'>VALIDITÉ :</b>
+                    Valable <b>" . self::VALIDITE_CONSULTATION_JOURS . " jours</b> —
+                    Émis le <b>{$emissionFmt}</b> —
+                    Exp. : <span style='color:#c62828;font-weight:bold;'>{$finFmt}</span>
                 </td>
             </tr>
         </table>";
@@ -533,68 +583,90 @@ private function estConsultationObservation(array $items): bool
 
     private function buildBlocExamen(array $recu, array $lignes, bool $isOrphelin): string
     {
+        $bdr  = 'border:1pt solid #aaa;';
         $rows = '
-            <tr style="background:#fff3e0;font-weight:bold;">
-                <td style="padding:3pt 4pt;width:75%;">Examen prescrit</td>
-                <td style="padding:3pt 4pt;text-align:right;">Coût</td>
+            <tr style="background:#fff3e0;font-weight:bold;font-size:7pt;">
+                <td style="padding:2pt 3pt;width:76%;' . $bdr . '">Examen prescrit</td>
+                <td style="padding:2pt 3pt;text-align:right;' . $bdr . '">Coût</td>
             </tr>';
         $total = 0;
         foreach ($lignes as $l) {
             $cout    = (int)$l['cout_total'];
             $coutAff = $this->fmtMontant($cout, $isOrphelin);
             $rows   .= "<tr>
-                <td style='padding:3pt 4pt;'>{$l['libelle']}</td>
-                <td style='padding:3pt 4pt;text-align:right;'>{$coutAff}</td>
+                <td style='padding:2pt 3pt;{$bdr}font-size:7.5pt;'>{$l['libelle']}</td>
+                <td style='padding:2pt 3pt;text-align:right;{$bdr}font-size:7.5pt;'>{$coutAff}</td>
             </tr>";
             $total += $cout;
         }
 
-        $zoneObs = '
-        <table width="100%" cellpadding="2" cellspacing="0" style="border:0.5pt solid #999;margin-top:3pt;">
-            <tr><td style="padding:3pt;background:#fff8e1;font-weight:bold;font-size:7.5pt;">
-                Observations / Résultats du Laborantin :
-            </td></tr>
-            <tr><td style="padding:3pt;height:10mm;font-size:7pt;color:#999;">
-                ___________________________________________________<br/>
-                ___________________________________________________
+        // Ligne total visible dans le tableau (hideTotal=true → on la gère ici)
+        $totalAff   = $isOrphelin ? 0 : $total;
+        $totalLigne = $isOrphelin
+            ? '<span style="color:#d32f2f;font-weight:bold;">0 F</span>'
+            : '<b>' . number_format($total, 0, ',', ' ') . ' F</b>';
+        $rows .= "<tr style='background:#e8f5e9;'>
+                <td style='padding:3pt;text-align:right;font-weight:bold;{$bdr}font-size:7.5pt;'>TOTAL :</td>
+                <td style='padding:3pt;text-align:right;{$bdr}'>{$totalLigne}</td>
+            </tr>";
+
+        // ✅ Pas de zone observations — supprimée intentionnellement
+        // Montant en lettres
+        $lettres = '<table width="100%" cellpadding="0" cellspacing="0" style="margin-top:2pt;">
+            <tr><td style="font-size:6.5pt;color:#444;font-style:italic;padding:2pt 0;">
+                Arrêté à : <b>' . $this->montantEnLettres($totalAff) . '</b>
             </td></tr>
         </table>';
 
-        $totalAff = $isOrphelin ? 0 : $total;
-
-        return $this->blocRecu($recu, 'BON D\'EXAMEN', $rows, $totalAff, $isOrphelin, true, $zoneObs, 2, false);
+        return $this->blocRecu($recu, 'BON D\'EXAMEN', $rows, $totalAff, $isOrphelin, true, $lettres, 2, false);
     }
 
     private function buildBlocPharmacie(array $recu, array $lignes, bool $isOrphelin): string
     {
+        $bdr  = 'border:1pt solid #aaa;';
         $rows = '
-            <tr style="background:#e0f2f1;font-weight:bold;font-size:7.5pt;">
-                <td style="padding:3pt;">Désignation</td>
-                <td style="padding:3pt;">Forme</td>
-                <td style="padding:3pt;text-align:center;">Qté</td>
-                <td style="padding:3pt;text-align:right;">P.U.</td>
-                <td style="padding:3pt;text-align:right;">Total</td>
+            <tr style="background:#e0f2f1;font-weight:bold;font-size:6.5pt;">
+                <td style="padding:2pt 3pt;' . $bdr . '">Désignation</td>
+                <td style="padding:2pt 3pt;' . $bdr . '">Forme</td>
+                <td style="padding:2pt 3pt;text-align:center;' . $bdr . '">Qté</td>
+                <td style="padding:2pt 3pt;text-align:right;' . $bdr . '">P.U.</td>
+                <td style="padding:2pt 3pt;text-align:right;' . $bdr . '">Total</td>
             </tr>';
         $total = 0;
         foreach ($lignes as $l) {
-            $pu        = (int)$l['prix_unitaire'];
-            $totLigne  = (int)$l['total_ligne'];
-            $puAff     = $this->fmtMontant($pu, $isOrphelin);
-            $totAff    = $this->fmtMontant($totLigne, $isOrphelin);
+            $pu       = (int)$l['prix_unitaire'];
+            $totLigne = (int)$l['total_ligne'];
+            $puAff    = $this->fmtMontant($pu, $isOrphelin);
+            $totAff   = $this->fmtMontant($totLigne, $isOrphelin);
 
             $rows .= "<tr>
-                <td style='padding:2pt 3pt;'>{$l['nom']}</td>
-                <td style='padding:2pt 3pt;font-size:7pt;color:#666;'>{$l['forme']}</td>
-                <td style='padding:2pt 3pt;text-align:center;'>{$l['quantite']}</td>
-                <td style='padding:2pt 3pt;text-align:right;'>{$puAff}</td>
-                <td style='padding:2pt 3pt;text-align:right;'>{$totAff}</td>
+                <td style='padding:2pt 3pt;{$bdr}font-size:7pt;'>{$l['nom']}</td>
+                <td style='padding:2pt 3pt;font-size:6.5pt;color:#555;{$bdr}'>{$l['forme']}</td>
+                <td style='padding:2pt 3pt;text-align:center;{$bdr}font-size:7pt;'>{$l['quantite']}</td>
+                <td style='padding:2pt 3pt;text-align:right;{$bdr}font-size:7pt;'>{$puAff}</td>
+                <td style='padding:2pt 3pt;text-align:right;{$bdr}font-size:7pt;font-weight:bold;'>{$totAff}</td>
             </tr>";
             $total += $totLigne;
         }
 
-        $totalAff = $isOrphelin ? 0 : $total;
+        // Ligne total dans le tableau (hideTotal=true → on gère ici)
+        $totalAff   = $isOrphelin ? 0 : $total;
+        $totalLigne = $isOrphelin
+            ? '<span style="color:#d32f2f;font-weight:bold;">0 F</span>'
+            : '<b>' . number_format($total, 0, ',', ' ') . ' F</b>';
+        $rows .= "<tr style='background:#e8f5e9;'>
+                <td colspan='4' style='padding:3pt;text-align:right;font-weight:bold;{$bdr}font-size:7pt;'>TOTAL :</td>
+                <td style='padding:3pt;text-align:right;{$bdr}'>{$totalLigne}</td>
+            </tr>";
 
-        return $this->blocRecu($recu, 'REÇU PHARMACIE', $rows, $totalAff, $isOrphelin, false, '', 5, false);
+        // Montant en lettres
+        $lettres = '<table width="100%" cellpadding="0" cellspacing="0" style="margin-top:2pt;">
+            <tr><td style="font-size:6pt;color:#444;font-style:italic;padding:1pt 0;">
+                Arrêté à : <b>' . $this->montantEnLettres($totalAff) . '</b>
+            </td></tr>
+        </table>';
+
+        return $this->blocRecu($recu, 'REÇU PHARMACIE', $rows, $totalAff, $isOrphelin, true, $lettres, 5, false);
     }
 
     private function buildEtatLaboHtml(array $lignes, string $debut, string $fin): string
@@ -657,42 +729,43 @@ private function estConsultationObservation(array $items): bool
         $date       = date('d/m/Y H:i', strtotime($recu['whendone']));
         $piedPage   = $this->cfg('pied_de_page', 'Merci de votre visite – Bonne santé.');
 
+        // Ligne TOTAL (pour consultation — les autres blocs gèrent la leur en interne)
         $totalStr = $isOrphelin
-            ? '<span style="color:#d32f2f;font-weight:bold;font-size:11pt;">0 F</span>'
-            : '<b style="font-size:11pt;">' . number_format($total, 0, ',', ' ') . ' F</b>';
+            ? '<span style="color:#d32f2f;font-weight:bold;font-size:9pt;">0 F</span>'
+            : '<b style="font-size:9pt;">' . number_format($total, 0, ',', ' ') . ' F</b>';
 
         $totalRow = '';
         if (!$hideTotal) {
             $colspan  = $nbColsTotal - 1;
             $totalRow = "
                 <tr style='background:#e8f5e9;'>
-                    <td colspan='{$colspan}' style='padding:5pt 4pt;text-align:right;font-weight:bold;'>TOTAL :</td>
-                    <td style='padding:5pt 4pt;text-align:right;'>{$totalStr}</td>
+                    <td colspan='{$colspan}' style='padding:3pt 4pt;text-align:right;font-weight:bold;border:1pt solid #888;font-size:7.5pt;'>TOTAL :</td>
+                    <td style='padding:3pt 4pt;text-align:right;border:1pt solid #888;'>{$totalStr}</td>
                 </tr>";
         }
 
+        // Badges
         $badgeOrphelin = $isOrphelin
-            ? '<span style="background:#7b1fa2;color:#fff;padding:1pt 4pt;font-size:7pt;font-weight:bold;border-radius:2pt;">PRIS EN CHARGE — DIRECTAID AMA</span>'
+            ? '<span style="background:#7b1fa2;color:#fff;padding:1pt 3pt;font-size:6pt;font-weight:bold;border-radius:2pt;">PRIS EN CHARGE — DIRECTAID AMA</span>'
             : '';
 
         $badgeActeGratuit = '';
         if (($recu['type_patient'] ?? '') === 'acte_gratuit') {
-            $badgeActeGratuit = '<span style="background:#1565c0;color:#fff;padding:1pt 4pt;font-size:7pt;font-weight:bold;border-radius:2pt;">ACTE GRATUIT</span>';
+            $badgeActeGratuit = '<span style="background:#1565c0;color:#fff;padding:1pt 3pt;font-size:6pt;font-weight:bold;border-radius:2pt;">ACTE GRATUIT</span>';
         }
 
-        // ✅ Badge "OBSERVATION" si le titre contient "OBSERVATION"
         $badgeObservation = '';
         if (str_contains(strtoupper($titre), 'OBSERVATION')) {
-            $badgeObservation = '<span style="background:#f9a825;color:#000;padding:1pt 4pt;font-size:7pt;font-weight:bold;border-radius:2pt;">MISE EN OBSERVATION</span>';
+            $badgeObservation = '<span style="background:#f9a825;color:#000;padding:1pt 3pt;font-size:6pt;font-weight:bold;border-radius:2pt;">MISE EN OBSERVATION</span>';
         }
 
         $provenanceCell = !empty($recu['provenance'])
-            ? "<small style='color:#666;'>Provenance : {$recu['provenance']}</small>"
+            ? "<small style='color:#555;font-size:6.5pt;'>Prov. : " . htmlspecialchars((string)$recu['provenance'], ENT_QUOTES, 'UTF-8') . "</small>"
             : '';
 
         $infoPatient = '';
         if (!empty($recu['sexe']) || !empty($recu['age'])) {
-            $infoPatient = "<small style='color:#666;'>"
+            $infoPatient = "<small style='color:#555;font-size:6.5pt;'>"
                 . ($recu['sexe'] ?? '') . ($recu['age'] ? ' · ' . $recu['age'] . ' ans' : '')
                 . "</small>";
         }
@@ -709,64 +782,69 @@ private function estConsultationObservation(array $items): bool
 
         $badgesDroite = trim($badgeOrphelin . ' ' . $badgeActeGratuit . ' ' . $badgeObservation);
         $telAffiche   = $this->fmtTelephone($recu['telephone'] ?? '');
+        $patientNom   = htmlspecialchars((string)$recu['patient_nom'], ENT_QUOTES, 'UTF-8');
 
-        // ✅ Couleur du bandeau titre : orangée pour observation
+        // Bandeau titre : orangé pour observation, vert sinon
         $bgTitre = str_contains(strtoupper($titre), 'OBSERVATION') ? '#e65100' : '#2e7d32';
+
+        // Montant en lettres pour consultation (hideTotal=false = la consultation gère le total)
+        $ligneMontantLettres = '';
+        if (!$hideTotal && !$isOrphelin && $total > 0) {
+            $ligneMontantLettres = "<table width='100%' cellpadding='0' cellspacing='0' style='margin-top:2pt;'>
+                <tr><td style='font-size:6pt;color:#444;font-style:italic;padding:1pt 0;'>
+                    Arrêté à : <b>" . $this->montantEnLettres($total) . "</b>
+                </td></tr>
+            </table>";
+        }
 
         return "
         " . $this->buildEntete() . "
 
-        <table width='100%' cellpadding='0' cellspacing='0' style='margin-top:3pt;'>
+        <table width='100%' cellpadding='0' cellspacing='0' style='margin-top:2pt;'>
             <tr>
-                <td style='text-align:center;background:{$bgTitre};color:#fff;padding:3pt;font-weight:bold;font-size:9pt;letter-spacing:1pt;'>
-                    {$titre} — N° {$numFormate}
+                <td style='text-align:center;background:{$bgTitre};color:#fff;padding:2pt 3pt;font-weight:bold;font-size:8pt;letter-spacing:0.5pt;'>
+                    {$titre} &nbsp;—&nbsp; N° {$numFormate}
                 </td>
             </tr>
         </table>
 
-        <table width='100%' cellpadding='2' cellspacing='0' style='margin-top:3pt;font-size:8pt;'>
+        <table width='100%' cellpadding='1' cellspacing='0' style='margin-top:2pt;font-size:7.5pt;border:1pt solid #ccc;'>
             <tr>
-                <td width='60%'>
-                    <b>Patient :</b> {$recu['patient_nom']}<br/>
+                <td width='60%' style='padding:2pt 3pt;'>
+                    <b>Patient :</b> {$patientNom}<br/>
                     {$infoPatient}
+                    " . ($provenanceCell ? "<br/>{$provenanceCell}" : '') . "
                 </td>
-                <td width='40%' style='text-align:right;'>
-                    <small>Date : <b>{$date}</b></small><br/>
-                    <small>Tél : {$telAffiche}</small>
+                <td width='40%' style='text-align:right;padding:2pt 3pt;border-left:1pt solid #ccc;'>
+                    <small style='font-size:6.5pt;'>Date : <b>{$date}</b></small><br/>
+                    <small style='font-size:6.5pt;'>Tél : {$telAffiche}</small>
+                    " . ($badgesDroite ? "<br/>{$badgesDroite}" : '') . "
                 </td>
             </tr>
-            " . ($provenanceCell || $badgesDroite ? "
-            <tr>
-                <td>{$provenanceCell}</td>
-                <td style='text-align:right;'>{$badgesDroite}</td>
-            </tr>" : "") . "
         </table>
 
-        <table border='1' cellpadding='0' cellspacing='0' width='100%' style='border-collapse:collapse;border-color:#bbb;font-size:8.5pt;margin-top:3pt;'>
+        <table border='1' cellpadding='0' cellspacing='0' width='100%' style='border-collapse:collapse;border:1pt solid #555;font-size:7.5pt;margin-top:2pt;'>
             {$tableRows}
             {$totalRow}
         </table>
+
+        {$ligneMontantLettres}
 
         {$blocValidite}
 
         {$zoneSupplementaire}
 
-        <table width='100%' cellpadding='2' cellspacing='0' style='margin-top:5pt;font-size:7.5pt;'>
+        <table width='100%' cellpadding='1' cellspacing='0' style='margin-top:3pt;font-size:6.5pt;border-top:0.5pt solid #ccc;'>
             <tr>
-                <td width='62%' style='vertical-align:middle;padding-right:6pt;'>
-                    <i style='color:#666;'>{$piedPage}</i>
-                    <br/><br/>
-                    <small style='color:#888;'>
-                        <b>Émis par :</b> " . ($percNom ?: '—') . "<br/>
-                        <b>Le :</b> {$date}
+                <td width='60%' style='vertical-align:middle;padding-right:4pt;'>
+                    <i style='color:#666;'>{$piedPage}</i><br/>
+                    <small style='color:#888;font-size:6pt;'>
+                        <b>Émis par :</b> " . ($percNom ?: '—') . " &nbsp;·&nbsp; <b>Le :</b> {$date}
                     </small>
                 </td>
-                <td width='38%' style='text-align:center;vertical-align:middle;'>
+                <td width='40%' style='text-align:center;vertical-align:middle;'>
                     {$qrCode}
-                    <br/>
-                    <span style='font-size:6.5pt;color:#666;font-style:italic;'>
-                        Scannez pour vérifier<br/>l'authenticité du reçu
-                    </span>
+                    <br/><span style='font-size:5.5pt;color:#888;font-style:italic;'>Scannez pour vérifier</span>
                 </td>
             </tr>
         </table>";
@@ -792,74 +870,42 @@ private function estConsultationObservation(array $items): bool
     }
 
     // ═════════════════════════════════════════════════════════════════════
-    //  RENDUS PDF
+    //  RENDUS PDF — A6 copie unique
     // ═════════════════════════════════════════════════════════════════════
 
+    /**
+     * Rendu A6 portrait copie unique — méthode principale.
+     */
+    private function renderExemplaire(string $block, string $filename): string
+    {
+        $html = "
+        <html><head><style>
+            body { font-family: Arial, sans-serif; font-size: 7.5pt; margin: 0; padding: 0; }
+            table { border-color: #555; }
+        </style></head>
+        <body>
+            {$block}
+        </body></html>";
+
+        return $this->renderPdf($html, $filename);
+    }
+
+    /** @deprecated — routes to renderExemplaire */
     private function renderDoubleExemplaire(string $block, string $filename): string
     {
-        $separator = "<p style='text-align:center;color:#999;font-size:7pt;margin:4pt 0 2pt;letter-spacing:2pt;font-weight:bold;'>";
-
-        $html = "
-        <html><head><style>
-            body { font-family: Arial, sans-serif; font-size: 8.5pt; margin: 0; padding: 0; }
-            table { border-color: #bbb; }
-        </style></head>
-        <body>
-            <div>
-                {$separator}✂ — — — — — — — EXEMPLAIRE PERCEPTEUR — — — — — — — ✂</p>
-                {$block}
-            </div>
-            <div>
-                {$separator}✂ — — — — — — — — EXEMPLAIRE PATIENT — — — — — — — — ✂</p>
-                {$block}
-            </div>
-        </body></html>";
-
-        return $this->renderPdf($html, $filename);
+        return $this->renderExemplaire($block, $filename);
     }
 
+    /** @deprecated — routes to renderExemplaire */
     private function renderSimpleExemplaire(string $block, string $filename): string
     {
-        $html = "
-        <html><head><style>
-            body { font-family: Arial, sans-serif; font-size: 9pt; margin: 0; padding: 0; }
-            table { border-color: #bbb; }
-        </style></head>
-        <body>
-            {$block}
-        </body></html>";
-
-        return $this->renderPdf($html, $filename);
+        return $this->renderExemplaire($block, $filename);
     }
 
+    /** @deprecated — routes to renderExemplaire */
     private function renderDeuxPages(string $block, string $filename): string
     {
-        if (!class_exists('TCPDF')) {
-            return $this->fallbackHtmlDeuxPages($block, $filename);
-        }
-
-        $pdf = $this->newTcpdf();
-
-        $page1 = "<html><body style='font-family:Arial,sans-serif;font-size:9pt;'>
-            <p style='text-align:center;color:#999;font-size:7pt;margin:0 0 2pt;letter-spacing:2pt;font-weight:bold;'>
-                ✂ — — — EXEMPLAIRE PERCEPTEUR — — — ✂
-            </p>
-            {$block}
-        </body></html>";
-
-        $page2 = "<html><body style='font-family:Arial,sans-serif;font-size:9pt;'>
-            <p style='text-align:center;color:#999;font-size:7pt;margin:0 0 2pt;letter-spacing:2pt;font-weight:bold;'>
-                ✂ — — — EXEMPLAIRE PATIENT — — — ✂
-            </p>
-            {$block}
-        </body></html>";
-
-        $pdf->AddPage();
-        $pdf->writeHTML($page1, true, false, true, false, '');
-        $pdf->AddPage();
-        $pdf->writeHTML($page2, true, false, true, false, '');
-
-        return $this->savePdf($pdf, $filename);
+        return $this->renderExemplaire($block, $filename);
     }
 
     private function renderEtatLabo(string $html, string $filename): string
@@ -882,15 +928,15 @@ private function estConsultationObservation(array $items): bool
 
     private function newTcpdf(): TCPDF
     {
-        $pdf = new TCPDF('P', 'mm', 'A5', true, 'UTF-8', false);
+        // A6 portrait : 105 × 148 mm — copie unique
+        $pdf = new TCPDF('P', 'mm', 'A6', true, 'UTF-8', false);
         $pdf->SetCreator('CSI DirectAid Maradi');
         $pdf->SetAuthor('CSI DirectAid Maradi');
-        $pdf->SetAutoPageBreak(true, 6);
+        $pdf->SetAutoPageBreak(true, 5);
         $pdf->setPrintHeader(false);
         $pdf->setPrintFooter(false);
-        $pdf->SetMargins(7, 6, 7);
-        $pdf->SetFont('helvetica', '', 9);
-        // ✅ Nécessaire pour que TCPDF puisse récupérer les images locales
+        $pdf->SetMargins(5, 5, 5);
+        $pdf->SetFont('helvetica', '', 7.5);
         $pdf->setImageScale(1.25);
         return $pdf;
     }
@@ -905,7 +951,7 @@ private function estConsultationObservation(array $items): bool
     }
 
     // ═════════════════════════════════════════════════════════════════════
-    //  FALLBACKS HTML
+    //  FALLBACKS HTML (A6)
     // ═════════════════════════════════════════════════════════════════════
 
     private function fallbackHtml(string $html, string $filename): string
@@ -918,13 +964,14 @@ private function estConsultationObservation(array $items): bool
             '<body>',
             '<body onload="window.print()">
             <style>
-            @page { size: A5; margin: 7mm; }
+            @page { size: A6 portrait; margin: 5mm; }
             @media print { .no-print { display: none !important; } }
-            body { font-family: Arial, sans-serif; font-size: 9pt; }
+            body { font-family: Arial, sans-serif; font-size: 7.5pt; }
+            table { border-color: #555; }
             </style>
-            <div class="no-print" style="padding:10px;background:#e8f5e9;text-align:center;">
-                <button onclick="window.print()" style="background:#2e7d32;color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:14px;">🖨️ Imprimer</button>
-                <button onclick="window.close()" style="background:#999;color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;margin-left:8px;">Fermer</button>
+            <div class="no-print" style="padding:8px;background:#e8f5e9;text-align:center;">
+                <button onclick="window.print()" style="background:#2e7d32;color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;font-size:13px;">🖨️ Imprimer</button>
+                <button onclick="window.close()" style="background:#999;color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;margin-left:8px;">Fermer</button>
             </div>',
             $html
         );
@@ -933,38 +980,18 @@ private function estConsultationObservation(array $items): bool
         return $file;
     }
 
+    /** @deprecated — routes to fallbackHtml for backward compatibility */
     private function fallbackHtmlDeuxPages(string $block, string $filename): string
     {
-        $dir = ROOT_PATH . '/uploads/pdf/';
-        if (!is_dir($dir)) mkdir($dir, 0755, true);
-        $file = $dir . $filename . '_' . date('YmdHis') . '.html';
-
-        $html = "
-        <html><head><style>
-        @page { size: A5; margin: 7mm; }
-        @media print {
-            .no-print { display: none !important; }
-            .new-page { page-break-before: always; }
-        }
-        body { font-family: Arial, sans-serif; font-size: 9pt; margin: 0; }
+        $html = "<html><head><style>
+        @page { size: A6 portrait; margin: 5mm; }
+        @media print { .no-print { display: none !important; } }
+        body { font-family: Arial, sans-serif; font-size: 7.5pt; margin: 0; }
+        table { border-color: #555; }
         </style></head>
-        <body onload='window.print()'>
-            <div class='no-print' style='padding:10px;background:#e8f5e9;text-align:center;'>
-                <button onclick='window.print()' style='background:#2e7d32;color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;font-size:14px;'>🖨️ Imprimer</button>
-                <button onclick='window.close()' style='background:#999;color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer;margin-left:8px;'>Fermer</button>
-            </div>
-            <div>
-                <p style='text-align:center;color:#999;font-size:7pt;margin:0 0 2pt;'>✂ EXEMPLAIRE PERCEPTEUR ✂</p>
-                {$block}
-            </div>
-            <div class='new-page'>
-                <p style='text-align:center;color:#999;font-size:7pt;margin:0 0 2pt;'>✂ EXEMPLAIRE PATIENT ✂</p>
-                {$block}
-            </div>
-        </body></html>";
+        <body>{$block}</body></html>";
 
-        file_put_contents($file, $html);
-        return $file;
+        return $this->fallbackHtml($html, $filename);
     }
 
     // ═════════════════════════════════════════════════════════════════════

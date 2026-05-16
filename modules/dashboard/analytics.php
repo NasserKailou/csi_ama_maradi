@@ -1324,10 +1324,11 @@ include ROOT_PATH . '/templates/layouts/header.php';
                 Redevances à reverser au Ministère de la Santé
                 <small class="ms-2 opacity-75">(supplément 100 F · âge &gt; <?= AGE_LIMITE_SUPPLEMENT ?> ans · patients normaux)</small>
             </h6>
-            <a href="<?= url('modules/dashboard/imprimer_redevances.php?date_debut=' . $filtreDebut . '&date_fin=' . $filtreFin) ?>"
-               target="_blank" class="btn btn-sm btn-light fw-bold">
+            <button type="button"
+                    class="btn btn-sm btn-light fw-bold"
+                    onclick="ouvrirModalRedevances()">
                 <i class="bi bi-printer-fill me-1"></i>Imprimer la situation
-            </a>
+            </button>
         </div>
         <div class="card-body">
             <!-- Synthèse globale -->
@@ -1418,6 +1419,45 @@ include ROOT_PATH . '/templates/layouts/header.php';
 
 </div><!-- /.mt-4 -->
 
+<!-- ══════════════════════════════════════════════════════════════
+     MODAL : Sélection période avant impression des redevances
+     ══════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modalImprimerRedevances" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-sm modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header text-white" style="background:#f57f17;">
+                <h6 class="modal-title fw-bold">
+                    <i class="bi bi-printer-fill me-2"></i>Imprimer les Redevances
+                </h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-3">
+                    Sélectionnez la période pour laquelle vous souhaitez imprimer la situation des redevances à reverser au Ministère.
+                </p>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold small">Date de début</label>
+                    <input type="date" id="redevDateDebut" class="form-control form-control-sm"
+                           value="<?= h($filtreDebut) ?>">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold small">Date de fin</label>
+                    <input type="date" id="redevDateFin" class="form-control form-control-sm"
+                           value="<?= h($filtreFin) ?>">
+                </div>
+            </div>
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-sm fw-bold text-white"
+                        style="background:#f57f17;"
+                        onclick="lancerImpressionRedevances()">
+                    <i class="bi bi-printer-fill me-1"></i>Générer le PDF
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <?php
 $jsLabelsEvo       = json_encode($labelsEvo);
 $jsDataPatientsEvo = json_encode($dataPatientsEvo);
@@ -1441,6 +1481,8 @@ $jsLabelsSexe      = json_encode($labelsSexe);
 $jsDataSexe        = json_encode($dataSexe);
 $jsLabelsAge       = json_encode($labelsAge);
 $jsDataAge         = json_encode($dataAge);
+
+$jsImprimerRedevancesUrl = json_encode(url('modules/dashboard/imprimer_redevances.php'));
 
 $extraJs = <<<HEREDOC
 <script>
@@ -1565,6 +1607,29 @@ new Chart(document.getElementById('chartProduits'),{
         options:{responsive:true,plugins:{legend:{position:'bottom'}}}
     });
 })();
+
+// ─── Redevances : modal + lancement impression ──────────────────────────────
+function ouvrirModalRedevances() {
+    const modal = new bootstrap.Modal(document.getElementById('modalImprimerRedevances'));
+    modal.show();
+}
+
+function lancerImpressionRedevances() {
+    const deb = document.getElementById('redevDateDebut').value;
+    const fin = document.getElementById('redevDateFin').value;
+    if (!deb || !fin) {
+        alert('Veuillez renseigner les deux dates.');
+        return;
+    }
+    if (deb > fin) {
+        alert('La date de début doit être antérieure ou égale à la date de fin.');
+        return;
+    }
+    // Fermer la modal puis ouvrir le PDF dans un nouvel onglet
+    bootstrap.Modal.getInstance(document.getElementById('modalImprimerRedevances')).hide();
+    const base = {$jsImprimerRedevancesUrl};
+    window.open(base + '?date_debut=' + encodeURIComponent(deb) + '&date_fin=' + encodeURIComponent(fin), '_blank');
+}
 </script>
 HEREDOC;
 

@@ -91,6 +91,12 @@ function reimprimerRecu(PDO $pdo, int $recuId): void {
 $actes         = $pdo->query("SELECT id, libelle, tarif, est_gratuit FROM actes_medicaux WHERE isDeleted=0 ORDER BY libelle")->fetchAll();
 $actesGratuits = array_filter($actes, fn($a) => $a['est_gratuit']);
 
+// ── Stock carnets ─────────────────────────────────────────────────────────
+$cfgStockRows   = $pdo->query("SELECT cle, valeur FROM config_systeme WHERE cle IN ('stock_carnets','seuil_alerte_carnets') AND isDeleted=0")->fetchAll(PDO::FETCH_KEY_PAIR);
+$stockCarnets   = (int)($cfgStockRows['stock_carnets']        ?? 0);
+$seuilCarnets   = (int)($cfgStockRows['seuil_alerte_carnets'] ?? 10);
+$alerteCarnets  = ($stockCarnets === 0) ? 'danger' : ($stockCarnets <= $seuilCarnets ? 'warning' : '');
+
 // ── Récupérer les examens configurés ──────────────────────────────────────
 $examens = $pdo->query("SELECT id, libelle, cout_total, pourcentage_labo FROM examens WHERE isDeleted=0 ORDER BY libelle")->fetchAll();
 
@@ -107,21 +113,34 @@ $produits = $pdo->query("
     ORDER BY nom
 ")->fetchAll();
 
-// ── Liste journalière du percepteur connecté ───────────────────────────────
-$listeJour = $pdo->prepare("
+// ── Liste journalière ─────────────────────────────────────────────────────
+// Admin voit tous les percepteurs, percepteur voit uniquement ses opérations
+$isAdmin = (Session::getRole() === 'admin');
+
+$sqlJour = "
     SELECT r.id, r.numero_recu, p.nom AS patient_nom, p.telephone,
            r.type_recu, r.type_patient, r.montant_total, r.montant_encaisse,
            r.whendone, p.est_orphelin,
            r.statut_reglement, r.date_reglement, r.reglement_id,
-           (SELECT COUNT(*) FROM modifications_recus mr WHERE mr.recu_id = r.id) AS nb_modifs
+           (SELECT COUNT(*) FROM modifications_recus mr WHERE mr.recu_id = r.id) AS nb_modifs,
+           u.nom AS percep_nom, u.prenom AS percep_prenom
     FROM recus r
     JOIN patients p ON p.id = r.patient_id
+    LEFT JOIN utilisateurs u ON u.id = r.whodone
     WHERE r.isDeleted = 0
-      AND r.whodone = :uid
       AND DATE(r.whendone) = CURDATE()
-    ORDER BY r.whendone DESC
-");
-$listeJour->execute([':uid' => $userId]);
+";
+if (!$isAdmin) {
+    $sqlJour .= " AND r.whodone = :uid";
+}
+$sqlJour .= " ORDER BY r.whendone DESC";
+
+$listeJour = $pdo->prepare($sqlJour);
+if (!$isAdmin) {
+    $listeJour->execute([':uid' => $userId]);
+} else {
+    $listeJour->execute();
+}
 $recusJour = $listeJour->fetchAll();
 
 // ── Filtre archives ────────────────────────────────────────────────────────
@@ -129,19 +148,28 @@ $recusArchives = [];
 $dateDebut = $_GET['date_debut'] ?? '';
 $dateFin   = $_GET['date_fin']   ?? '';
 if ($dateDebut && $dateFin) {
-    $stmtArch = $pdo->prepare("
+    $sqlArch = "
         SELECT r.id, r.numero_recu, p.nom AS patient_nom, p.telephone,
                r.type_recu, r.type_patient, r.montant_total, r.montant_encaisse,
                r.whendone, r.statut_reglement, r.date_reglement,
-               (SELECT COUNT(*) FROM modifications_recus mr WHERE mr.recu_id = r.id) AS nb_modifs
+               (SELECT COUNT(*) FROM modifications_recus mr WHERE mr.recu_id = r.id) AS nb_modifs,
+               u.nom AS percep_nom, u.prenom AS percep_prenom
         FROM recus r
         JOIN patients p ON p.id = r.patient_id
+        LEFT JOIN utilisateurs u ON u.id = r.whodone
         WHERE r.isDeleted = 0
-          AND r.whodone = :uid
           AND DATE(r.whendone) BETWEEN :deb AND :fin
-        ORDER BY r.whendone DESC
-    ");
-    $stmtArch->execute([':uid' => $userId, ':deb' => $dateDebut, ':fin' => $dateFin]);
+    ";
+    if (!$isAdmin) {
+        $sqlArch .= " AND r.whodone = :uid";
+    }
+    $sqlArch .= " ORDER BY r.whendone DESC";
+    $stmtArch = $pdo->prepare($sqlArch);
+    if (!$isAdmin) {
+        $stmtArch->execute([':uid' => $userId, ':deb' => $dateDebut, ':fin' => $dateFin]);
+    } else {
+        $stmtArch->execute([':deb' => $dateDebut, ':fin' => $dateFin]);
+    }
     $recusArchives = $stmtArch->fetchAll();
 }
 
@@ -272,6 +300,27 @@ include ROOT_PATH . '/templates/layouts/header.php';
         </div>
     </div>
 
+    <!-- Indicateur Stock Carnets -->
+    <?php if ($alerteCarnets): ?>
+    <div class="alert alert-<?= $alerteCarnets === 'danger' ? 'danger' : 'warning' ?> py-2 mb-3 d-flex align-items-center gap-2">
+        <i class="bi bi-journal-medical fs-5"></i>
+        <div>
+            <strong>Stock Carnets :</strong>
+            <?php if ($stockCarnets === 0): ?>
+                <span class="text-danger fw-bold">RUPTURE – Aucun carnet disponible !</span>
+                Les consultations avec carnet sont <strong>bloquées</strong>. Contactez l'administration.
+            <?php else: ?>
+                Seulement <strong><?= $stockCarnets ?> carnet(s)</strong> restant(s). Seuil d'alerte : <?= $seuilCarnets ?>.
+            <?php endif; ?>
+        </div>
+    </div>
+    <?php elseif ($stockCarnets > 0): ?>
+    <div class="alert alert-light border py-1 mb-3 d-flex align-items-center gap-2">
+        <i class="bi bi-journal-check text-success"></i>
+        <small class="text-muted">Stock carnets : <strong><?= $stockCarnets ?></strong> carnet(s) disponible(s).</small>
+    </div>
+    <?php endif; ?>
+
     <!-- 3 Grands Boutons d'Action -->
     <div class="row g-3 mb-5 justify-content-center">
         <div class="col-md-4 col-lg-3 text-center">
@@ -308,7 +357,9 @@ include ROOT_PATH . '/templates/layouts/header.php';
                     <thead class="table-light">
                         <tr>
                             <th>N° Reçu</th><th>Nom patient</th><th>Téléphone</th>
-                            <th>Type</th><th>Montant</th><th>Heure</th><th>Actions</th>
+                            <th>Type</th><th>Montant</th><th>Heure</th>
+                            <?php if ($isAdmin): ?><th>Percepteur</th><?php endif; ?>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -398,6 +449,13 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                 <?php endif; ?>
                             </td>
                             <td><small class="text-muted"><?= date('H:i', strtotime($r['whendone'])) ?></small></td>
+                            <?php if ($isAdmin): ?>
+                            <td>
+                                <small class="text-muted">
+                                    <?= h(($r['percep_nom'] ?? '') . ' ' . ($r['percep_prenom'] ?? '')) ?>
+                                </small>
+                            </td>
+                            <?php endif; ?>
                             <td>
                                 <div class="actions-recu d-flex flex-wrap gap-1 justify-content-center">
                                     <?php $estVerrouille = ($r['type_patient'] === 'orphelin' && ($r['statut_reglement'] ?? '') === 'regle'); ?>
@@ -436,6 +494,15 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                             onclick="reimprimerRecu(<?= (int)$r['id'] ?>)">
                                         <i class="bi bi-printer-fill"></i>
                                     </button>
+
+                                    <?php if ($isAdmin): ?>
+                                    <button class="btn-action"
+                                            style="background:#d32f2f;color:#fff;"
+                                            title="Annuler ce reçu (admin)"
+                                            onclick="confirmerAnnulation(<?= (int)$r['id'] ?>, '<?= h($r['type_recu']) ?>', <?= (int)$r['numero_recu'] ?>)">
+                                        <i class="bi bi-x-circle-fill"></i>
+                                    </button>
+                                    <?php endif; ?>
                                 </div>
                             </td>
                         </tr>
@@ -475,7 +542,9 @@ include ROOT_PATH . '/templates/layouts/header.php';
                     <thead class="table-light">
                         <tr>
                             <th>N° Reçu</th><th>Patient</th><th>Tél.</th><th>Type</th>
-                            <th>Montant</th><th>Date</th><th>Statut</th><th>Modif.</th><th>Actions</th>
+                            <th>Montant</th><th>Date</th><th>Statut</th><th>Modif.</th>
+                            <?php if ($isAdmin): ?><th>Percepteur</th><?php endif; ?>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -533,6 +602,13 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                 <?php endif; ?>
                             </td>
                             <td><?= formatDate($r['whendone']) ?></td>
+                            <?php if ($isAdmin): ?>
+                            <td>
+                                <small class="text-muted">
+                                    <?= h(trim(($r['percep_nom'] ?? '') . ' ' . ($r['percep_prenom'] ?? ''))) ?: '—' ?>
+                                </small>
+                            </td>
+                            <?php endif; ?>
                             <td>
                                 <?php if ($r['type_patient'] === 'orphelin'): ?>
                                     <?php if (($r['statut_reglement'] ?? 'en_instance') === 'regle'): ?>
@@ -562,11 +638,29 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                             onclick="reimprimerRecu(<?= (int)$r['id'] ?>)">
                                         <i class="bi bi-printer-fill"></i> Imprimer
                                     </button>
+                                    <?php if ($r['type_recu'] === 'consultation'): ?>
+                                    <button class="btn btn-outline-danger" title="Prescrire examens (visite retour)"
+                                            data-bs-toggle="modal" data-bs-target="#modalExamens"
+                                            onclick="openExamensModal(<?= (int)$r['id'] ?>, '<?= h($r['patient_nom']) ?>', <?= (int)$r['numero_recu'] ?>, '<?= h($r['type_patient']) ?>')">
+                                        <i class="bi bi-droplet-half"></i>
+                                    </button>
+                                    <button class="btn btn-outline-info" title="Pharmacie (visite retour)"
+                                            data-bs-toggle="modal" data-bs-target="#modalPharmacie"
+                                            onclick="openPharmacieModal(<?= (int)$r['id'] ?>, '<?= h($r['patient_nom']) ?>', <?= (int)$r['numero_recu'] ?>, '<?= h($r['type_patient']) ?>')">
+                                        <i class="bi bi-capsule"></i>
+                                    </button>
+                                    <?php endif; ?>
                                     <button class="btn btn-dark" title="Récapitulatif"
                                             data-bs-toggle="modal" data-bs-target="#modalRecap"
                                             onclick="openRecapModal(<?= (int)$r['id'] ?>)">
                                         <i class="bi bi-file-text-fill"></i>
                                     </button>
+                                    <?php if ($isAdmin): ?>
+                                    <button class="btn btn-danger btn-sm" title="Annuler ce reçu (admin)"
+                                            onclick="confirmerAnnulation(<?= (int)$r['id'] ?>, '<?= h($r['type_recu']) ?>', <?= (int)$r['numero_recu'] ?>)">
+                                        <i class="bi bi-x-circle-fill"></i>
+                                    </button>
+                                    <?php endif; ?>
                                 </div>
                             </td>
                         </tr>
@@ -637,19 +731,39 @@ include ROOT_PATH . '/templates/layouts/header.php';
 
                       <!-- ✅ Trois options sur la même ligne : Avec carnet / Sans carnet / Observation -->
 <div class="col-12" id="typeConsultBlock">
+    <?php if ($stockCarnets <= 0): ?>
+    <div class="alert alert-danger py-1 small mb-2">
+        <i class="bi bi-exclamation-circle me-1"></i>
+        <strong>Stock carnets épuisé !</strong> La consultation avec carnet est temporairement indisponible.
+    </div>
+    <?php elseif ($stockCarnets <= $seuilCarnets): ?>
+    <div class="alert alert-warning py-1 small mb-2">
+        <i class="bi bi-journal-medical me-1"></i>
+        Stock carnets : <strong><?= $stockCarnets ?></strong> restant(s) — Seuil : <?= $seuilCarnets ?>
+    </div>
+    <?php else: ?>
+    <div class="alert alert-light border py-1 small mb-2">
+        <i class="bi bi-journal-check text-success me-1"></i>
+        Stock carnets disponible : <strong><?= $stockCarnets ?></strong>
+    </div>
+    <?php endif; ?>
     <label class="form-label">Type de prestation <span class="text-danger">*</span></label>
     <div class="row g-2">
         <!-- Option 1 : Consultation + Carnet -->
         <div class="col-md-4">
-            <div class="form-check border rounded p-3 h-100 typeConsultOption" id="optAvecCarnet"
-                 onclick="selectPrestation('standard', '1')">
-                <input class="form-check-input" type="radio" name="prestation_choix" id="consAvec" value="std-1" checked>
+            <div class="form-check border rounded p-3 h-100 typeConsultOption <?= $stockCarnets <= 0 ? 'opacity-50' : '' ?>" id="optAvecCarnet"
+                 onclick="<?= $stockCarnets <= 0 ? 'alert(\'Stock carnets épuisé ! Consultation avec carnet impossible.\')' : 'selectPrestation(\'standard\', \'1\')' ?>">
+                <input class="form-check-input" type="radio" name="prestation_choix" id="consAvec" value="std-1"
+                       <?= $stockCarnets <= 0 ? 'disabled' : 'checked' ?>>
                 <label class="form-check-label fw-semibold w-100" for="consAvec" style="cursor:pointer;">
                     <i class="bi bi-journal-medical text-success me-1"></i>
                     Consultation + Carnet
                     <div class="text-success small mt-1" id="lblAvecCarnet">
                         300 F + 100 F = <strong>400 F</strong>
                     </div>
+                    <?php if ($stockCarnets > 0 && $stockCarnets <= $seuilCarnets): ?>
+                    <div class="text-warning small"><i class="bi bi-exclamation-triangle"></i> Stock bas : <?= $stockCarnets ?></div>
+                    <?php endif; ?>
                 </label>
             </div>
         </div>
@@ -658,7 +772,8 @@ include ROOT_PATH . '/templates/layouts/header.php';
         <div class="col-md-4">
             <div class="form-check border rounded p-3 h-100 typeConsultOption" id="optSansCarnet"
                  onclick="selectPrestation('standard', '0')">
-                <input class="form-check-input" type="radio" name="prestation_choix" id="consSans" value="std-0">
+                <input class="form-check-input" type="radio" name="prestation_choix" id="consSans"
+                       value="std-0" <?= $stockCarnets <= 0 ? 'checked' : '' ?>>
                 <label class="form-check-label fw-semibold w-100" for="consSans" style="cursor:pointer;">
                     <i class="bi bi-file-medical text-success me-1"></i>
                     Consultation sans Carnet
@@ -1051,6 +1166,45 @@ include ROOT_PATH . '/templates/layouts/header.php';
     </div>
 </div>
 
+<!-- ═══════════════════════════════════════════════════════════════════
+     MODAL ANNULATION REÇU (Admin uniquement)
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modalAnnulationRecu" tabindex="-1" data-bs-backdrop="static">
+    <div class="modal-dialog modal-sm modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header text-white" style="background:#d32f2f;">
+                <h6 class="modal-title fw-bold">
+                    <i class="bi bi-x-circle-fill me-2"></i>Annuler un reçu
+                </h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning py-2 small mb-3">
+                    <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                    <strong>Action irréversible.</strong> Le reçu sera marqué annulé et les stocks seront restaurés.
+                </div>
+                <p class="small mb-2">
+                    Reçu : <strong id="annulNumRecu">—</strong>
+                    &nbsp;(<span id="annulTypeRecu">—</span>)
+                </p>
+                <div class="mb-2">
+                    <label class="form-label small fw-semibold">Motif d'annulation (optionnel)</label>
+                    <textarea id="annulMotif" class="form-control form-control-sm" rows="2"
+                              placeholder="Ex : Erreur de saisie, double enregistrement…"></textarea>
+                </div>
+                <input type="hidden" id="annulRecuId" value="">
+            </div>
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-danger btn-sm fw-bold" id="btnConfirmerAnnulation"
+                        onclick="executerAnnulation()">
+                    <i class="bi bi-check-circle me-1"></i>Confirmer l'annulation
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <?php
 $saveConsultUrl   = url('modules/percepteur/save_consultation.php');
 $saveActeGratUrl  = url('modules/percepteur/save_acte_gratuit.php');
@@ -1061,6 +1215,7 @@ $getModifFormUrl  = url('modules/percepteur/ajax_get_modif_form.php');
 $saveModifUrl     = url('modules/percepteur/ajax_save_modification.php');
 $getHistoriqueUrl = url('modules/percepteur/ajax_get_historique.php');
 $reprintRecuUrl   = url('index.php?page=percepteur&action=reimprimer');
+$annulerRecuUrl   = url('modules/percepteur/annuler_recu.php');
 
 $jsUrls = [
     'SAVE_CONSULT_URL'   => $saveConsultUrl,
@@ -1072,6 +1227,7 @@ $jsUrls = [
     'SAVE_MODIF_URL'     => $saveModifUrl,
     'GET_HISTORIQUE_URL' => $getHistoriqueUrl,
     'REPRINT_RECU_URL'   => $reprintRecuUrl,
+    'ANNULER_RECU_URL'   => $annulerRecuUrl,
 ];
 
 $jsUrlDeclarations = '';
@@ -1381,7 +1537,13 @@ window.selectPrestation = function(typeConsult, avecCarnet) {
         ajaxPost(SAVE_CONSULT_URL, data, function(res) {
             bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPatient')).hide();
             if (res.pdf_url) window.open(res.pdf_url, '_blank');
-            setTimeout(() => location.reload(), 1000);
+            // Alerte stock carnets
+            if (res.alerte_carnets) {
+                setTimeout(() => {
+                    showToast('warning', res.alerte_carnets);
+                }, 600);
+            }
+            setTimeout(() => location.reload(), 1200);
         });
     });
 
@@ -1971,6 +2133,44 @@ window.selectPrestation = function(typeConsult, avecCarnet) {
         // REPRINT_RECU_URL contient déjà "?page=percepteur&action=reimprimer"
         const url = REPRINT_RECU_URL + '&recu_id=' + encodeURIComponent(recuId);
         window.open(url, '_blank');
+    };
+
+    // ══════════════════════════════════════════════════════════════════
+    // ✅ ANNULATION DE REÇU (Admin uniquement)
+    // ══════════════════════════════════════════════════════════════════
+    window.confirmerAnnulation = function(recuId, typeRecu, numeroRecu) {
+        const numF = '#' + String(numeroRecu).padStart(5, '0');
+        document.getElementById('annulRecuId').value = recuId;
+        document.getElementById('annulNumRecu').textContent  = numF;
+        document.getElementById('annulTypeRecu').textContent = typeRecu;
+        document.getElementById('annulMotif').value = '';
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalAnnulationRecu')).show();
+    };
+
+    window.executerAnnulation = function() {
+        const recuId = document.getElementById('annulRecuId').value;
+        const motif  = document.getElementById('annulMotif').value.trim();
+        if (!recuId) return;
+
+        const btn = document.getElementById('btnConfirmerAnnulation');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Annulation…';
+
+        ajaxPost(ANNULER_RECU_URL, { recu_id: recuId, motif: motif }, function(res) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Confirmer l\'annulation';
+            bootstrap.Modal.getInstance(document.getElementById('modalAnnulationRecu')).hide();
+            // Recharger la page pour refléter l'annulation
+            setTimeout(() => location.reload(), 1200);
+        });
+
+        // Réactiver le bouton si erreur (le toast est géré par ajaxPost)
+        setTimeout(() => {
+            if (btn.disabled) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-check-circle me-1"></i>Confirmer l\'annulation';
+            }
+        }, 8000);
     };
 
 });

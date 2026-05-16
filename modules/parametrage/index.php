@@ -8,7 +8,7 @@ requireRole('admin', 'comptable');
 $pdo     = Database::getInstance();
 $userId  = Session::getUserId();
 $section = $_GET['section'] ?? 'actes';
-$allowed = ['actes','examens','pharmacie','config','inventaire','etat_labo'];
+$allowed = ['actes','examens','pharmacie','config','inventaire','etat_labo','carnets'];
 if (!in_array($section, $allowed)) $section = 'actes';
 
 // ── Actions POST ──────────────────────────────────────────────────────────────
@@ -112,12 +112,90 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $com   = trim($_POST['commentaire'] ?? '');
                 if (!$pid) jsonError('Produit invalide.');
                 $pdo->beginTransaction();
+                // Stock avant
+                $stBefore = (int)$pdo->query("SELECT stock_actuel FROM produits_pharmacie WHERE id={$pid}")->fetchColumn();
                 $pdo->prepare("INSERT INTO approvisionnements_pharmacie (produit_id, quantite, date_appro, commentaire, whodone) VALUES (:p,:q,:d,:c,:w)")
                     ->execute([':p'=>$pid,':q'=>$qty,':d'=>$date,':c'=>$com,':w'=>$userId]);
                 $pdo->prepare("UPDATE produits_pharmacie SET stock_actuel = stock_actuel + :qty WHERE id = :id")
                     ->execute([':qty'=>$qty, ':id'=>$pid]);
+                // Enregistrer mouvement si table existe
+                try {
+                    $pdo->prepare("INSERT INTO mouvements_stock_pharmacie
+                        (produit_id, type_mvt, quantite, stock_avant, stock_apres, commentaire, whodone)
+                        VALUES (:p,'entree',:q,:sb,:sa,:c,:w)")
+                        ->execute([':p'=>$pid,':q'=>$qty,':sb'=>$stBefore,':sa'=>$stBefore+$qty,':c'=>$com,':w'=>$userId]);
+                } catch (Exception $ignored) {}
                 $pdo->commit();
                 jsonSuccess('Stock approvisionné (+' . $qty . ' unités).');
+                break;
+
+            case 'diminuer_stock':
+                // Correction/diminution manuelle stock
+                $pid = (int)($_POST['produit_id'] ?? 0);
+                $qty = max(1, (int)($_POST['quantite'] ?? 0));
+                $com = trim($_POST['commentaire'] ?? 'Correction manuelle stock');
+                if (!$pid) jsonError('Produit invalide.');
+                $stBefore = (int)$pdo->query("SELECT stock_actuel FROM produits_pharmacie WHERE id={$pid}")->fetchColumn();
+                if ($qty > $stBefore) jsonError("Impossible : stock actuel = {$stBefore}, quantité à retirer = {$qty}.");
+                $pdo->beginTransaction();
+                $pdo->prepare("UPDATE produits_pharmacie SET stock_actuel = stock_actuel - :qty, whodone=:w WHERE id=:id")
+                    ->execute([':qty'=>$qty, ':w'=>$userId, ':id'=>$pid]);
+                try {
+                    $pdo->prepare("INSERT INTO mouvements_stock_pharmacie
+                        (produit_id, type_mvt, quantite, stock_avant, stock_apres, commentaire, whodone)
+                        VALUES (:p,'correction',:q,:sb,:sa,:c,:w)")
+                        ->execute([':p'=>$pid,':q'=>-$qty,':sb'=>$stBefore,':sa'=>$stBefore-$qty,':c'=>$com,':w'=>$userId]);
+                } catch (Exception $ignored) {}
+                $pdo->commit();
+                jsonSuccess('Stock diminué de ' . $qty . ' unités. Nouveau stock : ' . ($stBefore - $qty) . '.');
+                break;
+
+            case 'get_historique_stock':
+                // Retourne l'historique des mouvements d'un produit
+                $pid = (int)($_POST['produit_id'] ?? 0);
+                if (!$pid) jsonError('Produit invalide.');
+                header('Content-Type: application/json');
+                try {
+                    $rows = $pdo->prepare("
+                        SELECT m.type_mvt, m.quantite, m.stock_avant, m.stock_apres,
+                               m.commentaire, m.whendone,
+                               u.nom AS user_nom, u.prenom AS user_prenom
+                        FROM mouvements_stock_pharmacie m
+                        LEFT JOIN utilisateurs u ON u.id = m.whodone
+                        WHERE m.produit_id = :pid AND m.isDeleted=0
+                        ORDER BY m.whendone DESC
+                        LIMIT 50
+                    ");
+                    $rows->execute([':pid'=>$pid]);
+                    echo json_encode(['success'=>true,'data'=>$rows->fetchAll()]);
+                } catch (Exception $e) {
+                    echo json_encode(['success'=>false,'message'=>'Table mouvements_stock_pharmacie non trouvée. Exécutez la migration 002.']);
+                }
+                exit;
+
+            case 'save_stock_carnets':
+                // Initialisation / rechargement du stock carnets
+                $qtyAdd    = max(0, (int)($_POST['quantite'] ?? 0));
+                $seuilAlrt = max(0, (int)($_POST['seuil_alerte'] ?? 10));
+                $pdo->beginTransaction();
+                // Stock actuel
+                $stCarnets = (int)$pdo->query("SELECT valeur FROM config_systeme WHERE cle='stock_carnets'")->fetchColumn();
+                $newStock  = $stCarnets + $qtyAdd;
+                $pdo->prepare("INSERT INTO config_systeme (cle, valeur, whodone) VALUES ('stock_carnets',:v1,:w1)
+                               ON DUPLICATE KEY UPDATE valeur=:v2, whodone=:w2")
+                    ->execute([':v1'=>$newStock,':w1'=>$userId,':v2'=>$newStock,':w2'=>$userId]);
+                $pdo->prepare("INSERT INTO config_systeme (cle, valeur, whodone) VALUES ('seuil_alerte_carnets',:v1,:w1)
+                               ON DUPLICATE KEY UPDATE valeur=:v2, whodone=:w2")
+                    ->execute([':v1'=>$seuilAlrt,':w1'=>$userId,':v2'=>$seuilAlrt,':w2'=>$userId]);
+                // Enregistrer mouvement carnet
+                try {
+                    $pdo->prepare("INSERT INTO mouvements_carnets
+                        (type_mvt, quantite, stock_avant, stock_apres, commentaire, whodone)
+                        VALUES ('initialisation',:q,:sb,:sa,:c,:w)")
+                        ->execute([':q'=>$qtyAdd,':sb'=>$stCarnets,':sa'=>$newStock,':c'=>'Réapprovisionnement carnets',':w'=>$userId]);
+                } catch (Exception $ignored) {}
+                $pdo->commit();
+                jsonSuccess('Stock carnets mis à jour. Stock actuel : ' . $newStock . ' carnets.');
                 break;
 
             // ── Config système ─────────────────────────────────────────────
@@ -158,6 +236,8 @@ $cfg      = [];
 foreach ($pdo->query("SELECT cle, valeur FROM config_systeme WHERE isDeleted=0")->fetchAll() as $r) {
     $cfg[$r['cle']] = $r['valeur'];
 }
+$stockCarnets      = (int)($cfg['stock_carnets'] ?? 0);
+$seuilAlerteCarnets = (int)($cfg['seuil_alerte_carnets'] ?? 10);
 
 $pageTitle = 'Paramétrage';
 include ROOT_PATH . '/templates/layouts/header.php';
@@ -196,6 +276,18 @@ include ROOT_PATH . '/templates/layouts/header.php';
             <a class="nav-link <?= $section === 'etat_labo' ? 'active' : '' ?>"
                href="?page=parametrage&section=etat_labo">
                 <i class="bi bi-file-earmark-pdf me-1"></i>État Labo
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link <?= $section === 'carnets' ? 'active' : '' ?>"
+               href="?page=parametrage&section=carnets"
+               title="Gestion stock des carnets de soins">
+                <i class="bi bi-journal-medical me-1"></i>Carnets
+                <?php if ($stockCarnets <= $seuilAlerteCarnets && $stockCarnets > 0): ?>
+                    <span class="badge bg-warning text-dark ms-1">⚠</span>
+                <?php elseif ($stockCarnets === 0): ?>
+                    <span class="badge bg-danger ms-1">0</span>
+                <?php endif; ?>
             </a>
         </li>
         <li class="nav-item">
@@ -430,6 +522,14 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                     onclick="openApproModal(<?= $p['id'] ?>, '<?= h($p['nom']) ?>')">
                                 <i class="bi bi-plus-circle"></i>
                             </button>
+                            <button class="btn btn-sm btn-outline-warning me-1" title="Diminuer stock (correction)"
+                                    onclick="openDiminuerModal(<?= $p['id'] ?>, '<?= h($p['nom']) ?>', <?= (int)$p['stock_actuel'] ?>)">
+                                <i class="bi bi-dash-circle"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-info me-1" title="Historique mouvements"
+                                    onclick="voirHistoriqueStock(<?= $p['id'] ?>, '<?= h($p['nom']) ?>')">
+                                <i class="bi bi-clock-history"></i>
+                            </button>
                             <button class="btn btn-sm btn-outline-primary me-1"
                                     onclick="openProduitModal(<?= htmlspecialchars(json_encode($p), ENT_QUOTES) ?>)">
                                 <i class="bi bi-pencil"></i>
@@ -542,6 +642,152 @@ include ROOT_PATH . '/templates/layouts/header.php';
             </div>
         </div>
     </div>
+
+    <!-- Modal Diminuer Stock -->
+    <div class="modal fade" id="modalDiminuer" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header" style="background:#b71c1c;">
+                    <h5 class="modal-title text-white"><i class="bi bi-dash-circle me-2"></i>Diminuer le Stock</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <strong>Attention :</strong> cette opération diminue le stock actuel (correction d'inventaire).
+                    </div>
+                    <form id="formDiminuer">
+                        <input type="hidden" name="action" value="diminuer_stock">
+                        <input type="hidden" name="produit_id" id="dimProduitId">
+                        <div class="mb-3">
+                            <label class="form-label">Produit</label>
+                            <div class="fw-bold text-danger" id="dimProduitNom"></div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Stock actuel</label>
+                            <div class="fw-bold fs-5" id="dimStockActuel"></div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Quantité à retirer <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" name="quantite" id="dimQty" min="1" value="1" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Motif / Commentaire <span class="text-danger">*</span></label>
+                            <textarea class="form-control" name="commentaire" id="dimCommentaire" rows="2"
+                                      placeholder="Ex: Produits périmés retirés, décalage inventaire..." required></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn text-white" style="background:#b71c1c;"
+                            onclick="saveParam('formDiminuer', '/index.php?page=parametrage&section=pharmacie')">
+                        <i class="bi bi-dash-circle me-1"></i>Diminuer le stock
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Historique Mouvements Stock -->
+    <div class="modal fade" id="modalHistoriqueStock" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header" style="background:#1565c0;">
+                    <h5 class="modal-title text-white">
+                        <i class="bi bi-clock-history me-2"></i>
+                        Historique – <span id="histProduitNom"></span>
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-0">
+                    <div id="histLoading" class="text-center p-4">
+                        <div class="spinner-border text-primary"></div>
+                    </div>
+                    <div id="histContent" style="display:none;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <?php elseif ($section === 'carnets'): ?>
+    <!-- ══════════════ SECTION CARNETS ══════════════ -->
+    <div class="row g-3">
+        <div class="col-md-4">
+            <div class="card h-100" style="border-color:#1565c0;">
+                <div class="card-header" style="background:#e3f2fd;">
+                    <h6 class="mb-0" style="color:#1565c0;">
+                        <i class="bi bi-journal-medical me-2"></i>Stock Carnets de Soins
+                    </h6>
+                </div>
+                <div class="card-body text-center">
+                    <?php
+                    $alertCls = $stockCarnets === 0 ? 'danger' :
+                               ($stockCarnets <= $seuilAlerteCarnets ? 'warning' : 'success');
+                    $alertTxt = $stockCarnets === 0 ? 'RUPTURE – Plus de carnets !' :
+                               ($stockCarnets <= $seuilAlerteCarnets ? 'Stock faible !' : 'Stock suffisant');
+                    ?>
+                    <div class="display-4 fw-bold text-<?= $alertCls ?>"><?= $stockCarnets ?></div>
+                    <p class="text-muted mb-1">carnets disponibles</p>
+                    <span class="badge bg-<?= $alertCls ?>"><?= $alertTxt ?></span>
+                    <hr>
+                    <div class="text-muted small">Seuil d'alerte : <strong><?= $seuilAlerteCarnets ?> carnets</strong></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header bg-csi-light">
+                    <h6 class="mb-0"><i class="bi bi-plus-circle me-2"></i>Réapprovisionner / Configurer les Carnets</h6>
+                </div>
+                <div class="card-body">
+                    <form id="formStockCarnets">
+                        <input type="hidden" name="action" value="save_stock_carnets">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">
+                                    Quantité à ajouter
+                                    <small class="text-muted">(s'ajoute au stock actuel)</small>
+                                </label>
+                                <input type="number" class="form-control form-control-lg" name="quantite"
+                                       min="0" value="0" placeholder="Ex: 50">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">
+                                    Seuil d'alerte
+                                    <small class="text-muted">(notification en cas de baisse)</small>
+                                </label>
+                                <input type="number" class="form-control form-control-lg" name="seuil_alerte"
+                                       min="0" value="<?= $seuilAlerteCarnets ?>" placeholder="Ex: 10">
+                            </div>
+                            <div class="col-12">
+                                <div class="alert alert-info py-2 mb-2">
+                                    <i class="bi bi-info-circle me-2"></i>
+                                    Stock actuel : <strong><?= $stockCarnets ?></strong> carnets.
+                                    Si vous ajoutez <span id="previewQtyCarnet">0</span> carnets,
+                                    le nouveau stock sera : <strong id="previewNewStock"><?= $stockCarnets ?></strong>.
+                                </div>
+                                <button type="button" class="btn text-white w-100"
+                                        style="background:var(--csi-green);"
+                                        onclick="saveParam('formStockCarnets', '/index.php?page=parametrage&section=carnets')">
+                                    <i class="bi bi-save me-2"></i>Enregistrer
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    document.querySelector('[name="quantite"]')?.addEventListener('input', function() {
+        const qty = parseInt(this.value) || 0;
+        const current = <?= $stockCarnets ?>;
+        document.getElementById('previewQtyCarnet').textContent = qty;
+        document.getElementById('previewNewStock').textContent  = current + qty;
+    });
+    </script>
 
     <?php elseif ($section === 'inventaire'): ?>
     <!-- ══════════════ SECTION INVENTAIRE ══════════════ -->
@@ -768,6 +1014,76 @@ function openApproModal(id, nom) {
     document.getElementById('approProduitNom').textContent = nom;
     document.getElementById('approQty').value = 1;
     new bootstrap.Modal(document.getElementById('modalAppro')).show();
+}
+
+// ── Diminuer Stock ───────────────────────────────────────────────────────────
+function openDiminuerModal(id, nom, stockActuel) {
+    document.getElementById('dimProduitId').value      = id;
+    document.getElementById('dimProduitNom').textContent = nom;
+    document.getElementById('dimStockActuel').textContent = stockActuel + ' unités';
+    document.getElementById('dimQty').max         = stockActuel;
+    document.getElementById('dimQty').value       = 1;
+    document.getElementById('dimCommentaire').value = '';
+    new bootstrap.Modal(document.getElementById('modalDiminuer')).show();
+}
+
+// ── Historique Mouvements Stock ──────────────────────────────────────────────
+function voirHistoriqueStock(produitId, produitNom) {
+    document.getElementById('histProduitNom').textContent = produitNom;
+    document.getElementById('histLoading').style.display  = 'block';
+    document.getElementById('histContent').style.display  = 'none';
+    new bootstrap.Modal(document.getElementById('modalHistoriqueStock')).show();
+
+    const fd = new FormData();
+    fd.append('action', 'get_historique_stock');
+    fd.append('produit_id', produitId);
+    fd.append('csrf_token', CSRF_TOKEN);
+    fetch(PARAM_BASE_URL + '&section=pharmacie', {
+        method: 'POST',
+        headers: { 'X-CSRF-TOKEN': CSRF_TOKEN },
+        body: fd
+    })
+    .then(r => r.json())
+    .then(res => {
+        document.getElementById('histLoading').style.display = 'none';
+        const cont = document.getElementById('histContent');
+        if (!res.success) {
+            cont.innerHTML = '<div class="alert alert-warning m-3">' + res.message + '</div>';
+            cont.style.display = 'block';
+            return;
+        }
+        const rows = res.data;
+        const typeLabels = {'entree':'<span class="badge bg-success">Entrée</span>',
+                            'sortie':'<span class="badge bg-danger">Sortie vente</span>',
+                            'correction':'<span class="badge bg-warning text-dark">Correction</span>'};
+        let html = '<table class="table table-sm table-hover align-middle mb-0">'
+            + '<thead class="table-light"><tr><th>Date</th><th>Type</th><th>Quantité</th>'
+            + '<th>Stock avant</th><th>Stock après</th><th>Commentaire</th><th>Par</th></tr></thead><tbody>';
+        if (!rows.length) {
+            html += '<tr><td colspan="7" class="text-center text-muted p-4">Aucun mouvement enregistré.</td></tr>';
+        }
+        rows.forEach(r => {
+            const qSign = r.quantite > 0 ? '+' + r.quantite : r.quantite;
+            const qColor = r.quantite > 0 ? 'color:#2e7d32;' : 'color:#d32f2f;';
+            html += '<tr>'
+                + '<td><small>' + r.whendone + '</small></td>'
+                + '<td>' + (typeLabels[r.type_mvt] || r.type_mvt) + '</td>'
+                + '<td style="font-weight:bold;' + qColor + '">' + qSign + '</td>'
+                + '<td class="text-center">' + r.stock_avant + '</td>'
+                + '<td class="text-center fw-bold">' + r.stock_apres + '</td>'
+                + '<td><small class="text-muted">' + (r.commentaire || '—') + '</small></td>'
+                + '<td><small>' + ((r.user_nom || '') + ' ' + (r.user_prenom || '')).trim() + '</small></td>'
+                + '</tr>';
+        });
+        html += '</tbody></table>';
+        cont.innerHTML = html;
+        cont.style.display = 'block';
+    })
+    .catch(() => {
+        document.getElementById('histLoading').style.display = 'none';
+        document.getElementById('histContent').innerHTML = '<div class="alert alert-danger m-3">Erreur réseau.</div>';
+        document.getElementById('histContent').style.display = 'block';
+    });
 }
 
 // ── Config ──────────────────────────────────────────────────────────────────
