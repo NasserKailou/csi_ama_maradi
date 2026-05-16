@@ -889,6 +889,23 @@ include ROOT_PATH . '/templates/layouts/header.php';
                             </select>
                         </div>
 
+                        <!-- ✅ Situation stock carnets dans le formulaire acte gratuit -->
+                        <div class="col-12">
+                            <?php
+                            $agAlertCls  = $stockCarnets === 0 ? 'danger' : ($stockCarnets <= $seuilCarnets ? 'warning' : 'info');
+                            $agAlertIcon = $stockCarnets === 0 ? 'exclamation-octagon-fill' : ($stockCarnets <= $seuilCarnets ? 'exclamation-triangle-fill' : 'journal-medical');
+                            $agAlertTxt  = $stockCarnets === 0
+                                ? 'Aucun carnet disponible — les options carnet sont toujours accessibles pour les actes gratuits (priorité patient).'
+                                : ($stockCarnets <= $seuilCarnets
+                                    ? "Stock bas : <strong>{$stockCarnets}</strong> carnet(s) restant(s) (seuil : {$seuilCarnets})."
+                                    : "Stock carnets disponible : <strong>{$stockCarnets}</strong> carnet(s).");
+                            ?>
+                            <div class="alert alert-<?= $agAlertCls ?> py-2 mb-0 d-flex align-items-center gap-2">
+                                <i class="bi bi-<?= $agAlertIcon ?> flex-shrink-0"></i>
+                                <span class="small"><?= $agAlertTxt ?></span>
+                            </div>
+                        </div>
+
                         <!-- ✅ Choix carnet / fiche -->
                         <div class="col-12">
                             <label class="form-label">Option de gratuité <span class="text-danger">*</span></label>
