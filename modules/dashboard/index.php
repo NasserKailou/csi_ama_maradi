@@ -105,6 +105,47 @@ $topProduitsJour = $pdo->query("
     LIMIT 5
 ")->fetchAll();
 
+// ── Détail pharmacie par percepteur (journée ou date passée via GET) ─────────
+$dateDetailPercep = $_GET['date_percep'] ?? date('Y-m-d');
+// Valider format
+if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateDetailPercep)) {
+    $dateDetailPercep = date('Y-m-d');
+}
+
+$detailPharmaciePercep = $pdo->prepare("
+    SELECT u.id AS user_id,
+           u.nom, u.prenom,
+           lp.produit_id,
+           lp.nom AS produit_nom,
+           lp.forme AS produit_forme,
+           SUM(lp.quantite)    AS qte_totale,
+           SUM(lp.total_ligne) AS montant_total
+    FROM utilisateurs u
+    JOIN recus r        ON r.whodone = u.id AND r.isDeleted=0
+                       AND r.type_recu='pharmacie'
+                       AND DATE(r.whendone) = :datep
+    JOIN lignes_pharmacie lp ON lp.recu_id = r.id AND lp.isDeleted=0
+    WHERE u.role='percepteur' AND u.isDeleted=0
+    GROUP BY u.id, lp.produit_id, lp.nom, lp.forme
+    ORDER BY u.id, qte_totale DESC
+");
+$detailPharmaciePercep->execute([':datep' => $dateDetailPercep]);
+$detailPharmRows = $detailPharmaciePercep->fetchAll();
+
+// Organiser par percepteur
+$detailPharmByUser = [];
+foreach ($detailPharmRows as $row) {
+    $uid = $row['user_id'];
+    if (!isset($detailPharmByUser[$uid])) {
+        $detailPharmByUser[$uid] = [
+            'nom'    => $row['nom'],
+            'prenom' => $row['prenom'],
+            'lignes' => [],
+        ];
+    }
+    $detailPharmByUser[$uid]['lignes'][] = $row;
+}
+
 // ── Alertes stock (regroupées par sévérité) ─────────────────────────────────
 $alertesStock = $pdo->query("
     SELECT nom, forme, stock_actuel, seuil_alerte, prix_unitaire, date_peremption,
@@ -437,6 +478,89 @@ include ROOT_PATH . '/templates/layouts/header.php';
         </div>
     </div>
 
+    <!-- ── Détail Pharmacie par Percepteur ──────────────────────────────── -->
+    <div class="card mb-4">
+        <div class="card-header bg-csi-light d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <h6 class="mb-0" style="color:#006064;">
+                <i class="bi bi-capsule-pill me-2"></i>
+                Détail Ventes Pharmaceutiques par Percepteur
+            </h6>
+            <form method="GET" action="<?= url('index.php') ?>" class="d-flex gap-2 align-items-center">
+                <input type="hidden" name="page" value="dashboard">
+                <?php if (isset($_GET['filtre_debut'])): ?>
+                <input type="hidden" name="filtre_debut" value="<?= h($_GET['filtre_debut']) ?>">
+                <input type="hidden" name="filtre_fin"   value="<?= h($_GET['filtre_fin'] ?? '') ?>">
+                <?php endif; ?>
+                <label class="mb-0 small fw-semibold text-nowrap">Date :</label>
+                <input type="date" class="form-control form-control-sm" name="date_percep"
+                       value="<?= h($dateDetailPercep) ?>" style="width:auto;">
+                <button type="submit" class="btn btn-sm text-white" style="background:#006064;">
+                    <i class="bi bi-search"></i>
+                </button>
+            </form>
+        </div>
+        <div class="card-body p-0">
+        <?php if ($detailPharmByUser): ?>
+            <div class="row g-0">
+            <?php foreach ($detailPharmByUser as $uid => $userData): ?>
+                <div class="col-md-6 border-end">
+                    <div class="px-3 py-2 border-bottom" style="background:#e0f2f1;">
+                        <strong style="color:#006064;">
+                            <i class="bi bi-person-circle me-1"></i>
+                            <?= h($userData['nom'].' '.$userData['prenom']) ?>
+                        </strong>
+                        <span class="badge ms-2" style="background:#006064;">
+                            <?= date('d/m/Y', strtotime($dateDetailPercep)) ?>
+                        </span>
+                    </div>
+                    <table class="table table-sm table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Produit</th>
+                                <th>Forme</th>
+                                <th class="text-center">Qté</th>
+                                <th class="text-end">Montant</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php
+                        $totalPharmaUser = 0;
+                        foreach ($userData['lignes'] as $lg):
+                            $totalPharmaUser += (int)$lg['montant_total'];
+                        ?>
+                            <tr>
+                                <td class="fw-semibold"><?= h($lg['produit_nom']) ?></td>
+                                <td><small class="text-muted"><?= h($lg['produit_forme']) ?></small></td>
+                                <td class="text-center">
+                                    <span class="badge" style="background:#006064;"><?= (int)$lg['qte_totale'] ?></span>
+                                </td>
+                                <td class="text-end fw-bold" style="color:#2e7d32;">
+                                    <?= number_format((int)$lg['montant_total'],0,',',' ') ?> F
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                        <tfoot>
+                            <tr style="background:#e8f5e9;">
+                                <td colspan="3" class="text-end fw-bold small">TOTAL PHARMACIE :</td>
+                                <td class="text-end fw-bold" style="color:#2e7d32;">
+                                    <?= number_format($totalPharmaUser,0,',',' ') ?> F
+                                </td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            <?php endforeach; ?>
+            </div>
+        <?php else: ?>
+            <div class="p-3 text-muted text-center">
+                <i class="bi bi-info-circle me-2"></i>
+                Aucune vente pharmaceutique le <?= date('d/m/Y', strtotime($dateDetailPercep)) ?>.
+            </div>
+        <?php endif; ?>
+        </div>
+    </div>
+
     <!-- ── Alertes Stock & Activité Percepteurs ───────────────────────────── -->
     <div class="row g-3 mb-4">
         <div class="col-md-7">
@@ -645,9 +769,9 @@ include ROOT_PATH . '/templates/layouts/header.php';
 
 </div>
 
-<!-- ── Modal Situation par Période (inchangé) ──────────────────────────────── -->
+<!-- ── Modal Situation par Période ─────────────────────────────────────────── -->
 <div class="modal fade" id="modalPeriodePercepteur" tabindex="-1" aria-labelledby="modalPeriodeLabel">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-lg">
         <div class="modal-content">
             <div class="modal-header" style="background:#1b5e20;">
                 <h5 class="modal-title text-white" id="modalPeriodeLabel">
@@ -672,6 +796,43 @@ include ROOT_PATH . '/templates/layouts/header.php';
                             <label class="form-label fw-semibold">Date de fin</label>
                             <input type="date" class="form-control" id="periodeDateFin"
                                    value="<?= date('Y-m-d') ?>" required>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">
+                                <i class="bi bi-funnel me-1"></i>Type de rapport
+                            </label>
+                            <div class="d-flex flex-wrap gap-3 mt-1">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="type_rapport"
+                                           id="trTout" value="tout" checked>
+                                    <label class="form-check-label" for="trTout">
+                                        <span class="badge bg-dark">Tout</span>
+                                        <small class="text-muted ms-1">Consultation + Examen + Pharmacie</small>
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="type_rapport"
+                                           id="trConsult" value="consultation">
+                                    <label class="form-check-label" for="trConsult">
+                                        <span class="badge" style="background:#2e7d32;">Consultation</span>
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="type_rapport"
+                                           id="trExamen" value="examen">
+                                    <label class="form-check-label" for="trExamen">
+                                        <span class="badge" style="background:#e65100;">Examen</span>
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="type_rapport"
+                                           id="trPharma" value="pharmacie">
+                                    <label class="form-check-label" for="trPharma">
+                                        <span class="badge" style="background:#006064;">Pharmacie</span>
+                                        <small class="text-muted ms-1">(détail produits inclus)</small>
+                                    </label>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </form>
@@ -707,12 +868,13 @@ function ouvrirModalPeriode(percepId, percepNom) {
 }
 
 function genererSituationPeriode() {
-    const id  = document.getElementById('modalPercepId').value;
-    const deb = document.getElementById('periodeDateDebut').value;
-    const fin = document.getElementById('periodeDateFin').value;
+    const id   = document.getElementById('modalPercepId').value;
+    const deb  = document.getElementById('periodeDateDebut').value;
+    const fin  = document.getElementById('periodeDateFin').value;
+    const typeRapport = document.querySelector('input[name="type_rapport"]:checked')?.value || 'tout';
     if (!deb || !fin) { alert('Veuillez sélectionner les deux dates.'); return; }
     if (deb > fin)    { alert('La date de début doit être antérieure à la date de fin.'); return; }
-    const url = SITUATION_PERCEP_URL + '?percepteur_id=' + id + '&mode=periode&date_debut=' + deb + '&date_fin=' + fin;
+    const url = SITUATION_PERCEP_URL + '?percepteur_id=' + id + '&mode=periode&date_debut=' + deb + '&date_fin=' + fin + '&type_rapport=' + typeRapport;
     window.open(url, '_blank');
 }
 

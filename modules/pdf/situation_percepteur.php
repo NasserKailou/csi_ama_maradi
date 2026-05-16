@@ -1,8 +1,8 @@
 <?php
 /**
  * Génération Situation Percepteur – PDF (impression navigateur)
- * Base : directaid — structure validée 01/05/2026
- * Ajouts : type_patient + sexe dans détail, récap par sexe dans KPIs
+ * AMÉLIORÉ : filtre type_rapport (tout / consultation / examen / pharmacie)
+ *             + détail produits pharmacie
  */
 if (!defined('ROOT_PATH')) { define('ROOT_PATH', dirname(__DIR__, 2)); }
 require_once ROOT_PATH . '/config/config.php';
@@ -15,6 +15,9 @@ requireRole('admin');
 $pdo          = Database::getInstance();
 $percepteurId = (int)($_GET['percepteur_id'] ?? 0);
 $mode         = ($_GET['mode'] ?? 'jour') === 'periode' ? 'periode' : 'jour';
+$typeRapport  = $_GET['type_rapport'] ?? 'tout';
+$allowedTypes = ['tout','consultation','examen','pharmacie'];
+if (!in_array($typeRapport, $allowedTypes)) $typeRapport = 'tout';
 
 if ($mode === 'jour') {
     $dateDebut = date('Y-m-d');
@@ -59,9 +62,11 @@ if ($logoFile && file_exists(ROOT_PATH . '/uploads/logos/' . $logoFile)) {
               . ' alt="Logo" style="max-height:60px;">';
 }
 
+// ── Clause filtre type_recu ───────────────────────────────────────────────────
+$typeClause = $typeRapport === 'tout' ? '' : " AND r.type_recu = " . $pdo->quote($typeRapport);
+
 // ── Reçus du percepteur sur la période ───────────────────────────────────────
-// Ajout : p.sexe, p.est_orphelin pour affichage dans le détail
-$stmt = $pdo->prepare("
+$sql = "
     SELECT r.id,
            r.numero_recu,
            r.type_recu,
@@ -78,51 +83,58 @@ $stmt = $pdo->prepare("
     WHERE  r.whodone   = :uid
       AND  r.isDeleted = 0
       AND  DATE(r.whendone) BETWEEN :deb AND :fin
+      {$typeClause}
     ORDER  BY r.whendone ASC
-");
+";
+$stmt = $pdo->prepare($sql);
 $stmt->execute([':uid' => $percepteurId, ':deb' => $dateDebut, ':fin' => $dateFin]);
 $recus = $stmt->fetchAll();
+
+// ── Pour pharmacie : récupérer détail produits par reçu ─────────────────────
+$detailPharmacieByRecu = [];
+if ($typeRapport === 'pharmacie' || $typeRapport === 'tout') {
+    $recusIds = array_filter(array_column($recus, 'id'), fn($v) => $v > 0);
+    if ($recusIds) {
+        $placeholders = implode(',', array_map('intval', $recusIds));
+        $stmtLP = $pdo->query("
+            SELECT lp.recu_id, lp.nom, lp.forme, lp.quantite, lp.prix_unitaire, lp.total_ligne
+            FROM lignes_pharmacie lp
+            WHERE lp.recu_id IN ({$placeholders}) AND lp.isDeleted=0
+            ORDER BY lp.nom
+        ");
+        foreach ($stmtLP->fetchAll() as $lp) {
+            $detailPharmacieByRecu[$lp['recu_id']][] = $lp;
+        }
+    }
+}
 
 // ── Totaux globaux ────────────────────────────────────────────────────────────
 $totalEncaisse = 0;
 $totalGratuit  = 0;
 $nbRecus       = count($recus);
 
-// Récap par type de reçu
-$byType = [];
-
-// Récap par sexe — reçus émis + montant encaissé
-$bySexe = [
-    'M' => ['nb' => 0, 'encaisse' => 0, 'label' => 'Masculin'],
-    'F' => ['nb' => 0, 'encaisse' => 0, 'label' => 'Féminin'],
-];
-
-// Récap par type patient
+$byType        = [];
+$bySexe        = ['M' => ['nb'=>0,'encaisse'=>0,'label'=>'Masculin'], 'F' => ['nb'=>0,'encaisse'=>0,'label'=>'Féminin']];
 $byTypePatient = [
-    'normal'      => ['nb' => 0, 'encaisse' => 0, 'label' => 'Normal'],
-    'orphelin'    => ['nb' => 0, 'encaisse' => 0, 'label' => 'Orphelin'],
-    'acte_gratuit'=> ['nb' => 0, 'encaisse' => 0, 'label' => 'Acte Gratuit'],
+    'normal'       => ['nb'=>0,'encaisse'=>0,'label'=>'Normal'],
+    'orphelin'     => ['nb'=>0,'encaisse'=>0,'label'=>'Orphelin'],
+    'acte_gratuit' => ['nb'=>0,'encaisse'=>0,'label'=>'Acte Gratuit'],
 ];
 
 foreach ($recus as $r) {
     $totalEncaisse += (int)$r['montant_encaisse'];
-
-    if (in_array($r['type_patient'], ['orphelin', 'acte_gratuit'])) {
+    if (in_array($r['type_patient'], ['orphelin','acte_gratuit'])) {
         $totalGratuit += (int)$r['montant_total'];
     }
-
-    // Par type de reçu
     $t = $r['type_recu'];
-    if (!isset($byType[$t])) $byType[$t] = ['nb' => 0, 'total' => 0];
+    if (!isset($byType[$t])) $byType[$t] = ['nb'=>0,'total'=>0];
     $byType[$t]['nb']++;
     $byType[$t]['total'] += (int)$r['montant_encaisse'];
 
-    // Par sexe
     $sexe = $r['patient_sexe'] === 'F' ? 'F' : 'M';
     $bySexe[$sexe]['nb']++;
     $bySexe[$sexe]['encaisse'] += (int)$r['montant_encaisse'];
 
-    // Par type patient
     $tp = $r['type_patient'];
     if (isset($byTypePatient[$tp])) {
         $byTypePatient[$tp]['nb']++;
@@ -130,76 +142,111 @@ foreach ($recus as $r) {
     }
 }
 
+// ── Récap produits pharmacie (global, pour tout ou pharmacie) ────────────────
+$recapPharmacieProduits = [];
+if ($typeRapport === 'pharmacie' || $typeRapport === 'tout') {
+    foreach ($detailPharmacieByRecu as $rid => $lignes) {
+        foreach ($lignes as $lp) {
+            $key = $lp['nom'] . '||' . $lp['forme'];
+            if (!isset($recapPharmacieProduits[$key])) {
+                $recapPharmacieProduits[$key] = [
+                    'nom'    => $lp['nom'],
+                    'forme'  => $lp['forme'],
+                    'qte'    => 0,
+                    'total'  => 0,
+                ];
+            }
+            $recapPharmacieProduits[$key]['qte']   += (int)$lp['quantite'];
+            $recapPharmacieProduits[$key]['total']  += (int)$lp['total_ligne'];
+        }
+    }
+    usort($recapPharmacieProduits, fn($a,$b) => $b['qte'] - $a['qte']);
+}
+
 // ── Labels ────────────────────────────────────────────────────────────────────
-$labelMode = $mode === 'jour'
+$modeLabel = $mode === 'jour'
     ? 'Situation Journalière du ' . date('d/m/Y')
     : 'Situation du ' . date('d/m/Y', strtotime($dateDebut))
       . ' au ' . date('d/m/Y', strtotime($dateFin));
 
-$typeLabels = [
-    'consultation' => 'Consultation',
-    'examen'       => 'Examen',
-    'pharmacie'    => 'Pharmacie',
+$typeRapportLabels = [
+    'tout'         => 'Toutes opérations',
+    'consultation' => 'Consultations uniquement',
+    'examen'       => 'Examens uniquement',
+    'pharmacie'    => 'Pharmacie uniquement',
 ];
 
+$typeLabels       = ['consultation'=>'Consultation','examen'=>'Examen','pharmacie'=>'Pharmacie'];
 $typePatientLabels = [
-    'normal'       => ['label' => 'Normal',       'color' => '#1565c0', 'bg' => '#e3f2fd'],
-    'orphelin'     => ['label' => 'Orphelin',      'color' => '#6a1b9a', 'bg' => '#f3e5f5'],
-    'acte_gratuit' => ['label' => 'Acte Gratuit',  'color' => '#c62828', 'bg' => '#ffebee'],
+    'normal'       => ['label'=>'Normal',      'color'=>'#1565c0','bg'=>'#e3f2fd'],
+    'orphelin'     => ['label'=>'Orphelin',     'color'=>'#6a1b9a','bg'=>'#f3e5f5'],
+    'acte_gratuit' => ['label'=>'Acte Gratuit', 'color'=>'#c62828','bg'=>'#ffebee'],
 ];
+$sexeLabels = ['M'=>['label'=>'M','color'=>'#1565c0'],'F'=>['label'=>'F','color'=>'#c62828']];
 
-$sexeLabels = [
-    'M' => ['label' => 'M', 'color' => '#1565c0'],
-    'F' => ['label' => 'F', 'color' => '#c62828'],
-];
-
-// ── Lignes HTML du tableau détail ─────────────────────────────────────────────
+// ── HTML lignes du tableau détail ─────────────────────────────────────────────
 $lignesHtml = '';
 foreach ($recus as $i => $r) {
-    $isGratuit = in_array($r['type_patient'], ['orphelin', 'acte_gratuit']);
+    $isGratuit = in_array($r['type_patient'], ['orphelin','acte_gratuit']);
     $numFmt    = '#' . str_pad($r['numero_recu'], 5, '0', STR_PAD_LEFT);
     $heure     = date('H:i', strtotime($r['whendone']));
     $dateAff   = date('d/m', strtotime($r['whendone']));
     $typeAff   = $typeLabels[$r['type_recu']] ?? ucfirst($r['type_recu']);
 
-    // Montant affiché
     $montant = $isGratuit
         ? '<span style="color:#c62828;font-weight:bold;">0 F <em style="font-size:8pt;">(gratuit)</em></span>'
         : '<strong>' . number_format((int)$r['montant_encaisse'], 0, ',', ' ') . ' F</strong>';
 
-    // Badge type patient
-    $tpInfo   = $typePatientLabels[$r['type_patient']] ?? ['label' => $r['type_patient'], 'color' => '#555', 'bg' => '#eee'];
-    $tpBadge  = "<span style='background:{$tpInfo['bg']};color:{$tpInfo['color']};"
-              . "padding:1px 5px;border-radius:3px;font-size:8pt;font-weight:bold;'>"
-              . $tpInfo['label'] . "</span>";
+    $tpInfo  = $typePatientLabels[$r['type_patient']] ?? ['label'=>$r['type_patient'],'color'=>'#555','bg'=>'#eee'];
+    $tpBadge = "<span style='background:{$tpInfo['bg']};color:{$tpInfo['color']};padding:1px 5px;"
+             . "border-radius:3px;font-size:8pt;font-weight:bold;'>{$tpInfo['label']}</span>";
 
-    // Badge sexe — patients.sexe (enum M/F)
     $sexe      = $r['patient_sexe'] === 'F' ? 'F' : 'M';
     $sexeColor = $sexe === 'F' ? '#c62828' : '#1565c0';
     $sexeBadge = "<span style='color:{$sexeColor};font-weight:bold;font-size:9pt;'>{$sexe}</span>";
 
     $rowBg = $i % 2 ? 'background:#f9f9f9;' : '';
+
     $lignesHtml .= "
     <tr style='border-bottom:1px solid #e0e0e0;{$rowBg}'>
         <td style='padding:5px 6px;text-align:center;color:#888;font-size:9pt;'>" . ($i + 1) . "</td>
         <td style='padding:5px 6px;'><b>{$numFmt}</b></td>
         <td style='padding:5px 6px;font-size:9pt;'>{$dateAff} {$heure}</td>
-        <td style='padding:5px 6px;'>
-            " . htmlspecialchars($r['patient_nom']) . "
-            <br><span style='font-size:8pt;color:#666;'>{$r['patient_tel']}</span>
-        </td>
-        <td style='padding:5px 6px;text-align:center;'>
-            {$sexeBadge}
-        </td>
+        <td style='padding:5px 6px;'>" . htmlspecialchars($r['patient_nom'])
+        . "<br><span style='font-size:8pt;color:#666;'>{$r['patient_tel']}</span></td>
+        <td style='padding:5px 6px;text-align:center;'>{$sexeBadge}</td>
         <td style='padding:5px 6px;text-align:center;'>
             <span style='background:#e8f5e9;color:#2e7d32;padding:2px 5px;
                          border-radius:3px;font-size:8pt;'>{$typeAff}</span>
         </td>
-        <td style='padding:5px 6px;text-align:center;'>
-            {$tpBadge}
-        </td>
+        <td style='padding:5px 6px;text-align:center;'>{$tpBadge}</td>
         <td style='padding:5px 6px;text-align:right;'>{$montant}</td>
     </tr>";
+
+    // Détail pharmacie sous le reçu si disponible
+    if (($typeRapport === 'pharmacie' || $typeRapport === 'tout') && !empty($detailPharmacieByRecu[$r['id']])) {
+        $lignesHtml .= "<tr style='background:#e0f7fa;{$rowBg}'>
+            <td colspan='8' style='padding:3px 20px;font-size:8pt;'>
+                <em style='color:#006064;font-weight:bold;'>Produits pharmacie de ce reçu :</em>
+                <table style='width:100%;border-collapse:collapse;margin-top:3px;'>
+                    <tr style='background:#b2ebf2;'>
+                        <th style='padding:2px 6px;text-align:left;font-size:8pt;'>Produit</th>
+                        <th style='padding:2px 6px;text-align:left;font-size:8pt;'>Forme</th>
+                        <th style='padding:2px 6px;text-align:center;font-size:8pt;'>Qté</th>
+                        <th style='padding:2px 6px;text-align:right;font-size:8pt;'>P.U.</th>
+                        <th style='padding:2px 6px;text-align:right;font-size:8pt;'>Total</th>
+                    </tr>";
+        foreach ($detailPharmacieByRecu[$r['id']] as $lp) {
+            $lignesHtml .= "<tr>
+                <td style='padding:2px 6px;font-size:8pt;'>" . htmlspecialchars($lp['nom']) . "</td>
+                <td style='padding:2px 6px;font-size:8pt;color:#888;'>" . htmlspecialchars($lp['forme']) . "</td>
+                <td style='padding:2px 6px;text-align:center;font-size:8pt;font-weight:bold;'>" . (int)$lp['quantite'] . "</td>
+                <td style='padding:2px 6px;text-align:right;font-size:8pt;'>" . number_format((int)$lp['prix_unitaire'],0,',',' ') . " F</td>
+                <td style='padding:2px 6px;text-align:right;font-size:8pt;font-weight:bold;'>" . number_format((int)$lp['total_ligne'],0,',',' ') . " F</td>
+            </tr>";
+        }
+        $lignesHtml .= "</table></td></tr>";
+    }
 }
 
 if (!$lignesHtml) {
@@ -207,7 +254,7 @@ if (!$lignesHtml) {
                 . "Aucune opération sur cette période.</td></tr>";
 }
 
-// ── Récapitulatif par type de reçu ───────────────────────────────────────────
+// ── Récap par type de reçu ───────────────────────────────────────────────────
 $recapHtml = '';
 foreach ($byType as $type => $info) {
     $lb = $typeLabels[$type] ?? ucfirst($type);
@@ -219,7 +266,7 @@ foreach ($byType as $type => $info) {
     </tr>";
 }
 
-// ── Récapitulatif par sexe ────────────────────────────────────────────────────
+// ── Récap sexe ────────────────────────────────────────────────────────────────
 $recapSexeHtml = '';
 foreach ($bySexe as $sexeKey => $info) {
     if ($info['nb'] === 0) continue;
@@ -235,7 +282,7 @@ foreach ($bySexe as $sexeKey => $info) {
     </tr>";
 }
 
-// ── Récapitulatif par type patient ────────────────────────────────────────────
+// ── Récap type patient ────────────────────────────────────────────────────────
 $recapTypePatientHtml = '';
 foreach ($byTypePatient as $tp => $info) {
     if ($info['nb'] === 0) continue;
@@ -251,12 +298,36 @@ foreach ($byTypePatient as $tp => $info) {
         . number_format($info['encaisse'], 0, ',', ' ') . " F</td>
     </tr>";
 }
+
+// ── Récap produits pharmacie HTML ─────────────────────────────────────────────
+$recapPharmaHtml = '';
+if ($recapPharmacieProduits) {
+    $totalQtePharma    = 0;
+    $totalMontPharma   = 0;
+    foreach ($recapPharmacieProduits as $rp) {
+        $totalQtePharma  += (int)$rp['qte'];
+        $totalMontPharma += (int)$rp['total'];
+        $recapPharmaHtml .= "<tr>
+            <td style='padding:4px 8px;'>" . htmlspecialchars($rp['nom']) . "</td>
+            <td style='padding:4px 8px;color:#888;'>" . htmlspecialchars($rp['forme']) . "</td>
+            <td style='padding:4px 8px;text-align:center;font-weight:bold;'>" . (int)$rp['qte'] . "</td>
+            <td style='padding:4px 8px;text-align:right;font-weight:bold;color:#006064;'>"
+            . number_format((int)$rp['total'], 0, ',', ' ') . " F</td>
+        </tr>";
+    }
+    $recapPharmaHtml .= "<tr style='background:#006064;color:#fff;'>
+        <td colspan='2' style='padding:4px 8px;font-weight:bold;'>TOTAL</td>
+        <td style='padding:4px 8px;text-align:center;font-weight:bold;'>{$totalQtePharma}</td>
+        <td style='padding:4px 8px;text-align:right;font-weight:bold;'>"
+        . number_format($totalMontPharma, 0, ',', ' ') . " F</td>
+    </tr>";
+}
 ?>
 <!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <title>Situation <?= htmlspecialchars($labelMode) ?> –
+    <title>Situation <?= htmlspecialchars($modeLabel) ?> –
         <?= htmlspecialchars($percepteur['nom'] . ' ' . $percepteur['prenom']) ?>
     </title>
     <style>
@@ -270,6 +341,7 @@ foreach ($byTypePatient as $tp => $info) {
             background:#2e7d32; color:#fff; padding:5px 12px;
             font-size:10pt; font-weight:bold; margin:10px 0 5px;
         }
+        .section-title-pharma { background:#006064; }
         .total-row td { background:#2e7d32; color:#fff; font-weight:bold; padding:5px 8px; }
         .print-btn {
             background:#2e7d32; color:#fff; border:none;
@@ -285,12 +357,10 @@ foreach ($byTypePatient as $tp => $info) {
         }
         .kpi-box .val { font-size:16pt; font-weight:bold; color:#2e7d32; }
         .kpi-box .lbl { font-size:8pt; color:#555; }
-        .kpi-sexe-M { border-color:#1565c0; }
-        .kpi-sexe-M .val { color:#1565c0; }
-        .kpi-sexe-F { border-color:#c62828; }
-        .kpi-sexe-F .val { color:#c62828; }
-        .kpi-gratuit { border-color:#c62828; }
-        .kpi-gratuit .val { color:#c62828; }
+        .kpi-sexe-M { border-color:#1565c0; } .kpi-sexe-M .val { color:#1565c0; }
+        .kpi-sexe-F { border-color:#c62828; } .kpi-sexe-F .val { color:#c62828; }
+        .kpi-gratuit { border-color:#c62828; } .kpi-gratuit .val { color:#c62828; }
+        .kpi-pharma  { border-color:#006064; } .kpi-pharma  .val { color:#006064; }
         .watermark {
             position:fixed; top:40%; left:10%; opacity:0.04;
             font-size:80pt; font-weight:bold; color:#2e7d32;
@@ -334,15 +404,19 @@ foreach ($byTypePatient as $tp => $info) {
         <?= htmlspecialchars(strtoupper($percepteur['nom'] . ' ' . $percepteur['prenom'])) ?>
     </h3>
     <div style="font-size:9pt;color:#555;">(Login : <?= htmlspecialchars($percepteur['login']) ?>)</div>
-    <div style="background:#f5f5f5;border:1px solid #ccc;border-radius:6px;
-                padding:5px 12px;display:inline-block;margin-top:6px;">
-        <strong><?= htmlspecialchars($labelMode) ?></strong>
+    <div style="display:inline-flex;gap:8px;margin-top:6px;flex-wrap:wrap;justify-content:center;">
+        <span style="background:#f5f5f5;border:1px solid #ccc;border-radius:6px;padding:5px 12px;">
+            <strong><?= htmlspecialchars($modeLabel) ?></strong>
+        </span>
+        <span style="background:<?= $typeRapport === 'tout' ? '#263238' : ($typeRapport === 'consultation' ? '#e8f5e9' : ($typeRapport === 'examen' ? '#fff3e0' : '#e0f7fa')) ?>;
+                     color:<?= $typeRapport === 'tout' ? '#fff' : ($typeRapport === 'consultation' ? '#2e7d32' : ($typeRapport === 'examen' ? '#e65100' : '#006064')) ?>;
+                     border-radius:6px;padding:5px 12px;font-weight:bold;font-size:9pt;">
+            <?= htmlspecialchars($typeRapportLabels[$typeRapport] ?? 'Tout') ?>
+        </span>
     </div>
 </div>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════ -->
-<!-- KPIs — ligne 1 : chiffres globaux                                         -->
-<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- KPIs – ligne 1 -->
 <div style="text-align:center;margin:10px 0 4px;">
     <div class="kpi-box">
         <div class="val"><?= $nbRecus ?></div>
@@ -358,9 +432,15 @@ foreach ($byTypePatient as $tp => $info) {
         <div class="lbl">Coût actes gratuits</div>
     </div>
     <?php endif; ?>
+    <?php if ($recapPharmacieProduits): ?>
+    <div class="kpi-box kpi-pharma">
+        <div class="val"><?= count($recapPharmacieProduits) ?></div>
+        <div class="lbl">Produits vendus</div>
+    </div>
+    <?php endif; ?>
 </div>
 
-<!-- KPIs — ligne 2 : récap par sexe (reçus + montant) -->
+<!-- KPIs – ligne 2 : par sexe -->
 <div style="text-align:center;margin:4px 0 10px;">
     <?php foreach ($bySexe as $sexeKey => $sInfo): ?>
     <?php if ($sInfo['nb'] === 0) continue; ?>
@@ -374,14 +454,11 @@ foreach ($byTypePatient as $tp => $info) {
     <?php endforeach; ?>
 </div>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════ -->
-<!-- Récapitulatifs côte à côte : par pôle | par type patient | par sexe       -->
-<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- Récapitulatifs côte à côte -->
 <?php if (!empty($byType)): ?>
 <div class="section-title">Récapitulatifs</div>
 <table style="width:100%;margin-bottom:10px;border:none;">
     <tr style="vertical-align:top;">
-
         <!-- Récap par pôle -->
         <td style="width:33%;padding-right:8px;">
             <table style="width:100%;">
@@ -397,20 +474,17 @@ foreach ($byTypePatient as $tp => $info) {
                     <tr class="total-row">
                         <td style="font-size:9pt;">TOTAL</td>
                         <td style="text-align:center;font-size:9pt;"><?= $nbRecus ?></td>
-                        <td style="text-align:right;font-size:9pt;">
-                            <?= number_format($totalEncaisse, 0, ',', ' ') ?> F
-                        </td>
+                        <td style="text-align:right;font-size:9pt;"><?= number_format($totalEncaisse, 0, ',', ' ') ?> F</td>
                     </tr>
                 </tfoot>
             </table>
         </td>
-
         <!-- Récap par type patient -->
         <td style="width:34%;padding:0 4px;">
             <table style="width:100%;">
                 <thead>
                     <tr style="background:#e8f5e9;">
-                        <th style="padding:4px 8px;text-align:left;font-size:9pt;">Catégorie patient</th>
+                        <th style="padding:4px 8px;text-align:left;font-size:9pt;">Catégorie</th>
                         <th style="padding:4px 8px;text-align:center;font-size:9pt;">Nb</th>
                         <th style="padding:4px 8px;text-align:right;font-size:9pt;">Encaissé</th>
                     </tr>
@@ -420,14 +494,11 @@ foreach ($byTypePatient as $tp => $info) {
                     <tr class="total-row">
                         <td style="font-size:9pt;">TOTAL</td>
                         <td style="text-align:center;font-size:9pt;"><?= $nbRecus ?></td>
-                        <td style="text-align:right;font-size:9pt;">
-                            <?= number_format($totalEncaisse, 0, ',', ' ') ?> F
-                        </td>
+                        <td style="text-align:right;font-size:9pt;"><?= number_format($totalEncaisse, 0, ',', ' ') ?> F</td>
                     </tr>
                 </tfoot>
             </table>
         </td>
-
         <!-- Récap par sexe -->
         <td style="width:33%;padding-left:8px;">
             <table style="width:100%;">
@@ -443,23 +514,32 @@ foreach ($byTypePatient as $tp => $info) {
                     <tr class="total-row">
                         <td style="font-size:9pt;">TOTAL</td>
                         <td style="text-align:center;font-size:9pt;"><?= $nbRecus ?></td>
-                        <td style="text-align:right;font-size:9pt;">
-                            <?= number_format($totalEncaisse, 0, ',', ' ') ?> F
-                        </td>
+                        <td style="text-align:right;font-size:9pt;"><?= number_format($totalEncaisse, 0, ',', ' ') ?> F</td>
                     </tr>
                 </tfoot>
             </table>
         </td>
-
     </tr>
 </table>
 <?php endif; ?>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════ -->
-<!-- Détail des opérations                                                      -->
-<!-- Colonnes : N° | Reçu | Date/Heure | Patient | Sexe | Type reçu            -->
-<!--            | Catégorie patient | Montant                                  -->
-<!-- ═══════════════════════════════════════════════════════════════════════════ -->
+<!-- Récap produits pharmacie -->
+<?php if ($recapPharmacieProduits): ?>
+<div class="section-title section-title-pharma">Récapitulatif Produits Pharmaceutiques vendus</div>
+<table style="width:60%;margin-bottom:10px;">
+    <thead>
+        <tr style="background:#b2ebf2;">
+            <th style="padding:5px 8px;text-align:left;font-size:9pt;">Produit</th>
+            <th style="padding:5px 8px;text-align:left;font-size:9pt;">Forme</th>
+            <th style="padding:5px 8px;text-align:center;font-size:9pt;">Qté totale</th>
+            <th style="padding:5px 8px;text-align:right;font-size:9pt;">Montant total</th>
+        </tr>
+    </thead>
+    <tbody><?= $recapPharmaHtml ?></tbody>
+</table>
+<?php endif; ?>
+
+<!-- Détail des opérations -->
 <div class="section-title">
     Détail des opérations (<?= $nbRecus ?> reçu<?= $nbRecus > 1 ? 's' : '' ?>)
 </div>
@@ -476,14 +556,10 @@ foreach ($byTypePatient as $tp => $info) {
             <th style="padding:5px 6px;text-align:right;width:12%;">Montant</th>
         </tr>
     </thead>
-    <tbody>
-        <?= $lignesHtml ?>
-    </tbody>
+    <tbody><?= $lignesHtml ?></tbody>
     <tfoot>
         <tr class="total-row">
-            <td colspan="7" style="text-align:right;padding:5px 8px;font-size:9pt;">
-                TOTAL ENCAISSÉ :
-            </td>
+            <td colspan="7" style="text-align:right;padding:5px 8px;font-size:9pt;">TOTAL ENCAISSÉ :</td>
             <td style="text-align:right;padding:5px 8px;font-size:9pt;">
                 <?= number_format($totalEncaisse, 0, ',', ' ') ?> F
             </td>
@@ -495,9 +571,7 @@ foreach ($byTypePatient as $tp => $info) {
 <div style="margin-top:20px;border-top:1px solid #ccc;padding-top:8px;">
     <table>
         <tr>
-            <td style="width:60%;font-size:9pt;color:#555;">
-                <?= htmlspecialchars($piedPage) ?>
-            </td>
+            <td style="width:60%;font-size:9pt;color:#555;"><?= htmlspecialchars($piedPage) ?></td>
             <td style="text-align:right;font-size:9pt;">
                 <div>Signature Percepteur :</div>
                 <div style="margin-top:28px;border-top:1px solid #555;
