@@ -313,7 +313,7 @@ CREATE TABLE `utilisateurs` (
   `prenom` varchar(100) NOT NULL,
   `login` varchar(80) NOT NULL,
   `password` varchar(255) NOT NULL,
-  `role` enum('admin','comptable','percepteur') NOT NULL DEFAULT 'percepteur',
+  `role` enum('admin','comptable','percepteur','major') NOT NULL DEFAULT 'percepteur',
   `est_actif` tinyint(1) NOT NULL DEFAULT 1,
   `whendone` datetime NOT NULL DEFAULT current_timestamp(),
   `whodone` int(10) UNSIGNED NOT NULL DEFAULT 0,

@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS `utilisateurs` (
     `prenom`      VARCHAR(100)     NOT NULL,
     `login`       VARCHAR(80)      NOT NULL UNIQUE,
     `password`    VARCHAR(255)     NOT NULL,
-    `role`        ENUM('admin','comptable','percepteur') NOT NULL DEFAULT 'percepteur',
+    `role`        ENUM('admin','comptable','percepteur','major') NOT NULL DEFAULT 'percepteur',
     `est_actif`   TINYINT(1)       NOT NULL DEFAULT 1,
     -- Traçabilité obligatoire
     `whendone`    DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
