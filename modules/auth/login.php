@@ -18,6 +18,7 @@ if (Session::isLoggedIn()) {
     redirect(url(match($role) {
         'admin'      => 'index.php?page=dashboard',
         'comptable'  => 'index.php?page=parametrage',
+        'major'      => 'index.php?page=parametrage',
         default      => 'index.php?page=percepteur',
     }));
 }
@@ -56,6 +57,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     redirect(url(match($user['role']) {
                         'admin'     => 'index.php?page=dashboard',
                         'comptable' => 'index.php?page=parametrage',
+                        'major'     => 'index.php?page=parametrage',
                         default     => 'index.php?page=percepteur',
                     }));
                 }

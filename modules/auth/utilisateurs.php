@@ -228,28 +228,42 @@ include ROOT_PATH . '/templates/layouts/header.php';
 const USERS_URL = '{$usersUrl}';
 
 function openCreateModal() {
+    document.getElementById('formUser').reset();
     document.getElementById('modalUserLabel').innerHTML = '<i class="bi bi-person-plus me-2"></i>Nouvel utilisateur';
     document.getElementById('fAction').value = 'create';
     document.getElementById('fId').value     = '';
-    document.getElementById('formUser').reset();
     document.getElementById('passLabel').innerHTML = 'Mot de passe <span class="text-danger">*</span>';
     document.getElementById('passHint').textContent = '';
     document.getElementById('fPassword').required = true;
+    // reset() remet fRole sur percepteur (1re option) — comportement correct pour la création
 }
 
 function openEditModal(u) {
+    // Reset d'abord pour éviter les résidus d'un formulaire précédent
+    document.getElementById('formUser').reset();
+
     document.getElementById('modalUserLabel').innerHTML = '<i class="bi bi-pencil me-2"></i>Modifier utilisateur';
-    document.getElementById('fAction').value  = 'update';
-    document.getElementById('fId').value      = u.id;
-    document.getElementById('fNom').value     = u.nom;
-    document.getElementById('fPrenom').value  = u.prenom;
-    document.getElementById('fLogin').value   = u.login;
-    document.getElementById('fRole').value    = u.role;
-    document.getElementById('fPassword').value= '';
+    document.getElementById('fAction').value   = 'update';
+    document.getElementById('fId').value       = u.id;
+    document.getElementById('fNom').value      = u.nom;
+    document.getElementById('fPrenom').value   = u.prenom;
+    document.getElementById('fLogin').value    = u.login;
+    document.getElementById('fPassword').value = '';
     document.getElementById('fPassword').required = false;
     document.getElementById('passLabel').innerHTML = 'Nouveau mot de passe <small class="text-muted">(laisser vide = inchangé)</small>';
     document.getElementById('passHint').textContent = '';
-    new bootstrap.Modal(document.getElementById('modalUser')).show();
+
+    // Forcer la sélection du rôle APRÈS le reset (reset remet sur la 1re option)
+    const roleSelect = document.getElementById('fRole');
+    roleSelect.value = u.role;
+    // Sécurité : si la valeur n'a pas été trouvée dans les options, forcer option par option
+    if (roleSelect.value !== u.role) {
+        for (let opt of roleSelect.options) {
+            opt.selected = (opt.value === u.role);
+        }
+    }
+
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('modalUser')).show();
 }
 
 function saveUser() {
