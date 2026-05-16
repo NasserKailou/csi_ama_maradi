@@ -3,7 +3,7 @@
  * Tableau de Bord – Réservé Administrateur
  * Vue synthétique enrichie : KPIs, comparaisons, top du jour, alertes critiques.
  */
-requireRole('admin', 'comptable');
+requireRole('percepteur', 'admin', 'comptable', 'major');
 
 $pdo       = Database::getInstance();
 $pageTitle = 'Tableau de Bord';
