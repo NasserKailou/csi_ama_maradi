@@ -585,12 +585,15 @@ private function estConsultationObservation(array $items): bool
 
     private function buildBlocExamen(array $recu, array $lignes, bool $isOrphelin): string
     {
-        $bdr  = 'border:1pt solid #aaa;';
-        $rows = '
+        $bdr   = 'border:1pt solid #aaa;';
+        $thead = '
+            <thead>
             <tr style="background:#fff3e0;font-weight:bold;font-size:7pt;">
                 <td style="padding:2pt 3pt;width:76%;' . $bdr . '">Examen prescrit</td>
                 <td style="padding:2pt 3pt;text-align:right;' . $bdr . '">Coût</td>
-            </tr>';
+            </tr>
+            </thead>';
+        $rows = '';
         $total = 0;
         foreach ($lignes as $l) {
             $cout    = (int)$l['cout_total'];
@@ -620,20 +623,23 @@ private function estConsultationObservation(array $items): bool
             </td></tr>
         </table>';
 
-        return $this->blocRecu($recu, 'BON D\'EXAMEN', $rows, $totalAff, $isOrphelin, true, $lettres, 2, false);
+        return $this->blocRecu($recu, 'BON D\'EXAMEN', $thead . '<tbody>' . $rows . '</tbody>', $totalAff, $isOrphelin, true, $lettres, 2, false);
     }
 
     private function buildBlocPharmacie(array $recu, array $lignes, bool $isOrphelin): string
     {
-        $bdr  = 'border:1pt solid #aaa;';
-        $rows = '
+        $bdr   = 'border:1pt solid #aaa;';
+        $thead = '
+            <thead>
             <tr style="background:#e0f2f1;font-weight:bold;font-size:6.5pt;">
                 <td style="padding:2pt 3pt;' . $bdr . '">Désignation</td>
                 <td style="padding:2pt 3pt;' . $bdr . '">Forme</td>
                 <td style="padding:2pt 3pt;text-align:center;' . $bdr . '">Qté</td>
                 <td style="padding:2pt 3pt;text-align:right;' . $bdr . '">P.U.</td>
                 <td style="padding:2pt 3pt;text-align:right;' . $bdr . '">Total</td>
-            </tr>';
+            </tr>
+            </thead>';
+        $rows  = '';
         $total = 0;
         foreach ($lignes as $l) {
             $pu       = (int)$l['prix_unitaire'];
@@ -668,7 +674,7 @@ private function estConsultationObservation(array $items): bool
             </td></tr>
         </table>';
 
-        return $this->blocRecu($recu, 'REÇU PHARMACIE', $rows, $totalAff, $isOrphelin, true, $lettres, 5, false);
+        return $this->blocRecu($recu, 'REÇU PHARMACIE', $thead . '<tbody>' . $rows . '</tbody>', $totalAff, $isOrphelin, true, $lettres, 5, false);
     }
 
     private function buildEtatLaboHtml(array $lignes, string $debut, string $fin): string
@@ -826,10 +832,7 @@ private function estConsultationObservation(array $items): bool
         </table>
 
         <table border='1' cellpadding='2' cellspacing='0' width='100%' style='border-collapse:collapse;border:1pt solid #555;font-size:7.5pt;margin-top:2pt;'>
-            <tbody>
-            {$tableRows}
-            {$totalRow}
-            </tbody>
+            " . (str_contains($tableRows, '<thead') ? $tableRows . $totalRow : '<tbody>' . $tableRows . $totalRow . '</tbody>') . "
         </table>
 
         {$ligneMontantLettres}
