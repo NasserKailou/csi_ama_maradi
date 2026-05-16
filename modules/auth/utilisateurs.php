@@ -22,7 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $role   = $_POST['role']        ?? 'percepteur';
 
                 if (!$nom || !$prenom || !$login) jsonError('Tous les champs obligatoires.');
-                if (!in_array($role, ['admin','comptable','percepteur'], true)) jsonError('Rôle invalide.');
+                if (!in_array($role, ['admin','comptable','percepteur','major'], true)) jsonError('Rôle invalide.');
 
                 if ($action === 'create') {
                     $pass = trim($_POST['password'] ?? '');
@@ -122,11 +122,13 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                     $rc = match($u['role']){
                                         'admin'     => 'danger',
                                         'comptable' => 'warning',
+                                        'major'     => 'primary',
                                         default     => 'info'
                                     };
                                     $rl = match($u['role']){
                                         'admin'     => 'Administrateur',
                                         'comptable' => 'Comptable',
+                                        'major'     => 'Major',
                                         default     => 'Percepteur'
                                     };
                                     ?>
@@ -195,6 +197,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                             <label class="form-label">Rôle <span class="text-danger">*</span></label>
                             <select class="form-select" name="role" id="fRole" required>
                                 <option value="percepteur">Percepteur</option>
+                                <option value="major">Major</option>
                                 <option value="comptable">Comptable</option>
                                 <option value="admin">Administrateur</option>
                             </select>

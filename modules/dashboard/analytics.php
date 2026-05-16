@@ -5,7 +5,7 @@
  * Vision 360° : Finance | Opérationnel | RH | Stock | Qualité | Démographie
  * 100% aligné sur le schéma réel directaid (vérifié dump SQL).
  */
-requireRole('admin');
+requireRole('admin', 'comptable');
 $pdo       = Database::getInstance();
 $pageTitle = 'Analytique Avancée';
 
@@ -500,7 +500,27 @@ $redevancesJour = $pdo->prepare("
 $redevancesJour->execute([':d' => $filtreDebut, ':f' => $filtreFin]);
 $redevancesJour = $redevancesJour->fetchAll();
 
-// ── Données JSON pour Chart.js ─────────────────────────────────────────────
+// ── Sorties pharmacie (produits vendus sur la période) ─────────────────────
+$sortiesPharmaStmt = $pdo->prepare("
+    SELECT
+        pp.nom,
+        pp.forme,
+        SUM(lp.quantite)    AS total_qte,
+        AVG(lp.prix_unitaire) AS prix_unit,
+        SUM(lp.total_ligne) AS total_montant
+    FROM lignes_pharmacie lp
+    JOIN produits_pharmacie pp ON pp.id = lp.produit_id
+    JOIN recus r ON r.id = lp.recu_id
+    WHERE lp.isDeleted = 0
+      AND r.isDeleted  = 0
+      AND DATE(r.whendone) BETWEEN :d AND :f
+    GROUP BY pp.id, pp.nom, pp.forme
+    ORDER BY total_qte DESC
+");
+$sortiesPharmaStmt->execute([':d' => $filtreDebut, ':f' => $filtreFin]);
+$sortiesPharma = $sortiesPharmaStmt->fetchAll();
+$totalQtePharma     = array_sum(array_column($sortiesPharma, 'total_qte'));
+$totalMontantPharma = array_sum(array_column($sortiesPharma, 'total_montant'));
 $labelsEvo       = array_map(fn($r) => date('d/m', strtotime($r['jour'])), $evolution);
 $dataPatientsEvo = array_column($evolution, 'nb_patients');
 $dataRecettesEvo = array_column($evolution, 'recettes');
@@ -1417,6 +1437,89 @@ include ROOT_PATH . '/templates/layouts/header.php';
         </div>
     </div>
 
+    <!-- ══════════════════════════════════════════════════════════
+         SECTION : Situation Sorties Pharmacie
+         ══════════════════════════════════════════════════════════ -->
+    <div class="card border-0 shadow-sm mb-4" id="section-pharmacie">
+        <div class="card-header d-flex justify-content-between align-items-center"
+             style="background:linear-gradient(135deg,#006064,#00838f);color:#fff;">
+            <h6 class="mb-0 fw-bold">
+                <i class="bi bi-capsule me-2"></i>Situation Sorties Pharmacie
+            </h6>
+            <button class="btn btn-sm btn-light fw-semibold" onclick="ouvrirModalPharmacie()">
+                <i class="bi bi-printer me-1"></i>Imprimer rapport
+            </button>
+        </div>
+        <div class="card-body">
+            <!-- KPIs -->
+            <div class="row g-3 mb-3">
+                <div class="col-md-4">
+                    <div class="p-3 rounded" style="background:#e0f7fa;border-left:4px solid #00838f;">
+                        <div class="text-muted small text-uppercase">Produits distincts</div>
+                        <div class="fs-3 fw-bold" style="color:#006064;"><?= count($sortiesPharma) ?></div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="p-3 rounded" style="background:#e0f7fa;border-left:4px solid #00838f;">
+                        <div class="text-muted small text-uppercase">Unités sorties</div>
+                        <div class="fs-3 fw-bold" style="color:#006064;"><?= fmt($totalQtePharma) ?></div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="p-3 rounded" style="background:#e0f7fa;border-left:4px solid #00838f;">
+                        <div class="text-muted small text-uppercase">Chiffre d'affaires</div>
+                        <div class="fs-3 fw-bold" style="color:#006064;"><?= fmt($totalMontantPharma) ?> F</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tableau détail -->
+            <div class="table-responsive">
+                <table class="table table-hover align-middle table-sm mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>#</th>
+                            <th>Produit</th>
+                            <th>Forme</th>
+                            <th class="text-center">Qté sortie</th>
+                            <th class="text-end">Prix unit. moy.</th>
+                            <th class="text-end">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    <?php if ($sortiesPharma): $cpt = 0; foreach ($sortiesPharma as $sp): $cpt++; ?>
+                        <tr>
+                            <td class="text-muted small"><?= $cpt ?></td>
+                            <td class="fw-semibold"><?= h($sp['nom']) ?></td>
+                            <td><span class="badge bg-light text-dark"><?= h($sp['forme'] ?? '—') ?></span></td>
+                            <td class="text-center fw-bold" style="color:#006064;"><?= (int)$sp['total_qte'] ?></td>
+                            <td class="text-end text-muted small"><?= fmt($sp['prix_unit']) ?> F</td>
+                            <td class="text-end fw-bold"><?= fmt($sp['total_montant']) ?> F</td>
+                        </tr>
+                    <?php endforeach; else: ?>
+                        <tr>
+                            <td colspan="6" class="text-center text-muted py-3">
+                                <i class="bi bi-info-circle me-1"></i>
+                                Aucune sortie pharmacie sur cette période.
+                            </td>
+                        </tr>
+                    <?php endif; ?>
+                    </tbody>
+                    <?php if ($sortiesPharma): ?>
+                    <tfoot class="table-light fw-bold">
+                        <tr>
+                            <td colspan="3" class="text-end">TOTAL</td>
+                            <td class="text-center" style="color:#006064;"><?= fmt($totalQtePharma) ?></td>
+                            <td></td>
+                            <td class="text-end" style="color:#006064;"><?= fmt($totalMontantPharma) ?> F</td>
+                        </tr>
+                    </tfoot>
+                    <?php endif; ?>
+                </table>
+            </div>
+        </div>
+    </div>
+
 </div><!-- /.mt-4 -->
 
 <!-- ══════════════════════════════════════════════════════════════
@@ -1458,8 +1561,44 @@ include ROOT_PATH . '/templates/layouts/header.php';
     </div>
 </div>
 
-<?php
-$jsLabelsEvo       = json_encode($labelsEvo);
+<!-- ══════════════════════════════════════════════════════════════
+     MODAL : Impression rapport sorties pharmacie
+     ══════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modalImprimerPharmacie" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-sm modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header text-white" style="background:#006064;">
+                <h6 class="modal-title fw-bold">
+                    <i class="bi bi-printer-fill me-2"></i>Rapport Sorties Pharmacie
+                </h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-3">
+                    Sélectionnez la période pour le rapport des sorties pharmacie.
+                </p>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold small">Date de début</label>
+                    <input type="date" id="pharmaDateDebut" class="form-control form-control-sm"
+                           value="<?= h($filtreDebut) ?>">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold small">Date de fin</label>
+                    <input type="date" id="pharmaDateFin" class="form-control form-control-sm"
+                           value="<?= h($filtreFin) ?>">
+                </div>
+            </div>
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-sm fw-bold text-white"
+                        style="background:#006064;"
+                        onclick="lancerImpressionPharmacie()">
+                    <i class="bi bi-printer-fill me-1"></i>Générer le PDF
+                </button>
+            </div>
+        </div>
+    </div>
+</div>       = json_encode($labelsEvo);
 $jsDataPatientsEvo = json_encode($dataPatientsEvo);
 $jsDataRecettesEvo = json_encode($dataRecettesEvo);
 $jsDataCumulEvo    = json_encode($dataCumulEvo);
@@ -1483,6 +1622,7 @@ $jsLabelsAge       = json_encode($labelsAge);
 $jsDataAge         = json_encode($dataAge);
 
 $jsImprimerRedevancesUrl = json_encode(url('modules/dashboard/imprimer_redevances.php'));
+$jsImprimerPharmacieUrl  = url('modules/dashboard/imprimer_pharmacie.php');
 
 $extraJs = <<<HEREDOC
 <script>
@@ -1629,6 +1769,27 @@ function lancerImpressionRedevances() {
     bootstrap.Modal.getInstance(document.getElementById('modalImprimerRedevances')).hide();
     const base = {$jsImprimerRedevancesUrl};
     window.open(base + '?date_debut=' + encodeURIComponent(deb) + '&date_fin=' + encodeURIComponent(fin), '_blank');
+}
+
+function ouvrirModalPharmacie() {
+    const modal = new bootstrap.Modal(document.getElementById('modalImprimerPharmacie'));
+    modal.show();
+}
+
+function lancerImpressionPharmacie() {
+    const deb = document.getElementById('pharmaDateDebut').value;
+    const fin = document.getElementById('pharmaDateFin').value;
+    if (!deb || !fin) {
+        alert('Veuillez renseigner les deux dates.');
+        return;
+    }
+    if (deb > fin) {
+        alert('La date de début doit être antérieure ou égale à la date de fin.');
+        return;
+    }
+    bootstrap.Modal.getInstance(document.getElementById('modalImprimerPharmacie')).hide();
+    const url = '{$jsImprimerPharmacieUrl}';
+    window.open(url + '?date_debut=' + encodeURIComponent(deb) + '&date_fin=' + encodeURIComponent(fin), '_blank');
 }
 </script>
 HEREDOC;

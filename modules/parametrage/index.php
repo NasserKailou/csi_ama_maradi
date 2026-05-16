@@ -8,7 +8,7 @@ requireRole('admin', 'comptable');
 $pdo     = Database::getInstance();
 $userId  = Session::getUserId();
 $section = $_GET['section'] ?? 'actes';
-$allowed = ['actes','examens','pharmacie','config','inventaire','etat_labo','carnets'];
+$allowed = ['actes','examens','pharmacie','config','inventaire','etat_labo','carnets','fiches_ag'];
 if (!in_array($section, $allowed)) $section = 'actes';
 
 // ── Actions POST ──────────────────────────────────────────────────────────────
@@ -255,6 +255,83 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 jsonSuccess('Mouvement supprimé. Stock ajusté à ' . $adjStock . ' carnets.');
                 break;
 
+            // ── Fiches Actes Gratuits — stock ──────────────────────────────
+            case 'save_stock_fiches_ag':
+                $qtyAjout   = (int)($_POST['quantite']      ?? 0);
+                $newSeuil   = max(0, (int)($_POST['seuil_alerte'] ?? 10));
+                $commentFag = trim($_POST['commentaire_fiche_ag'] ?? '');
+                if ($qtyAjout < 0) jsonError('La quantité ne peut pas être négative.');
+                $pdo->beginTransaction();
+                // Mettre à jour le seuil d'alerte
+                $pdo->prepare("INSERT INTO config_systeme (cle,valeur,whodone) VALUES ('seuil_alerte_fiches_ag',:v,:w)
+                               ON DUPLICATE KEY UPDATE valeur=:v2,whodone=:w2")
+                    ->execute([':v'=>$newSeuil,':w'=>$userId,':v2'=>$newSeuil,':w2'=>$userId]);
+                if ($qtyAjout > 0) {
+                    // Lire le stock actuel
+                    $curFag = (int)$pdo->query("SELECT valeur FROM config_systeme WHERE cle='stock_fiches_ag'")->fetchColumn();
+                    $newFag = $curFag + $qtyAjout;
+                    // Enregistrer le mouvement
+                    $pdo->prepare("INSERT INTO mouvements_fiches_ag (type_mvt,quantite,stock_avant,stock_apres,commentaire,whodone)
+                                   VALUES ('initialisation',:qty,:avant,:apres,:cmt,:w)")
+                        ->execute([':qty'=>$qtyAjout,':avant'=>$curFag,':apres'=>$newFag,':cmt'=>$commentFag,':w'=>$userId]);
+                    // Mettre à jour le stock
+                    $pdo->prepare("INSERT INTO config_systeme (cle,valeur,whodone) VALUES ('stock_fiches_ag',:v,:w)
+                                   ON DUPLICATE KEY UPDATE valeur=:v2,whodone=:w2")
+                        ->execute([':v'=>$newFag,':w'=>$userId,':v2'=>$newFag,':w2'=>$userId]);
+                } else {
+                    $newFag = (int)$pdo->query("SELECT valeur FROM config_systeme WHERE cle='stock_fiches_ag'")->fetchColumn();
+                }
+                $pdo->commit();
+                jsonSuccess('Stock fiches AG mis à jour. Stock actuel : ' . $newFag . ' fiches.');
+                break;
+
+            case 'edit_mouvement_fiche_ag':
+                requireRole('admin');
+                $mvtId      = (int)($_POST['mvt_id']    ?? 0);
+                $newQty     = (int)($_POST['quantite']   ?? 0);
+                $newComment = trim($_POST['commentaire'] ?? '');
+                if (!$mvtId) jsonError('ID mouvement manquant.');
+                if ($newQty <= 0) jsonError('La quantité doit être > 0.');
+                $mvt = $pdo->prepare("SELECT * FROM mouvements_fiches_ag WHERE id=:id LIMIT 1");
+                $mvt->execute([':id'=>$mvtId]);
+                $mvtRow = $mvt->fetch();
+                if (!$mvtRow) jsonError('Mouvement introuvable.');
+                if ($mvtRow['type_mvt'] !== 'initialisation') jsonError('Seuls les ajouts peuvent être modifiés.');
+                $diffQty = $newQty - (int)$mvtRow['quantite'];
+                $pdo->beginTransaction();
+                $pdo->prepare("UPDATE mouvements_fiches_ag SET quantite=:q, stock_apres=stock_avant+:q2, commentaire=:c WHERE id=:id")
+                    ->execute([':q'=>$newQty, ':q2'=>$newQty, ':c'=>($newComment ?: $mvtRow['commentaire']), ':id'=>$mvtId]);
+                if ($diffQty !== 0) {
+                    $curFag = (int)$pdo->query("SELECT valeur FROM config_systeme WHERE cle='stock_fiches_ag'")->fetchColumn();
+                    $adjFag = max(0, $curFag + $diffQty);
+                    $pdo->prepare("INSERT INTO config_systeme (cle,valeur,whodone) VALUES ('stock_fiches_ag',:v,:w)
+                                   ON DUPLICATE KEY UPDATE valeur=:v2,whodone=:w2")
+                        ->execute([':v'=>$adjFag,':w'=>$userId,':v2'=>$adjFag,':w2'=>$userId]);
+                }
+                $pdo->commit();
+                jsonSuccess('Mouvement modifié.');
+                break;
+
+            case 'delete_mouvement_fiche_ag':
+                requireRole('admin');
+                $mvtId = (int)($_POST['mvt_id'] ?? 0);
+                if (!$mvtId) jsonError('ID mouvement manquant.');
+                $mvt = $pdo->prepare("SELECT * FROM mouvements_fiches_ag WHERE id=:id LIMIT 1");
+                $mvt->execute([':id'=>$mvtId]);
+                $mvtRow = $mvt->fetch();
+                if (!$mvtRow) jsonError('Mouvement introuvable.');
+                if ($mvtRow['type_mvt'] !== 'initialisation') jsonError('Seuls les ajouts peuvent être supprimés.');
+                $pdo->beginTransaction();
+                $pdo->prepare("DELETE FROM mouvements_fiches_ag WHERE id=:id")->execute([':id'=>$mvtId]);
+                $curFag = (int)$pdo->query("SELECT valeur FROM config_systeme WHERE cle='stock_fiches_ag'")->fetchColumn();
+                $adjFag = max(0, $curFag - (int)$mvtRow['quantite']);
+                $pdo->prepare("INSERT INTO config_systeme (cle,valeur,whodone) VALUES ('stock_fiches_ag',:v,:w)
+                               ON DUPLICATE KEY UPDATE valeur=:v2,whodone=:w2")
+                    ->execute([':v'=>$adjFag,':w'=>$userId,':v2'=>$adjFag,':w2'=>$userId]);
+                $pdo->commit();
+                jsonSuccess('Mouvement supprimé. Stock ajusté à ' . $adjFag . ' fiches.');
+                break;
+
             // ── Config système ─────────────────────────────────────────────
             case 'save_config':
                 $keys = ['nom_centre','adresse','telephone','pied_de_page'];
@@ -307,6 +384,20 @@ $historiqueCarnets = $pdo->query("
     ORDER BY mc.whendone DESC
 ")->fetchAll();
 
+$stockFichesAg       = (int)($cfg['stock_fiches_ag'] ?? 0);
+$seuilAlerteFichesAg = (int)($cfg['seuil_alerte_fiches_ag'] ?? 10);
+
+// Historique des ajouts de fiches AG
+$historiqueFichesAg = $pdo->query("
+    SELECT mf.id, mf.type_mvt, mf.quantite, mf.stock_avant, mf.stock_apres,
+           mf.commentaire, mf.whendone,
+           u.nom AS user_nom, u.prenom AS user_prenom
+    FROM mouvements_fiches_ag mf
+    LEFT JOIN utilisateurs u ON u.id = mf.whodone
+    WHERE mf.type_mvt = 'initialisation'
+    ORDER BY mf.whendone DESC
+")->fetchAll();
+
 $pageTitle = 'Paramétrage';
 include ROOT_PATH . '/templates/layouts/header.php';
 ?>
@@ -354,6 +445,18 @@ include ROOT_PATH . '/templates/layouts/header.php';
                 <?php if ($stockCarnets <= $seuilAlerteCarnets && $stockCarnets > 0): ?>
                     <span class="badge bg-warning text-dark ms-1">⚠</span>
                 <?php elseif ($stockCarnets === 0): ?>
+                    <span class="badge bg-danger ms-1">0</span>
+                <?php endif; ?>
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link <?= $section === 'fiches_ag' ? 'active' : '' ?>"
+               href="?page=parametrage&section=fiches_ag"
+               title="Gestion stock des fiches actes gratuits">
+                <i class="bi bi-file-medical me-1"></i>Fiches AG
+                <?php if ($stockFichesAg <= $seuilAlerteFichesAg && $stockFichesAg > 0): ?>
+                    <span class="badge bg-warning text-dark ms-1">⚠</span>
+                <?php elseif ($stockFichesAg === 0): ?>
                     <span class="badge bg-danger ms-1">0</span>
                 <?php endif; ?>
             </a>
@@ -988,6 +1091,224 @@ include ROOT_PATH . '/templates/layouts/header.php';
         if (!confirm('Supprimer cet ajout de ' + qty + ' carnet(s) ?\nLe stock sera réduit en conséquence.')) return;
         ajaxPost(DELETE_MVT_CARNET_URL, {
             action: 'delete_mouvement_carnet',
+            mvt_id: id
+        }, function(data) {
+            showToast('success', data.message || 'Supprimé.');
+            setTimeout(() => location.reload(), 800);
+        });
+    };
+    </script>
+
+    <?php elseif ($section === 'fiches_ag'): ?>
+    <!-- ══════════════ SECTION FICHES AG ══════════════ -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="card h-100" style="border-color:#00695c;">
+                <div class="card-header" style="background:#e0f2f1;">
+                    <h6 class="mb-0" style="color:#00695c;">
+                        <i class="bi bi-file-medical me-2"></i>Stock Fiches Actes Gratuits
+                    </h6>
+                </div>
+                <div class="card-body text-center">
+                    <?php
+                    $alertClsFag = $stockFichesAg === 0 ? 'danger' :
+                                  ($stockFichesAg <= $seuilAlerteFichesAg ? 'warning' : 'success');
+                    $alertTxtFag = $stockFichesAg === 0 ? 'RUPTURE – Plus de fiches !' :
+                                  ($stockFichesAg <= $seuilAlerteFichesAg ? 'Stock faible !' : 'Stock suffisant');
+                    ?>
+                    <div class="display-4 fw-bold text-<?= $alertClsFag ?>"><?= $stockFichesAg ?></div>
+                    <p class="text-muted mb-1">fiches disponibles</p>
+                    <span class="badge bg-<?= $alertClsFag ?>"><?= $alertTxtFag ?></span>
+                    <hr>
+                    <div class="text-muted small">Seuil d'alerte : <strong><?= $seuilAlerteFichesAg ?> fiches</strong></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header bg-csi-light">
+                    <h6 class="mb-0"><i class="bi bi-plus-circle me-2"></i>Réapprovisionner / Configurer les Fiches AG</h6>
+                </div>
+                <div class="card-body">
+                    <form id="formStockFichesAg">
+                        <input type="hidden" name="action" value="save_stock_fiches_ag">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">
+                                    Quantité à ajouter
+                                    <small class="text-muted">(s'ajoute au stock actuel)</small>
+                                </label>
+                                <input type="number" class="form-control form-control-lg" name="quantite"
+                                       min="0" value="0" placeholder="Ex: 100" id="inputQtyFicheAg">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">
+                                    Seuil d'alerte
+                                    <small class="text-muted">(notification en cas de baisse)</small>
+                                </label>
+                                <input type="number" class="form-control form-control-lg" name="seuil_alerte"
+                                       min="0" value="<?= $seuilAlerteFichesAg ?>" placeholder="Ex: 20">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Commentaire / Note</label>
+                                <input type="text" class="form-control" name="commentaire_fiche_ag"
+                                       placeholder="Ex: Réception du 16/05/2026" id="inputCommentaireFicheAg">
+                            </div>
+                            <div class="col-md-6 d-flex align-items-end">
+                                <div class="alert alert-info py-2 mb-0 w-100 small">
+                                    <i class="bi bi-info-circle me-1"></i>
+                                    Stock actuel : <strong><?= $stockFichesAg ?></strong>.
+                                    Nouveau : <strong id="previewNewStockFag"><?= $stockFichesAg ?></strong>
+                                    (+<span id="previewQtyFicheAg">0</span>)
+                                </div>
+                            </div>
+                            <div class="col-12">
+                                <button type="button" class="btn text-white w-100"
+                                        style="background:var(--csi-green);"
+                                        onclick="saveParam('formStockFichesAg', '/index.php?page=parametrage&section=fiches_ag')">
+                                    <i class="bi bi-save me-2"></i>Enregistrer l'approvisionnement
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Historique des ajouts fiches AG ────────────────────────────────── -->
+    <div class="card">
+        <div class="card-header bg-csi-light d-flex justify-content-between align-items-center">
+            <h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Historique des ajouts de fiches AG</h6>
+            <small class="text-muted"><?= count($historiqueFichesAg) ?> entrée(s)</small>
+        </div>
+        <div class="card-body p-0">
+            <?php if (empty($historiqueFichesAg)): ?>
+                <div class="p-4 text-center text-muted">
+                    <i class="bi bi-inbox fs-3 d-block mb-2"></i>
+                    Aucun approvisionnement enregistré.
+                </div>
+            <?php else: ?>
+            <table class="table table-hover align-middle mb-0 small" id="tblHistoriqueFichesAg">
+                <thead class="table-light">
+                    <tr>
+                        <th class="text-center" style="width:60px;">#</th>
+                        <th>Date</th>
+                        <th class="text-center">Qté ajoutée</th>
+                        <th class="text-center">Stock avant</th>
+                        <th class="text-center">Stock après</th>
+                        <th>Commentaire</th>
+                        <th>Par</th>
+                        <th class="text-center" style="width:100px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($historiqueFichesAg as $mf): ?>
+                <tr id="mvtfag-row-<?= (int)$mf['id'] ?>">
+                    <td class="text-center text-muted"><?= (int)$mf['id'] ?></td>
+                    <td><?= date('d/m/Y H:i', strtotime($mf['whendone'])) ?></td>
+                    <td class="text-center">
+                        <span class="badge bg-success">+<?= (int)$mf['quantite'] ?></span>
+                    </td>
+                    <td class="text-center text-muted"><?= (int)$mf['stock_avant'] ?></td>
+                    <td class="text-center fw-bold"><?= (int)$mf['stock_apres'] ?></td>
+                    <td class="mvtfag-commentaire"><?= h($mf['commentaire'] ?? '—') ?></td>
+                    <td>
+                        <small class="text-muted">
+                            <?= h(trim(($mf['user_nom'] ?? '') . ' ' . ($mf['user_prenom'] ?? ''))) ?: '—' ?>
+                        </small>
+                    </td>
+                    <td class="text-center">
+                        <button class="btn btn-sm btn-outline-primary me-1" title="Modifier"
+                                onclick="ouvrirEditMvtFicheAg(<?= (int)$mf['id'] ?>, <?= (int)$mf['quantite'] ?>, '<?= addslashes(h($mf['commentaire'] ?? '')) ?>')">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" title="Supprimer"
+                                onclick="supprimerMvtFicheAg(<?= (int)$mf['id'] ?>, <?= (int)$mf['quantite'] ?>)">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <!-- Modal édition mouvement fiche AG -->
+    <div class="modal fade" id="modalEditMvtFicheAg" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header" style="background:#00695c;">
+                    <h5 class="modal-title text-white"><i class="bi bi-pencil me-2"></i>Modifier l'ajout</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="formEditMvtFicheAg">
+                        <input type="hidden" id="editMvtFagId" name="mvt_id">
+                        <input type="hidden" name="action" value="edit_mouvement_fiche_ag">
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Quantité ajoutée <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" id="editMvtFagQty" name="quantite" min="1" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Commentaire</label>
+                            <input type="text" class="form-control" id="editMvtFagComment" name="commentaire">
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn text-white" style="background:var(--csi-green);"
+                            onclick="enregistrerEditMvtFicheAg()">
+                        <i class="bi bi-save me-1"></i>Enregistrer
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // Preview stock fiches AG
+    document.getElementById('inputQtyFicheAg')?.addEventListener('input', function() {
+        const qty     = parseInt(this.value) || 0;
+        const current = <?= $stockFichesAg ?>;
+        document.getElementById('previewQtyFicheAg').textContent  = qty;
+        document.getElementById('previewNewStockFag').textContent = current + qty;
+    });
+
+    const EDIT_MVT_FAG_URL   = '<?= url('index.php?page=parametrage') ?>';
+    const DELETE_MVT_FAG_URL = '<?= url('index.php?page=parametrage') ?>';
+
+    window.ouvrirEditMvtFicheAg = function(id, qty, commentaire) {
+        document.getElementById('editMvtFagId').value      = id;
+        document.getElementById('editMvtFagQty').value     = qty;
+        document.getElementById('editMvtFagComment').value = commentaire;
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalEditMvtFicheAg')).show();
+    };
+
+    window.enregistrerEditMvtFicheAg = function() {
+        const id      = document.getElementById('editMvtFagId').value;
+        const qty     = document.getElementById('editMvtFagQty').value;
+        const comment = document.getElementById('editMvtFagComment').value;
+        if (!qty || parseInt(qty) <= 0) { showToast('danger', 'La quantité doit être > 0.'); return; }
+        ajaxPost(EDIT_MVT_FAG_URL, {
+            action: 'edit_mouvement_fiche_ag',
+            mvt_id: id,
+            quantite: qty,
+            commentaire: comment
+        }, function(data) {
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('modalEditMvtFicheAg')).hide();
+            showToast('success', data.message || 'Mouvement modifié.');
+            setTimeout(() => location.reload(), 800);
+        });
+    };
+
+    window.supprimerMvtFicheAg = function(id, qty) {
+        if (!confirm('Supprimer cet ajout de ' + qty + ' fiche(s) AG ?\nLe stock sera réduit en conséquence.')) return;
+        ajaxPost(DELETE_MVT_FAG_URL, {
+            action: 'delete_mouvement_fiche_ag',
             mvt_id: id
         }, function(data) {
             showToast('success', data.message || 'Supprimé.');
