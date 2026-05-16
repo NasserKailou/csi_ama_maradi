@@ -5,7 +5,7 @@
  */
 require_once __DIR__ . '/../../core/bootstrap.php';
 
-requireRole('percepteur', 'admin', 'comptable');
+requireRole('percepteur', 'admin', 'comptable', 'major');
 
 $recuId = (int)($_GET['recu_id'] ?? 0);
 if ($recuId <= 0) {

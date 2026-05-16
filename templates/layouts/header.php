@@ -72,7 +72,7 @@
                 <?php endif; ?>
 
                 <?php /* Espace Percepteur : accessible au percepteur ET à l'admin (pour saisie de reçus) */ ?>
-                <?php if (Session::hasRole('admin', 'percepteur')): ?>
+                <?php if (Session::hasRole('admin', 'percepteur', 'major')): ?>
                 <li class="nav-item">
                     <a class="nav-link <?= ($page === 'percepteur') ? 'active' : '' ?>" href="<?= url('index.php?page=percepteur') ?>">
                         <i class="bi bi-person-badge"></i> Espace Percepteur
