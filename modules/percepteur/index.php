@@ -10,7 +10,7 @@
  * AJOUT : Téléphone facultatif. Si vide, 99999999 est envoyé au serveur.
  * AJOUT : Type de consultation "Mise en observation" (1000 F, sans redevance ni carnet)
  */
-requireRole('percepteur', 'admin', 'comptable');
+requireRole('percepteur', 'admin', 'comptable', 'major');
 $pdo       = Database::getInstance();
 $userId    = Session::getUserId();
 $pageTitle = 'Espace Percepteur';
