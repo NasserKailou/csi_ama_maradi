@@ -6,7 +6,8 @@
  * RÈGLES TARIFAIRES :
  *  - Consultation standard                   : 300 F (TARIF_CONSULTATION)
  *  - Carnet de soins (si avec_carnet=1)      : +100 F (TARIF_CARNET_SOINS)
- *  - Supplément âge > 5 ans (patient normal) : +100 F (TARIF_SUPPLEMENT_ADULTE)
+ *  - Supplément âge > 5 ans (patient NORMAL UNIQUEMENT) : +100 F (TARIF_SUPPLEMENT_ADULTE)
+ *  - Orphelin / Acte gratuit                : PAS de supplément âge (0 F)
  *  - Patient 0–5 ans : pas de supplément
  *  - Mise en observation                     : 1000 F fixe (TARIF_OBSERVATION)
  *      → PAS de carnet, PAS de supplément âge même si > 5 ans
@@ -154,8 +155,9 @@ try {
         }
 
         $supplementAge = ($age > AGE_LIMITE_SUPPLEMENT) ? (int)TARIF_SUPPLEMENT_ADULTE : 0;
-        $appliquerSupp = ($typePatient !== 'acte_gratuit');
-        if (!$appliquerSupp) {
+        // Pas de redevance pour les actes gratuits NI pour les orphelins
+        // (la redevance ministère ne s'applique qu'aux patients normaux payants)
+        if ($typePatient !== 'normal') {
             $supplementAge = 0;
         }
     }
@@ -230,7 +232,8 @@ if ($typeConsult === 'observation') {
 }
 
 // ── 6b. Ligne supplément âge (redevance ministère) ────────────────────
-//       Jamais en observation, jamais en acte gratuit, jamais ≤ 5 ans
+//       Jamais en observation, jamais orphelin, jamais acte gratuit, jamais ≤ 5 ans
+//       ($supplementAge est déjà mis à 0 pour orphelin/acte_gratuit dans le calcul)
 if ($supplementAge > 0 && $typeConsult === 'standard') {
     $stmtLigne->execute([
         ':rid'   => $recuId,

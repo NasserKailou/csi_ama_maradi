@@ -1431,7 +1431,9 @@ window.selectPrestation = function(typeConsult, avecCarnet) {
     // ── CAS STANDARD ──
     if (recapBox) recapBox.classList.remove('with-observation');
 
-    const supplement = (ageValide && ageVal > AGE_LIMITE_SUPPLEMENT) ? TARIF_SUPPLEMENT_ADULTE : 0;
+    // ✅ Redevance ministère uniquement pour les patients NORMAUX (pas orphelins)
+    const supplement = (currentTypeRecu === 'normal' && ageValide && ageVal > AGE_LIMITE_SUPPLEMENT)
+                       ? TARIF_SUPPLEMENT_ADULTE : 0;
     const avecCarnet = (hidCarnet && hidCarnet.value === '1');
 
     // Mise à jour des libellés des cartes
@@ -1462,7 +1464,7 @@ window.selectPrestation = function(typeConsult, avecCarnet) {
         else recapBox.classList.remove('with-supplement');
     }
     if (hintAge) {
-        hintAge.style.display = (ageValide && ageVal > AGE_LIMITE_SUPPLEMENT) ? '' : 'none';
+        hintAge.style.display = (currentTypeRecu === 'normal' && ageValide && ageVal > AGE_LIMITE_SUPPLEMENT) ? '' : 'none';
     }
 }
 

@@ -150,9 +150,25 @@ foreach ($detailPharmRows as $row) {
 $cfgCarnets      = $pdo->query("SELECT cle, valeur FROM config_systeme WHERE cle IN ('stock_carnets','seuil_alerte_carnets') AND isDeleted=0")->fetchAll(PDO::FETCH_KEY_PAIR);
 $stockCarnets    = (int)($cfgCarnets['stock_carnets']        ?? 0);
 $seuilCarnets    = (int)($cfgCarnets['seuil_alerte_carnets'] ?? 10);
-// Carnets distribués aujourd'hui = recus de type consultation avec avec_carnet=1 validés ce jour
-$carnetsJour     = (int)$pdo->query("SELECT COUNT(*) FROM recus WHERE isDeleted=0 AND type_recu='consultation' AND avec_carnet=1 AND DATE(whendone)=CURDATE()")->fetchColumn();
-$carnetsMois     = (int)$pdo->query("SELECT COUNT(*) FROM recus WHERE isDeleted=0 AND type_recu='consultation' AND avec_carnet=1 AND MONTH(whendone)=MONTH(CURDATE()) AND YEAR(whendone)=YEAR(CURDATE())")->fetchColumn();
+// Carnets distribués : on compte les sorties de carnets via mouvements_carnets (type=sortie)
+// ou via lignes_consultation.avec_carnet >= 1 (inclut option 1 = carnet seul, 2 = carnet+fiche)
+$carnetsJour = (int)$pdo->query("
+    SELECT COUNT(*)
+    FROM lignes_consultation lc
+    JOIN recus r ON r.id = lc.recu_id AND r.isDeleted = 0
+    WHERE lc.isDeleted = 0
+      AND lc.avec_carnet >= 1
+      AND DATE(r.whendone) = CURDATE()
+")->fetchColumn();
+$carnetsMois = (int)$pdo->query("
+    SELECT COUNT(*)
+    FROM lignes_consultation lc
+    JOIN recus r ON r.id = lc.recu_id AND r.isDeleted = 0
+    WHERE lc.isDeleted = 0
+      AND lc.avec_carnet >= 1
+      AND MONTH(r.whendone) = MONTH(CURDATE())
+      AND YEAR(r.whendone)  = YEAR(CURDATE())
+")->fetchColumn();
 $statutCarnet    = $stockCarnets === 0 ? 'danger' : ($stockCarnets <= $seuilCarnets ? 'warning' : 'success');
 $iconCarnet      = $stockCarnets === 0 ? 'exclamation-octagon-fill' : ($stockCarnets <= $seuilCarnets ? 'exclamation-triangle-fill' : 'journal-medical');
 $colorCarnet     = $stockCarnets === 0 ? '#c62828' : ($stockCarnets <= $seuilCarnets ? '#e65100' : '#2e7d32');
