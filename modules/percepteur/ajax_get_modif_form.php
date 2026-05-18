@@ -35,7 +35,7 @@ if (!Session::isLoggedIn()) {
     echo json_encode(['html' => null, 'error' => 'Non authentifié']);
     exit;
 }
-if (!in_array(Session::getRole(), ['percepteur','admin','comptable'], true)) {
+if (!in_array(Session::getRole(), ['percepteur','admin','comptable','major'], true)) {
     http_response_code(403);
     echo json_encode(['html' => null, 'error' => 'Accès refusé']);
     exit;
@@ -204,9 +204,7 @@ elseif ($type === 'pharmacie') {
     ")->fetchAll(PDO::FETCH_ASSOC);
 
     $rows  = '';
-    $count = 0;
     foreach ($catalogue as $prod) {
-        if ($count >= 15) break;
         $qteActuelle = $existants[(int)$prod['id']] ?? 0;
         // Stock disponible = stock actuel + quantité déjà utilisée dans ce reçu
         $stockDispo  = (int)$prod['stock_actuel'] + $qteActuelle;
@@ -229,11 +227,10 @@ elseif ($type === 'pharmacie') {
           </td>
           <td class="text-end text-nowrap modif-ligne-total">0 F</td>
         </tr>';
-        $count++;
     }
 
     $html = '
-    <p class="text-muted small mb-2">Saisissez les quantités (0 = supprimer, max 15 produits) :</p>
+    <p class="text-muted small mb-2">Saisissez les quantités (0 = supprimer) :</p>
     <div class="table-responsive" style="max-height:320px;overflow-y:auto">
       <table class="table table-sm align-middle">
         <thead class="table-light sticky-top">

@@ -127,9 +127,10 @@ foreach ($recus as $r) {
         $totalGratuit += (int)$r['montant_total'];
     }
     $t = $r['type_recu'];
-    if (!isset($byType[$t])) $byType[$t] = ['nb'=>0,'total'=>0];
+    if (!isset($byType[$t])) $byType[$t] = ['nb'=>0,'total'=>0,'total_reel'=>0];
     $byType[$t]['nb']++;
-    $byType[$t]['total'] += (int)$r['montant_encaisse'];
+    $byType[$t]['total']      += (int)$r['montant_encaisse'];
+    $byType[$t]['total_reel'] += (int)$r['montant_total']; // montant réel (orphelin/AG inclus)
 
     $sexe = $r['patient_sexe'] === 'F' ? 'F' : 'M';
     $bySexe[$sexe]['nb']++;
@@ -193,11 +194,30 @@ foreach ($recus as $i => $r) {
     $dateAff   = date('d/m', strtotime($r['whendone']));
     $typeAff   = $typeLabels[$r['type_recu']] ?? ucfirst($r['type_recu']);
 
-    $montant = $isGratuit
-        ? '<span style="color:#c62828;font-weight:bold;">0 F <em style="font-size:8pt;">(gratuit)</em></span>'
-        : '<strong>' . number_format((int)$r['montant_encaisse'], 0, ',', ' ') . ' F</strong>';
+    // Montant affiché : toujours le montant_total réel (y compris orphelin/acte_gratuit)
+    // Pour orphelin/acte_gratuit : montant_total = valeur réelle de la prestation
+    // On affiche le montant_total en indiquant 0 F encaissé si gratuit
+    $montantTotal    = (int)$r['montant_total'];
+    $montantEncaisse = (int)$r['montant_encaisse'];
+    if ($isGratuit && in_array($r['type_recu'], ['pharmacie','examen'])) {
+        // Pharma/examen gratuit : afficher le montant réel + mention 0 F encaissé
+        $montant = '<strong>' . number_format($montantTotal, 0, ',', ' ') . ' F</strong>'
+                 . ' <span style="color:#c62828;font-size:8pt;">(0 encaissé)</span>';
+    } elseif ($isGratuit) {
+        // Consultation gratuite : 0 F encaissé mais montant théorique affiché
+        $montant = '<strong>' . number_format($montantTotal, 0, ',', ' ') . ' F</strong>'
+                 . ' <span style="color:#c62828;font-size:8pt;">(0 encaissé)</span>';
+    } else {
+        $montant = '<strong>' . number_format($montantEncaisse, 0, ',', ' ') . ' F</strong>';
+    }
 
-    $tpInfo  = $typePatientLabels[$r['type_patient']] ?? ['label'=>$r['type_patient'],'color'=>'#555','bg'=>'#eee'];
+    // Badge catégorie : pour pharma et examen, ne pas afficher "Acte Gratuit"
+    // même si le reçu est lié à un acte gratuit — afficher le type patient réel sauf pour ces types
+    $tpAffiche = $r['type_patient'];
+    if (in_array($r['type_recu'], ['pharmacie','examen']) && $tpAffiche === 'acte_gratuit') {
+        $tpAffiche = 'normal'; // afficher comme Normal pour pharma/examen
+    }
+    $tpInfo  = $typePatientLabels[$tpAffiche] ?? ['label'=>ucfirst($tpAffiche),'color'=>'#555','bg'=>'#eee'];
     $tpBadge = "<span style='background:{$tpInfo['bg']};color:{$tpInfo['color']};padding:1px 5px;"
              . "border-radius:3px;font-size:8pt;font-weight:bold;'>{$tpInfo['label']}</span>";
 
@@ -258,11 +278,15 @@ if (!$lignesHtml) {
 $recapHtml = '';
 foreach ($byType as $type => $info) {
     $lb = $typeLabels[$type] ?? ucfirst($type);
+    $montantReel = $info['total_reel'] ?? $info['total'];
+    $diff = $montantReel - $info['total'];
     $recapHtml .= "<tr>
         <td style='padding:4px 8px;'>{$lb}</td>
         <td style='padding:4px 8px;text-align:center;'>{$info['nb']}</td>
         <td style='padding:4px 8px;text-align:right;font-weight:bold;'>"
-        . number_format($info['total'], 0, ',', ' ') . " F</td>
+        . number_format($info['total'], 0, ',', ' ') . " F"
+        . ($diff > 0 ? "<br><span style='font-size:7.5pt;color:#888;'>(réel&nbsp;: " . number_format($montantReel,0,',',' ') . " F)</span>" : "")
+        . "</td>
     </tr>";
 }
 
