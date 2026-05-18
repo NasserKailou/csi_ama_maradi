@@ -400,6 +400,32 @@ $topModificateurs = $pdo->prepare("
 $topModificateurs->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
 $topModificateurs = $topModificateurs->fetchAll();
 
+// Détail complet des modifications (pour le modal aperçu)
+$detailModifsStmt = $pdo->prepare("
+    SELECT
+        m.id,
+        m.recu_id,
+        m.type_recu,
+        m.motif,
+        m.whendone      AS date_modif,
+        r.numero_recu,
+        r.type_patient,
+        r.montant_total,
+        r.montant_encaisse,
+        p.nom           AS patient_nom,
+        u.nom           AS modif_nom,
+        u.prenom        AS modif_prenom,
+        u.role          AS modif_role
+    FROM modifications_recus m
+    JOIN recus r    ON r.id  = m.recu_id
+    JOIN patients p ON p.id  = r.patient_id
+    LEFT JOIN utilisateurs u ON u.id = m.user_id
+    WHERE DATE(m.whendone) BETWEEN :d AND :f
+    ORDER BY m.whendone DESC
+");
+$detailModifsStmt->execute([':d' => $filtreDebut, ':f' => $filtreFin]);
+$detailModifs = $detailModifsStmt->fetchAll();
+
 // ════════════════════════════════════════════════════════════════════════════
 // 14b. Audit qualité : reçus annulés
 // ════════════════════════════════════════════════════════════════════════════
@@ -1272,8 +1298,17 @@ include ROOT_PATH . '/templates/layouts/header.php';
     <div class="row g-3 mb-4">
         <div class="col-md-4">
             <div class="card border-0 shadow-sm h-100">
-                <div class="card-header border-0" style="background:linear-gradient(90deg,#bf360c,#d84315);color:#fff;">
+                <div class="card-header border-0 d-flex justify-content-between align-items-center"
+                     style="background:linear-gradient(90deg,#bf360c,#d84315);color:#fff;">
                     <h6 class="mb-0"><i class="bi bi-shield-exclamation me-2"></i>Audit qualité – Modifications</h6>
+                    <?php if ((int)$auditModifs['nb_modifs'] > 0): ?>
+                    <button type="button"
+                            class="btn btn-sm btn-light fw-semibold py-0 px-2"
+                            onclick="ouvrirModalModifs()"
+                            title="Voir le détail des modifications">
+                        <i class="bi bi-eye me-1"></i>Aperçu
+                    </button>
+                    <?php endif; ?>
                 </div>
                 <div class="card-body">
                     <div class="row g-3 text-center mb-3">
@@ -1328,6 +1363,14 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         </li>
                         <?php endforeach; ?>
                     </ul>
+                    <?php endif; ?>
+
+                    <?php if ((int)$auditModifs['nb_modifs'] > 0): ?>
+                    <div class="text-center mt-3">
+                        <button class="btn btn-outline-danger btn-sm" onclick="ouvrirModalModifs()">
+                            <i class="bi bi-list-ul me-1"></i>Voir les <?= (int)$auditModifs['nb_modifs'] ?> modification<?= $auditModifs['nb_modifs'] > 1 ? 's' : '' ?> en détail
+                        </button>
+                    </div>
                     <?php endif; ?>
 
                     <?php if (!$auditModifs['nb_modifs']): ?>
@@ -1743,6 +1786,131 @@ include ROOT_PATH . '/templates/layouts/header.php';
 </div>
 
 <!-- ══════════════════════════════════════════════════════════════
+     MODAL : Détail modifications de reçus
+     ══════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modalModifs" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header text-white"
+                 style="background:linear-gradient(90deg,#bf360c,#d84315);">
+                <h6 class="modal-title fw-bold">
+                    <i class="bi bi-shield-exclamation me-2"></i>
+                    Modifications de reçus —
+                    <?= date('d/m/Y', strtotime($filtreDebut)) ?> au <?= date('d/m/Y', strtotime($filtreFin)) ?>
+                    <span class="badge bg-white text-dark ms-2"><?= (int)$auditModifs['nb_modifs'] ?></span>
+                </h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0">
+                <?php if ($detailModifs): ?>
+                <!-- Barre récap -->
+                <div class="px-3 py-2 border-bottom d-flex gap-3 flex-wrap align-items-center"
+                     style="background:#fbe9e7;">
+                    <span class="fw-semibold text-danger">
+                        <i class="bi bi-pencil-square me-1"></i><?= (int)$auditModifs['nb_modifs'] ?> modification<?= $auditModifs['nb_modifs'] > 1 ? 's' : '' ?>
+                    </span>
+                    <span class="text-muted">|</span>
+                    <span style="color:#e65100;">
+                        <?= (int)$auditModifs['nb_recus_modifies'] ?> reçu<?= $auditModifs['nb_recus_modifies'] > 1 ? 's' : '' ?> impacté<?= $auditModifs['nb_recus_modifies'] > 1 ? 's' : '' ?>
+                    </span>
+                    <span class="text-muted">|</span>
+                    <span style="color:#1565c0;">
+                        <?= (int)$auditModifs['nb_users_modificateurs'] ?> utilisateur<?= $auditModifs['nb_users_modificateurs'] > 1 ? 's' : '' ?>
+                    </span>
+                    <?php foreach ($modifsParType as $mt): ?>
+                    <span class="badge bg-light text-dark border">
+                        <?= ucfirst($mt['type_recu']) ?> : <?= $mt['nb'] ?>
+                    </span>
+                    <?php endforeach; ?>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle table-sm mb-0">
+                        <thead style="position:sticky;top:0;background:#fff;z-index:1;">
+                            <tr class="table-light">
+                                <th class="ps-3">N° Reçu</th>
+                                <th>Type</th>
+                                <th>Patient</th>
+                                <th>Modifié par</th>
+                                <th>Date modification</th>
+                                <th>Motif</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php
+                        $typeColorsM = [
+                            'consultation' => '#1565c0',
+                            'examen'       => '#006064',
+                            'pharmacie'    => '#2e7d32',
+                        ];
+                        foreach ($detailModifs as $dm):
+                            $tcM = $typeColorsM[$dm['type_recu']] ?? '#555';
+                        ?>
+                        <tr>
+                            <td class="ps-3">
+                                <span class="fw-bold" style="color:#bf360c;">
+                                    #<?= str_pad($dm['numero_recu'], 5, '0', STR_PAD_LEFT) ?>
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge" style="background:<?= $tcM ?>;">
+                                    <?= ucfirst($dm['type_recu']) ?>
+                                </span>
+                            </td>
+                            <td>
+                                <small class="fw-semibold"><?= h($dm['patient_nom']) ?></small>
+                                <?php if ($dm['type_patient'] !== 'normal'): ?>
+                                <br><span class="badge bg-light text-muted border" style="font-size:0.65em;">
+                                    <?= $dm['type_patient'] === 'orphelin' ? 'Orphelin' : 'Acte gratuit' ?>
+                                </span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <small class="fw-semibold">
+                                    <i class="bi bi-person-badge me-1" style="color:#bf360c;"></i>
+                                    <?= h(trim(($dm['modif_nom'] ?? '') . ' ' . ($dm['modif_prenom'] ?? ''))) ?: '<span class="text-muted">—</span>' ?>
+                                </small>
+                                <?php if (!empty($dm['modif_role'])): ?>
+                                <br><span class="text-muted" style="font-size:0.7em;"><?= h($dm['modif_role']) ?></span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <small class="fw-semibold" style="color:#e65100;">
+                                    <?= date('d/m/Y H:i', strtotime($dm['date_modif'])) ?>
+                                </small>
+                            </td>
+                            <td style="max-width:220px;">
+                                <small class="text-muted fst-italic">
+                                    <?= h($dm['motif'] ?: '—') ?>
+                                </small>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                        <tfoot>
+                            <tr class="table-light fw-bold">
+                                <td colspan="6" class="ps-3">
+                                    Total : <?= count($detailModifs) ?> modification<?= count($detailModifs) > 1 ? 's' : '' ?>
+                                    sur <?= (int)$auditModifs['nb_recus_modifies'] ?> reçu<?= $auditModifs['nb_recus_modifies'] > 1 ? 's' : '' ?>
+                                </td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+                <?php else: ?>
+                <div class="text-center py-5 text-muted">
+                    <i class="bi bi-check-circle fs-1 text-success"></i>
+                    <p class="mt-2">Aucune modification enregistrée sur cette période.</p>
+                </div>
+                <?php endif; ?>
+            </div>
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fermer</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
      MODAL : Détail reçus annulés
      ══════════════════════════════════════════════════════════════ -->
 <div class="modal fade" id="modalAnnules" tabindex="-1" aria-hidden="true">
@@ -2019,6 +2187,11 @@ new Chart(document.getElementById('chartProduits'),{
 })();
 
 // ─── Redevances : modal + lancement impression ──────────────────────────────
+function ouvrirModalModifs() {
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalModifs'));
+    modal.show();
+}
+
 function ouvrirModalAnnules() {
     const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalAnnules'));
     modal.show();
