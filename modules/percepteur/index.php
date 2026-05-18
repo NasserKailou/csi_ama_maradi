@@ -162,7 +162,10 @@ if ($dateDebut && !$dateFin) {
 }
 
 if ($dateDebut && $dateFin) {
-    $sqlArch = "
+    // Archives : TOUS les profils (percepteur inclus) voient l'ensemble des reçus
+    // de la période, quel que soit l'auteur — pas de filtre whodone ici.
+    // La colonne Percepteur est affichée pour tous afin d'identifier l'auteur.
+    $stmtArch = $pdo->prepare("
         SELECT r.id, r.numero_recu, p.nom AS patient_nom, p.telephone,
                r.type_recu, r.type_patient, r.montant_total, r.montant_encaisse,
                r.whendone, r.statut_reglement, r.date_reglement,
@@ -173,17 +176,9 @@ if ($dateDebut && $dateFin) {
         LEFT JOIN utilisateurs u ON u.id = r.whodone
         WHERE r.isDeleted = 0
           AND DATE(r.whendone) BETWEEN :deb AND :fin
-    ";
-    if (!$voitTous) {
-        $sqlArch .= " AND r.whodone = :uid";
-    }
-    $sqlArch .= " ORDER BY r.whendone DESC";
-    $stmtArch = $pdo->prepare($sqlArch);
-    if (!$voitTous) {
-        $stmtArch->execute([':uid' => $userId, ':deb' => $dateDebut, ':fin' => $dateFin]);
-    } else {
-        $stmtArch->execute([':deb' => $dateDebut, ':fin' => $dateFin]);
-    }
+        ORDER BY r.whendone DESC
+    ");
+    $stmtArch->execute([':deb' => $dateDebut, ':fin' => $dateFin]);
     $recusArchives = $stmtArch->fetchAll();
 }
 
@@ -594,7 +589,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         <tr>
                             <th>N° Reçu</th><th>Patient</th><th>Tél.</th><th>Type</th>
                             <th>Montant</th><th>Date</th><th>Statut</th><th>Modif.</th>
-                            <?php if ($isAdmin || $isMajor): ?><th>Percepteur</th><?php endif; ?>
+                            <th>Percepteur</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -653,13 +648,12 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                 <?php endif; ?>
                             </td>
                             <td><?= formatDate($r['whendone']) ?></td>
-                            <?php if ($isAdmin || $isMajor): ?>
                             <td>
                                 <small class="text-muted">
+                                    <i class="bi bi-person-badge me-1"></i>
                                     <?= h(trim(($r['percep_nom'] ?? '') . ' ' . ($r['percep_prenom'] ?? ''))) ?: '—' ?>
                                 </small>
                             </td>
-                            <?php endif; ?>
                             <td>
                                 <?php if ($r['type_patient'] === 'orphelin'): ?>
                                     <?php if (($r['statut_reglement'] ?? 'en_instance') === 'regle'): ?>
