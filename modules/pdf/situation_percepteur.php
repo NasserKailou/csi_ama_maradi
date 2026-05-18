@@ -109,8 +109,14 @@ if ($typeRapport === 'pharmacie' || $typeRapport === 'tout') {
 }
 
 // ── Totaux globaux ────────────────────────────────────────────────────────────
+// Règles métier :
+//  - orphelin (tout type)          → montant_encaisse = 0, en_instance → règlement séparé
+//  - acte_gratuit + consultation   → montant_encaisse = 0 (ou tarif carnet), regle
+//  - acte_gratuit + pharmacie      → montant_encaisse = montant_total, regle (encaissé!)
+//  - acte_gratuit + examen         → montant_encaisse = montant_total, regle (encaissé!)
+//  - normal                        → montant_encaisse = montant_total, regle
 $totalEncaisse = 0;
-$totalGratuit  = 0;
+$totalGratuit  = 0;   // coût théorique des prestations orphelin (non encaissées)
 $nbRecus       = count($recus);
 
 $byType        = [];
@@ -123,14 +129,15 @@ $byTypePatient = [
 
 foreach ($recus as $r) {
     $totalEncaisse += (int)$r['montant_encaisse'];
-    if (in_array($r['type_patient'], ['orphelin','acte_gratuit'])) {
+    // Seuls les orphelins ont des prestations non encaissées (en attente règlement)
+    if ($r['type_patient'] === 'orphelin') {
         $totalGratuit += (int)$r['montant_total'];
     }
     $t = $r['type_recu'];
     if (!isset($byType[$t])) $byType[$t] = ['nb'=>0,'total'=>0,'total_reel'=>0];
     $byType[$t]['nb']++;
     $byType[$t]['total']      += (int)$r['montant_encaisse'];
-    $byType[$t]['total_reel'] += (int)$r['montant_total']; // montant réel (orphelin/AG inclus)
+    $byType[$t]['total_reel'] += (int)$r['montant_total'];
 
     $sexe = $r['patient_sexe'] === 'F' ? 'F' : 'M';
     $bySexe[$sexe]['nb']++;
@@ -188,34 +195,36 @@ $sexeLabels = ['M'=>['label'=>'M','color'=>'#1565c0'],'F'=>['label'=>'F','color'
 // ── HTML lignes du tableau détail ─────────────────────────────────────────────
 $lignesHtml = '';
 foreach ($recus as $i => $r) {
-    $isGratuit = in_array($r['type_patient'], ['orphelin','acte_gratuit']);
     $numFmt    = '#' . str_pad($r['numero_recu'], 5, '0', STR_PAD_LEFT);
     $heure     = date('H:i', strtotime($r['whendone']));
     $dateAff   = date('d/m', strtotime($r['whendone']));
     $typeAff   = $typeLabels[$r['type_recu']] ?? ucfirst($r['type_recu']);
 
-    // Montant affiché : toujours le montant_total réel (y compris orphelin/acte_gratuit)
-    // Pour orphelin/acte_gratuit : montant_total = valeur réelle de la prestation
-    // On affiche le montant_total en indiquant 0 F encaissé si gratuit
+    // ── Affichage montant ──────────────────────────────────────────────────────
+    // Règle : on affiche toujours montant_encaisse (valeur réellement perçue).
+    // Pour les orphelins uniquement : montant_encaisse = 0, on montre le montant_total
+    //   théorique avec la mention "(en instance)" pour indiquer qu'il sera réglé
+    //   séparément via la page Règlements.
+    // Les acte_gratuit + pharmacie/examen ont montant_encaisse = montant_total
+    //   (encaissé immédiatement) → on affiche simplement montant_encaisse.
     $montantTotal    = (int)$r['montant_total'];
     $montantEncaisse = (int)$r['montant_encaisse'];
-    if ($isGratuit && in_array($r['type_recu'], ['pharmacie','examen'])) {
-        // Pharma/examen gratuit : afficher le montant réel + mention 0 F encaissé
+    $estOrphelin     = ($r['type_patient'] === 'orphelin');
+
+    if ($estOrphelin) {
+        // Orphelin : prestation gratuite, règlement différé
         $montant = '<strong>' . number_format($montantTotal, 0, ',', ' ') . ' F</strong>'
-                 . ' <span style="color:#c62828;font-size:8pt;">(0 encaissé)</span>';
-    } elseif ($isGratuit) {
-        // Consultation gratuite : 0 F encaissé mais montant théorique affiché
-        $montant = '<strong>' . number_format($montantTotal, 0, ',', ' ') . ' F</strong>'
-                 . ' <span style="color:#c62828;font-size:8pt;">(0 encaissé)</span>';
+                 . ' <span style="color:#6a1b9a;font-size:8pt;">(en instance)</span>';
     } else {
+        // Normal, acte_gratuit (quel que soit le type_recu) : afficher montant_encaisse réel
         $montant = '<strong>' . number_format($montantEncaisse, 0, ',', ' ') . ' F</strong>';
     }
 
     // Badge catégorie : pour pharma et examen, ne pas afficher "Acte Gratuit"
-    // même si le reçu est lié à un acte gratuit — afficher le type patient réel sauf pour ces types
+    // (ces prestations sont encaissées normalement même si l'acte de consultation était gratuit)
     $tpAffiche = $r['type_patient'];
     if (in_array($r['type_recu'], ['pharmacie','examen']) && $tpAffiche === 'acte_gratuit') {
-        $tpAffiche = 'normal'; // afficher comme Normal pour pharma/examen
+        $tpAffiche = 'normal';
     }
     $tpInfo  = $typePatientLabels[$tpAffiche] ?? ['label'=>ucfirst($tpAffiche),'color'=>'#555','bg'=>'#eee'];
     $tpBadge = "<span style='background:{$tpInfo['bg']};color:{$tpInfo['color']};padding:1px 5px;"
@@ -279,13 +288,13 @@ $recapHtml = '';
 foreach ($byType as $type => $info) {
     $lb = $typeLabels[$type] ?? ucfirst($type);
     $montantReel = $info['total_reel'] ?? $info['total'];
-    $diff = $montantReel - $info['total'];
+    $diff = $montantReel - $info['total'];   // > 0 uniquement si des orphelins sont présents
     $recapHtml .= "<tr>
         <td style='padding:4px 8px;'>{$lb}</td>
         <td style='padding:4px 8px;text-align:center;'>{$info['nb']}</td>
         <td style='padding:4px 8px;text-align:right;font-weight:bold;'>"
         . number_format($info['total'], 0, ',', ' ') . " F"
-        . ($diff > 0 ? "<br><span style='font-size:7.5pt;color:#888;'>(réel&nbsp;: " . number_format($montantReel,0,',',' ') . " F)</span>" : "")
+        . ($diff > 0 ? "<br><span style='font-size:7.5pt;color:#6a1b9a;'>(+ " . number_format($diff,0,',',' ') . " F en instance)</span>" : "")
         . "</td>
     </tr>";
 }
@@ -453,7 +462,7 @@ if ($recapPharmacieProduits) {
     <?php if ($totalGratuit > 0): ?>
     <div class="kpi-box kpi-gratuit">
         <div class="val"><?= number_format($totalGratuit, 0, ',', ' ') ?> F</div>
-        <div class="lbl">Coût actes gratuits</div>
+        <div class="lbl">Coût orphelins (en instance)</div>
     </div>
     <?php endif; ?>
     <?php if ($recapPharmacieProduits): ?>
