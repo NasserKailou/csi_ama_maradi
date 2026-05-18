@@ -1852,7 +1852,7 @@ window.selectPrestation = function(typeConsult, avecCarnet) {
         if (nbProduits) {
             nbProduits.textContent = count;
             nbProduits.className = 'badge ' + (
-                count > 15 ? 'bg-danger' : (count > 0 ? 'bg-success' : 'bg-secondary')
+                count > 0 ? 'bg-success' : 'bg-secondary'
             );
         }
     };
@@ -1877,11 +1877,6 @@ window.selectPrestation = function(typeConsult, avecCarnet) {
 
         if (!items.length) {
             showToast('warning', 'Aucun produit sélectionné.');
-            return;
-        }
-
-        if (items.length > 15) {
-            showToast('danger', 'Maximum 15 produits.');
             return;
         }
 
@@ -2053,7 +2048,7 @@ window.selectPrestation = function(typeConsult, avecCarnet) {
         if (countEl) {
             countEl.textContent = count;
             countEl.className = 'badge ' + (
-                count > 15 ? 'bg-danger' : count > 0 ? 'bg-success' : 'bg-secondary'
+                count > 0 ? 'bg-success' : 'bg-secondary'
             );
         }
     }
@@ -2125,11 +2120,6 @@ window.selectPrestation = function(typeConsult, avecCarnet) {
 
             if (items.length === 0) {
                 showToast('warning', 'Saisissez au moins une quantité.');
-                return;
-            }
-
-            if (items.length > 15) {
-                showToast('danger', 'Maximum 15 produits.');
                 return;
             }
 

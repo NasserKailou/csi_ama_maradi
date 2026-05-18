@@ -401,6 +401,51 @@ $topModificateurs->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
 $topModificateurs = $topModificateurs->fetchAll();
 
 // ════════════════════════════════════════════════════════════════════════════
+// 14b. Audit qualité : reçus annulés
+// ════════════════════════════════════════════════════════════════════════════
+$recusAnnulesStmt = $pdo->prepare("
+    SELECT
+        ar.id            AS annul_id,
+        ar.recu_id,
+        ar.type_recu,
+        ar.motif,
+        ar.montant_annule,
+        ar.whendone      AS date_annulation,
+        r.numero_recu,
+        r.type_patient,
+        r.montant_total,
+        r.whendone       AS date_recu,
+        p.nom            AS patient_nom,
+        u_p.nom          AS percep_nom,
+        u_p.prenom       AS percep_prenom,
+        u_a.nom          AS annuleur_nom,
+        u_a.prenom       AS annuleur_prenom
+    FROM annulations_recus ar
+    JOIN recus r       ON r.id  = ar.recu_id
+    JOIN patients p    ON p.id  = r.patient_id
+    LEFT JOIN utilisateurs u_p ON u_p.id = r.whodone
+    LEFT JOIN utilisateurs u_a ON u_a.id = ar.whodone
+    WHERE DATE(ar.whendone) BETWEEN :d AND :f
+    ORDER BY ar.whendone DESC
+");
+$recusAnnulesStmt->execute([':d' => $filtreDebut, ':f' => $filtreFin]);
+$recusAnnules = $recusAnnulesStmt->fetchAll();
+$nbAnnules    = count($recusAnnules);
+
+// Agrégats
+$totalMontantAnnule = array_sum(array_column($recusAnnules, 'montant_annule'));
+$annulesParType = [];
+foreach ($recusAnnules as $ra) {
+    $t = $ra['type_recu'];
+    $annulesParType[$t] = ($annulesParType[$t] ?? 0) + 1;
+}
+// Nb annuleurs distincts
+$annuleursDistincts = count(array_unique(array_filter(
+    array_map(fn($ra) => ($ra['annuleur_nom'] ?? '') . ' ' . ($ra['annuleur_prenom'] ?? ''),
+    $recusAnnules)
+)));
+
+// ════════════════════════════════════════════════════════════════════════════
 // 15. Patients fidèles
 // ════════════════════════════════════════════════════════════════════════════
 $patientsFideles = $pdo->prepare("
@@ -1223,9 +1268,9 @@ include ROOT_PATH . '/templates/layouts/header.php';
         </div>
     </div>
 
-    <!-- Audit Qualité + Approvisionnements -->
+    <!-- Audit Qualité + Reçus Annulés + Approvisionnements -->
     <div class="row g-3 mb-4">
-        <div class="col-md-6">
+        <div class="col-md-4">
             <div class="card border-0 shadow-sm h-100">
                 <div class="card-header border-0" style="background:linear-gradient(90deg,#bf360c,#d84315);color:#fff;">
                     <h6 class="mb-0"><i class="bi bi-shield-exclamation me-2"></i>Audit qualité – Modifications</h6>
@@ -1292,7 +1337,104 @@ include ROOT_PATH . '/templates/layouts/header.php';
             </div>
         </div>
 
-        <div class="col-md-6">
+        <!-- ── Audit : Reçus annulés ──────────────────────────────────── -->
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header border-0 d-flex justify-content-between align-items-center"
+                     style="background:linear-gradient(90deg,#4a148c,#6a1b9a);color:#fff;">
+                    <h6 class="mb-0">
+                        <i class="bi bi-trash3 me-2"></i>Audit – Reçus annulés
+                    </h6>
+                    <?php if ($nbAnnules > 0): ?>
+                    <button type="button"
+                            class="btn btn-sm btn-light fw-semibold py-0 px-2"
+                            onclick="ouvrirModalAnnules()"
+                            title="Voir le détail des reçus annulés">
+                        <i class="bi bi-eye me-1"></i>Aperçu
+                    </button>
+                    <?php endif; ?>
+                </div>
+                <div class="card-body">
+                    <!-- KPIs annulations -->
+                    <div class="row g-3 text-center mb-3">
+                        <div class="col-4">
+                            <div class="fs-4 fw-bold" style="color:#4a148c;"><?= $nbAnnules ?></div>
+                            <small class="text-muted">Annulations</small>
+                        </div>
+                        <div class="col-4">
+                            <div class="fs-4 fw-bold" style="color:#6a1b9a;"><?= fmt($totalMontantAnnule) ?></div>
+                            <small class="text-muted">F annulés</small>
+                        </div>
+                        <div class="col-4">
+                            <div class="fs-4 fw-bold" style="color:#7b1fa2;"><?= $annuleursDistincts ?></div>
+                            <small class="text-muted">Annuleur(s)</small>
+                        </div>
+                    </div>
+
+                    <?php if ($annulesParType): ?>
+                    <h6 class="text-muted small text-uppercase mb-2">Par type de reçu</h6>
+                    <div class="d-flex gap-2 flex-wrap mb-3">
+                        <?php
+                        $badgeMap = [
+                            'consultation' => 'bg-primary',
+                            'examen'       => 'bg-info text-dark',
+                            'pharmacie'    => 'bg-success',
+                        ];
+                        foreach ($annulesParType as $type => $nb):
+                            $bc = $badgeMap[$type] ?? 'bg-secondary';
+                        ?>
+                        <span class="badge <?= $bc ?>">
+                            <?= ucfirst($type) ?> : <strong><?= $nb ?></strong>
+                        </span>
+                        <?php endforeach; ?>
+                    </div>
+                    <?php endif; ?>
+
+                    <?php if ($nbAnnules > 0):
+                        // Afficher les 3 plus récents en aperçu rapide
+                        $apercu = array_slice($recusAnnules, 0, 3);
+                    ?>
+                    <h6 class="text-muted small text-uppercase mb-2">Dernières annulations</h6>
+                    <ul class="list-group list-group-flush">
+                        <?php foreach ($apercu as $ra): ?>
+                        <li class="list-group-item px-0 py-1">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <small class="fw-semibold" style="color:#4a148c;">
+                                        #<?= str_pad($ra['numero_recu'], 5, '0', STR_PAD_LEFT) ?>
+                                    </small>
+                                    <span class="badge bg-light text-dark border ms-1" style="font-size:0.7em;">
+                                        <?= ucfirst($ra['type_recu']) ?>
+                                    </span>
+                                    <br>
+                                    <small class="text-muted"><?= h(mb_strimwidth($ra['patient_nom'], 0, 28, '…')) ?></small>
+                                </div>
+                                <div class="text-end">
+                                    <small class="fw-bold" style="color:#6a1b9a;"><?= fmt($ra['montant_annule']) ?> F</small><br>
+                                    <small class="text-muted"><?= date('d/m', strtotime($ra['date_annulation'])) ?></small>
+                                </div>
+                            </div>
+                        </li>
+                        <?php endforeach; ?>
+                    </ul>
+                    <?php if ($nbAnnules > 3): ?>
+                    <div class="text-center mt-2">
+                        <button class="btn btn-link btn-sm p-0" style="color:#6a1b9a;" onclick="ouvrirModalAnnules()">
+                            Voir les <?= $nbAnnules - 3 ?> autres…
+                        </button>
+                    </div>
+                    <?php endif; ?>
+                    <?php else: ?>
+                        <p class="text-muted text-center mb-0 mt-2">
+                            <i class="bi bi-check-circle text-success me-1"></i>
+                            Aucune annulation sur la période
+                        </p>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
             <div class="card border-0 shadow-sm h-100">
                 <div class="card-header border-0" style="background:linear-gradient(90deg,#1b5e20,#388e3c);color:#fff;">
                     <h6 class="mb-0"><i class="bi bi-box-seam me-2"></i>Approvisionnements pharmacie</h6>
@@ -1599,6 +1741,132 @@ include ROOT_PATH . '/templates/layouts/header.php';
         </div>
     </div>
 </div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     MODAL : Détail reçus annulés
+     ══════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modalAnnules" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header text-white" style="background:linear-gradient(90deg,#4a148c,#6a1b9a);">
+                <h6 class="modal-title fw-bold">
+                    <i class="bi bi-trash3-fill me-2"></i>
+                    Reçus annulés —
+                    <?= date('d/m/Y', strtotime($filtreDebut)) ?> au <?= date('d/m/Y', strtotime($filtreFin)) ?>
+                    <span class="badge bg-white text-dark ms-2"><?= $nbAnnules ?></span>
+                </h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0">
+                <?php if ($recusAnnules): ?>
+                <!-- Barre de récap -->
+                <div class="px-3 py-2 border-bottom d-flex gap-3 flex-wrap align-items-center"
+                     style="background:#f3e5f5;">
+                    <span class="fw-semibold" style="color:#4a148c;">
+                        <i class="bi bi-x-circle me-1"></i><?= $nbAnnules ?> annulation<?= $nbAnnules > 1 ? 's' : '' ?>
+                    </span>
+                    <span class="text-muted">|</span>
+                    <span style="color:#6a1b9a;">
+                        Montant total annulé : <strong><?= fmt($totalMontantAnnule) ?> F</strong>
+                    </span>
+                    <?php foreach ($annulesParType as $type => $nb): ?>
+                    <span class="badge bg-light text-dark border">
+                        <?= ucfirst($type) ?> : <?= $nb ?>
+                    </span>
+                    <?php endforeach; ?>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle table-sm mb-0">
+                        <thead style="position:sticky;top:0;background:#fff;z-index:1;">
+                            <tr class="table-light">
+                                <th class="ps-3">N° Reçu</th>
+                                <th>Type</th>
+                                <th>Patient</th>
+                                <th>Percepteur</th>
+                                <th>Date reçu</th>
+                                <th class="text-end">Montant encaissé</th>
+                                <th>Date annulation</th>
+                                <th>Annulé par</th>
+                                <th>Motif</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php
+                        $typeColors = [
+                            'consultation' => '#1565c0',
+                            'examen'       => '#006064',
+                            'pharmacie'    => '#2e7d32',
+                        ];
+                        foreach ($recusAnnules as $ra):
+                            $tc = $typeColors[$ra['type_recu']] ?? '#555';
+                        ?>
+                        <tr>
+                            <td class="ps-3">
+                                <span class="fw-bold" style="color:#4a148c;">
+                                    #<?= str_pad($ra['numero_recu'], 5, '0', STR_PAD_LEFT) ?>
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge" style="background:<?= $tc ?>;">
+                                    <?= ucfirst($ra['type_recu']) ?>
+                                </span>
+                            </td>
+                            <td>
+                                <small class="fw-semibold"><?= h($ra['patient_nom']) ?></small>
+                                <?php if ($ra['type_patient'] !== 'normal'): ?>
+                                <br><span class="badge bg-light text-muted border" style="font-size:0.65em;">
+                                    <?= $ra['type_patient'] === 'orphelin' ? 'Orphelin' : 'Acte gratuit' ?>
+                                </span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <small><?= h(trim(($ra['percep_nom'] ?? '') . ' ' . ($ra['percep_prenom'] ?? ''))) ?: '<span class="text-muted">—</span>' ?></small>
+                            </td>
+                            <td>
+                                <small><?= date('d/m/Y', strtotime($ra['date_recu'])) ?></small>
+                            </td>
+                            <td class="text-end">
+                                <strong style="color:<?= $tc ?>;"><?= fmt($ra['montant_annule']) ?> F</strong>
+                            </td>
+                            <td>
+                                <small class="text-danger fw-semibold">
+                                    <?= date('d/m/Y H:i', strtotime($ra['date_annulation'])) ?>
+                                </small>
+                            </td>
+                            <td>
+                                <small><?= h(trim(($ra['annuleur_nom'] ?? '') . ' ' . ($ra['annuleur_prenom'] ?? ''))) ?: '<span class="text-muted">—</span>' ?></small>
+                            </td>
+                            <td style="max-width:200px;">
+                                <small class="text-muted fst-italic">
+                                    <?= h($ra['motif'] ?: '—') ?>
+                                </small>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                        <tfoot>
+                            <tr class="table-light fw-bold">
+                                <td colspan="5" class="ps-3 text-end">Total annulé :</td>
+                                <td class="text-end" style="color:#6a1b9a;"><?= fmt($totalMontantAnnule) ?> F</td>
+                                <td colspan="3"></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+                <?php else: ?>
+                <div class="text-center py-5 text-muted">
+                    <i class="bi bi-check-circle fs-1 text-success"></i>
+                    <p class="mt-2">Aucune annulation enregistrée sur cette période.</p>
+                </div>
+                <?php endif; ?>
+            </div>
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fermer</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <?php
 $jsLabelsEvo       = json_encode($labelsEvo);
 $jsDataPatientsEvo = json_encode($dataPatientsEvo);
@@ -1751,6 +2019,11 @@ new Chart(document.getElementById('chartProduits'),{
 })();
 
 // ─── Redevances : modal + lancement impression ──────────────────────────────
+function ouvrirModalAnnules() {
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalAnnules'));
+    modal.show();
+}
+
 function ouvrirModalRedevances() {
     const modal = new bootstrap.Modal(document.getElementById('modalImprimerRedevances'));
     modal.show();
