@@ -152,8 +152,15 @@ $recusJour = $listeJour->fetchAll();
 
 // ── Filtre archives ────────────────────────────────────────────────────────
 $recusArchives = [];
-$dateDebut = $_GET['date_debut'] ?? '';
-$dateFin   = $_GET['date_fin']   ?? '';
+$dateDebut    = trim($_GET['date_debut'] ?? '');
+$dateFinSaisie = trim($_GET['date_fin']  ?? '');   // valeur brute pour le formulaire
+
+// Date fin optionnelle : si vide et date début renseignée → journée unique
+$dateFin = $dateFinSaisie;
+if ($dateDebut && !$dateFin) {
+    $dateFin = $dateDebut;   // opérations de la journée seulement
+}
+
 if ($dateDebut && $dateFin) {
     $sqlArch = "
         SELECT r.id, r.numero_recu, p.nom AS patient_nom, p.telephone,
@@ -534,12 +541,26 @@ include ROOT_PATH . '/templates/layouts/header.php';
             <form method="GET" action="<?= url('index.php') ?>" class="row g-3 align-items-end">
                 <input type="hidden" name="page" value="percepteur">
                 <div class="col-md-4">
-                    <label class="form-label">Date de début</label>
-                    <input type="date" class="form-control" name="date_debut" value="<?= h($dateDebut) ?>">
+                    <label class="form-label fw-semibold">
+                        Date de début
+                        <span class="text-danger ms-1" title="Obligatoire">*</span>
+                    </label>
+                    <input type="date" class="form-control" name="date_debut"
+                           value="<?= h($dateDebut) ?>" required>
+                    <div class="form-text">
+                        <i class="bi bi-info-circle me-1"></i>Si la date de fin est vide, seule cette journée sera affichée.
+                    </div>
                 </div>
                 <div class="col-md-4">
-                    <label class="form-label">Date de fin</label>
-                    <input type="date" class="form-control" name="date_fin" value="<?= h($dateFin) ?>">
+                    <label class="form-label fw-semibold">
+                        Date de fin
+                        <span class="text-muted small ms-1">(optionnelle)</span>
+                    </label>
+                    <input type="date" class="form-control" name="date_fin"
+                           value="<?= h($dateFinSaisie) ?>">
+                    <div class="form-text">
+                        <i class="bi bi-info-circle me-1"></i>Laissez vide pour une journée unique.
+                    </div>
                 </div>
                 <div class="col-md-4">
                     <button type="submit" class="btn text-white w-100" style="background:var(--csi-green);">
@@ -547,6 +568,24 @@ include ROOT_PATH . '/templates/layouts/header.php';
                     </button>
                 </div>
             </form>
+
+            <?php
+            // Message d'info sur la période effectivement cherchée
+            if ($dateDebut && isset($_GET['date_debut'])):
+                $estJourneeUnique = empty($dateFinSaisie);   // date_fin non saisie = journée unique
+            ?>
+            <div class="alert alert-info py-2 px-3 mt-3 mb-0 d-flex align-items-center gap-2" style="font-size:0.85rem;">
+                <i class="bi bi-calendar-check fs-5"></i>
+                <?php if ($estJourneeUnique): ?>
+                    Résultats pour la journée du <strong><?= date('d/m/Y', strtotime($dateDebut)) ?></strong>
+                    — <?= count($recusArchives) ?> opération<?= count($recusArchives) > 1 ? 's' : '' ?> trouvée<?= count($recusArchives) > 1 ? 's' : '' ?>.
+                <?php else: ?>
+                    Résultats du <strong><?= date('d/m/Y', strtotime($dateDebut)) ?></strong>
+                    au <strong><?= date('d/m/Y', strtotime($dateFin)) ?></strong>
+                    — <?= count($recusArchives) ?> opération<?= count($recusArchives) > 1 ? 's' : '' ?> trouvée<?= count($recusArchives) > 1 ? 's' : '' ?>.
+                <?php endif; ?>
+            </div>
+            <?php endif; ?>
 
             <?php if ($recusArchives): ?>
             <div class="table-responsive mt-3">
