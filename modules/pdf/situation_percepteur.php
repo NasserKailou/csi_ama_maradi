@@ -128,25 +128,34 @@ $byTypePatient = [
 ];
 
 foreach ($recus as $r) {
-    $totalEncaisse += (int)$r['montant_encaisse'];
+    $enc = (int)$r['montant_encaisse'];
+    $tot = (int)$r['montant_total'];
+
+    $totalEncaisse += $enc;
     // Seuls les orphelins ont des prestations non encaissées (en attente règlement)
     if ($r['type_patient'] === 'orphelin') {
-        $totalGratuit += (int)$r['montant_total'];
+        $totalGratuit += $tot;
     }
+
     $t = $r['type_recu'];
     if (!isset($byType[$t])) $byType[$t] = ['nb'=>0,'total'=>0,'total_reel'=>0];
     $byType[$t]['nb']++;
-    $byType[$t]['total']      += (int)$r['montant_encaisse'];
-    $byType[$t]['total_reel'] += (int)$r['montant_total'];
+    $byType[$t]['total']      += $enc;
+    $byType[$t]['total_reel'] += $tot;
 
     $sexe = $r['patient_sexe'] === 'F' ? 'F' : 'M';
     $bySexe[$sexe]['nb']++;
-    $bySexe[$sexe]['encaisse'] += (int)$r['montant_encaisse'];
+    $bySexe[$sexe]['encaisse'] += $enc;
 
-    $tp = $r['type_patient'];
-    if (isset($byTypePatient[$tp])) {
-        $byTypePatient[$tp]['nb']++;
-        $byTypePatient[$tp]['encaisse'] += (int)$r['montant_encaisse'];
+    // Récap catégorie : acte_gratuit + pharmacie/examen → compté en "normal"
+    // (encaissé au tarif plein, cohérent avec le badge affiché dans le tableau)
+    $tpStat = $r['type_patient'];
+    if (in_array($r['type_recu'], ['pharmacie','examen']) && $tpStat === 'acte_gratuit') {
+        $tpStat = 'normal';
+    }
+    if (isset($byTypePatient[$tpStat])) {
+        $byTypePatient[$tpStat]['nb']++;
+        $byTypePatient[$tpStat]['encaisse'] += $enc;
     }
 }
 
