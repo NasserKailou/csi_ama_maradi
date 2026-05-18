@@ -800,7 +800,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
             </div>
         </div>
 
-        <!-- Option 3 : Mise en observation -->
+        <!-- Option 3 : Mise en observation 
         <div class="col-md-4">
             <div class="form-check border rounded p-3 h-100 typeConsultOption" id="optObservation"
                  onclick="selectPrestation('observation', '0')">
@@ -814,7 +814,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                     <div class="text-muted small">Sans carnet ni redevance</div>
                 </label>
             </div>
-        </div>
+        </div> -->
     </div>
 
     <!-- Champs cachés pour soumission -->
