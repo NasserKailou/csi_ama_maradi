@@ -872,7 +872,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         <div class="col-12 d-none" id="gratuitBanner">
                             <div class="alert alert-warning mb-0">
                                 <i class="bi bi-gift me-2"></i><strong>ORPHELIN </strong>
-                                Le montant encaissé sera <strong>0 F</strong>. Les prix sont conservés pour le reporting bailleur.
+                                Le montant encaissé sera <strong>0 F</strong>
                                 <br><small>Le téléphone est facultatif.</small>
                             </div>
                         </div>
@@ -889,6 +889,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
     </div>
 </div>
 
+<!-- MODAL : Actes Gratuits -->
 <!-- MODAL : Actes Gratuits -->
 <div class="modal fade" id="modalActeGratuit" tabindex="-1" data-bs-backdrop="static">
     <div class="modal-dialog modal-lg">
@@ -971,11 +972,11 @@ include ROOT_PATH . '/templates/layouts/header.php';
                             </div>
                         </div>
 
-                        <!-- ✅ Choix carnet / fiche -->
+                        <!-- ✅ Choix carnet / fiche / fiche seule -->
                         <div class="col-12">
                             <label class="form-label">Option de gratuité <span class="text-danger">*</span></label>
                             <div class="row g-2">
-                                <div class="col-md-4">
+                                <div class="col-md-3">
                                     <div class="form-check border rounded p-3 h-100 ag-option-card" id="optAGSansCarnet">
                                         <input class="form-check-input ag-carnet-radio" type="radio"
                                                name="option_gratuite" id="agSansCarnet" value="0" checked>
@@ -988,7 +989,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                     </div>
                                 </div>
 
-                                <div class="col-md-4">
+                                <div class="col-md-3">
                                     <div class="form-check border rounded p-3 h-100 ag-option-card" id="optAGAvecCarnet">
                                         <input class="form-check-input ag-carnet-radio" type="radio"
                                                name="option_gratuite" id="agAvecCarnet" value="1">
@@ -1001,7 +1002,20 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                     </div>
                                 </div>
 
-                                <div class="col-md-4">
+                                <div class="col-md-3">
+                                    <div class="form-check border rounded p-3 h-100 ag-option-card" id="optAGAvecFiche">
+                                        <input class="form-check-input ag-carnet-radio" type="radio"
+                                               name="option_gratuite" id="agAvecFiche" value="3">
+                                        <label class="form-check-label fw-semibold w-100" for="agAvecFiche">
+                                            <i class="bi bi-file-earmark-medical text-warning me-1"></i>
+                                            Acte gratuit + Fiche
+                                            <div class="text-muted small">Fiche 300 F</div>
+                                            <div class="fw-bold text-warning mt-1"><strong>300 F</strong></div>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="col-md-3">
                                     <div class="form-check border rounded p-3 h-100 ag-option-card" id="optAGAvecCarnetFiche">
                                         <input class="form-check-input ag-carnet-radio" type="radio"
                                                name="option_gratuite" id="agAvecCarnetFiche" value="2">
@@ -1649,111 +1663,125 @@ window.selectPrestation = function(typeConsult, avecCarnet) {
     // ══════════════════════════════════════════════════════════════════
     // ✅ ACTE GRATUIT — gestion choix carnet / fiche en temps réel
     // ══════════════════════════════════════════════════════════════════
-    function updateMontantActeGratuit() {
-        const checked = document.querySelector('.ag-carnet-radio:checked');
-        const display = document.getElementById('agMontantAffiche');
-        const detail  = document.getElementById('agMontantDetail');
+    // ══════════════════════════════════════════════════════════════════
+// ✅ ACTE GRATUIT — gestion choix carnet / fiche / fiche seule en temps réel
+// ══════════════════════════════════════════════════════════════════
+function updateMontantActeGratuit() {
+    const checked = document.querySelector('.ag-carnet-radio:checked');
+    const display = document.getElementById('agMontantAffiche');
+    const detail  = document.getElementById('agMontantDetail');
 
-        if (!checked || !display) return;
+    if (!checked || !display) return;
 
-        const option = checked.value;
-        let montant = 0;
-        let colorClass = 'text-success';
-        let detailText = 'Acte gratuit seul';
+    const option = parseInt(checked.value, 10);
+    let montant = 0;
+    let colorClass = 'text-success';
+    let detailText = 'Acte gratuit seul';
 
-        if (option === '1') {
-            montant = TARIF_CARNET_SANTE;
-            colorClass = 'text-primary';
-            detailText = `Acte gratuit + Carnet ${TARIF_CARNET_SANTE} F`;
-        } else if (option === '2') {
-            montant = TARIF_CARNET_SANTE + TARIF_FICHE;
-            colorClass = 'text-warning';
-            detailText = `Acte gratuit + Carnet ${TARIF_CARNET_SANTE} F + Fiche ${TARIF_FICHE} F`;
-        }
-
-        display.textContent = montant + ' F';
-        display.className = 'fs-4 fw-bold ' + colorClass;
-
-        if (detail) detail.textContent = detailText;
-
-        const optSans = document.getElementById('optAGSansCarnet');
-        const optAvec = document.getElementById('optAGAvecCarnet');
-        const optAvecFiche = document.getElementById('optAGAvecCarnetFiche');
-
-        if (optSans) optSans.style.background = '';
-        if (optAvec) optAvec.style.background = '';
-        if (optAvecFiche) optAvecFiche.style.background = '';
-
-        if (option === '0' && optSans) optSans.style.background = '#e8f5e9';
-        if (option === '1' && optAvec) optAvec.style.background = '#e3f2fd';
-        if (option === '2' && optAvecFiche) optAvecFiche.style.background = '#fff8e1';
+    if (option === 1) {
+        montant = TARIF_CARNET_SANTE; // 100
+        colorClass = 'text-primary';
+        detailText = `Acte gratuit + Carnet ${TARIF_CARNET_SANTE} F`;
+    } else if (option === 2) {
+        montant = TARIF_CARNET_SANTE + TARIF_FICHE; // 100 + 300 = 400
+        colorClass = 'text-warning';
+        detailText = `Acte gratuit + Carnet ${TARIF_CARNET_SANTE} F + Fiche ${TARIF_FICHE} F`;
+    } else if (option === 3) {
+        montant = TARIF_FICHE; // 300
+        colorClass = 'text-warning';
+        detailText = `Acte gratuit + Fiche ${TARIF_FICHE} F`;
     }
 
-    document.querySelectorAll('.ag-carnet-radio').forEach(r =>
-        r.addEventListener('change', updateMontantActeGratuit)
-    );
+    display.textContent = montant + ' F';
+    display.className = 'fs-4 fw-bold ' + colorClass;
 
-    // Réinitialisation à l'ouverture du modal Acte Gratuit
-    const modalAGEl = document.getElementById('modalActeGratuit');
-    if (modalAGEl) {
-        modalAGEl.addEventListener('show.bs.modal', function() {
-            const r = document.getElementById('agSansCarnet');
-            if (r) r.checked = true;
+    if (detail) detail.textContent = detailText;
 
-            const tel  = document.getElementById('fTelAG');
-            const nom  = document.getElementById('fNomAG');
-            const age  = document.getElementById('fAgeAG');
-            const sexe = document.getElementById('fSexeAG');
-            const prov = document.getElementById('fProvenanceAG');
-            const acte = document.getElementById('fActeIdAG');
+    // Mise à jour des styles des cartes
+    const optSans = document.getElementById('optAGSansCarnet');
+    const optAvec = document.getElementById('optAGAvecCarnet');
+    const optAvecFiche = document.getElementById('optAGAvecFiche');
+    const optAvecCarnetFiche = document.getElementById('optAGAvecCarnetFiche');
 
-            if (tel) tel.value = '';
-            if (nom) nom.value = '';
-            if (age) age.value = '';
-            if (sexe) sexe.value = 'M';
-            if (prov) prov.value = '';
-            if (acte) acte.value = '';
+    if (optSans) optSans.style.background = '';
+    if (optAvec) optAvec.style.background = '';
+    if (optAvecFiche) optAvecFiche.style.background = '';
+    if (optAvecCarnetFiche) optAvecCarnetFiche.style.background = '';
 
-            updateMontantActeGratuit();
-        });
+    if (option === 0 && optSans) optSans.style.background = '#e8f5e9';
+    if (option === 1 && optAvec) optAvec.style.background = '#e3f2fd';
+    if (option === 2 && optAvecCarnetFiche) optAvecCarnetFiche.style.background = '#fff8e1';
+    if (option === 3 && optAvecFiche) optAvecFiche.style.background = '#fff8e1';
+}
+
+document.querySelectorAll('.ag-carnet-radio').forEach(r =>
+    r.addEventListener('change', updateMontantActeGratuit)
+);
+
+// Réinitialisation à l'ouverture du modal Acte Gratuit
+const modalAGEl = document.getElementById('modalActeGratuit');
+if (modalAGEl) {
+    modalAGEl.addEventListener('show.bs.modal', function() {
+        const r = document.getElementById('agSansCarnet');
+        if (r) r.checked = true;
+
+        const tel  = document.getElementById('fTelAG');
+        const nom  = document.getElementById('fNomAG');
+        const age  = document.getElementById('fAgeAG');
+        const sexe = document.getElementById('fSexeAG');
+        const prov = document.getElementById('fProvenanceAG');
+        const acte = document.getElementById('fActeIdAG');
+
+        if (tel) tel.value = '';
+        if (nom) nom.value = '';
+        if (age) age.value = '';
+        if (sexe) sexe.value = 'M';
+        if (prov) prov.value = '';
+        if (acte) acte.value = '';
+
+        updateMontantActeGratuit();
+    });
+}
+
+window.saveActeGratuit = function() {
+    const form = document.getElementById('formActeGratuit');
+    const data = Object.fromEntries(new FormData(form));
+
+    data.telephone = nettoyerTelephone(data.telephone);
+
+    if (!data.nom || data.age === '' || data.age === undefined || !data.acte_id) {
+        showToast('warning', 'Veuillez renseigner le nom, l’âge et l’acte gratuit.');
+        return;
     }
 
-    window.saveActeGratuit = function() {
-        const form = document.getElementById('formActeGratuit');
-        const data = Object.fromEntries(new FormData(form));
+    if (!telephoneValideOuVide(data.telephone)) {
+        showToast('warning', 'Le numéro de téléphone doit contenir exactement 8 chiffres, ou être laissé vide.');
+        return;
+    }
 
-        data.telephone = nettoyerTelephone(data.telephone);
+    if (data.option_gratuite === undefined) {
+        showToast('warning', 'Veuillez choisir une option de gratuité.');
+        return;
+    }
 
-        if (!data.nom || data.age === '' || data.age === undefined || !data.acte_id) {
-            showToast('warning', 'Veuillez renseigner le nom, l’âge et l’acte gratuit.');
-            return;
-        }
+    let libelleMontant = '0 F (acte gratuit seul)';
+    if (data.option_gratuite === '1') {
+        libelleMontant = '100 F (acte gratuit + carnet)';
+    } else if (data.option_gratuite === '2') {
+        libelleMontant = '400 F (acte gratuit + carnet + fiche)';
+    } else if (data.option_gratuite === '3') {
+        libelleMontant = '300 F (acte gratuit + fiche)';
+    }
 
-        if (!telephoneValideOuVide(data.telephone)) {
-            showToast('warning', 'Le numéro de téléphone doit contenir exactement 8 chiffres, ou être laissé vide.');
-            return;
-        }
+    if (!confirm('Confirmer l\'enregistrement ?\nMontant : ' + libelleMontant)) return;
 
-        if (data.option_gratuite === undefined) {
-            showToast('warning', 'Veuillez choisir une option de gratuité.');
-            return;
-        }
+    ajaxPost(SAVE_ACTE_GRAT_URL, data, function(res) {
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalActeGratuit')).hide();
+        if (res.pdf_url) window.open(res.pdf_url, '_blank');
+        setTimeout(() => location.reload(), 1000);
+    });
+};
 
-        let libelleMontant = '0 F (acte gratuit seul)';
-        if (data.option_gratuite === '1') {
-            libelleMontant = '100 F (acte gratuit + carnet)';
-        } else if (data.option_gratuite === '2') {
-            libelleMontant = '400 F (acte gratuit + carnet + fiche)';
-        }
-
-        if (!confirm('Confirmer l\'enregistrement ?\nMontant : ' + libelleMontant)) return;
-
-        ajaxPost(SAVE_ACTE_GRAT_URL, data, function(res) {
-            bootstrap.Modal.getOrCreateInstance(document.getElementById('modalActeGratuit')).hide();
-            if (res.pdf_url) window.open(res.pdf_url, '_blank');
-            setTimeout(() => location.reload(), 1000);
-        });
-    };
 
     // ── Examens ──
     window.openExamensModal = function(recuId, nom, num, typePatient) {

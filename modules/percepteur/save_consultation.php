@@ -162,7 +162,9 @@ try {
         }
     }
 
-    $montantTotal    = $tarifConsult + $tarifCarnet + $supplementAge;
+    //$montantTotal    = $tarifConsult + $tarifCarnet + $supplementAge;
+    $mtl = $tarifConsult + $tarifCarnet + $supplementAge;
+    $montantTotal    = ($typePatient === 'orphelin') ? 0 :  $mtl;
     $montantEncaisse = ($typePatient === 'orphelin') ? 0 : $montantTotal;
 
     // ── 4. Statut de règlement ────────────────────────────────────────────
