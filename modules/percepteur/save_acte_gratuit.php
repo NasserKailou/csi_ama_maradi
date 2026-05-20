@@ -8,12 +8,13 @@
  *   - acte_id        (id de l'acte gratuit choisi)
  *   - option_gratuite (0 = acte gratuit seul              → 0 F encaissés
  *                      1 = acte gratuit + carnet (100 F)  → 100 F encaissés
- *                      2 = acte gratuit + carnet + fiche  → 400 F encaissés)
+ *                      2 = acte gratuit + carnet + fiche  → 400 F encaissés
+ *                      3 = acte gratuit + fiche (300 F)   → 300 F encaissés)
  *
  * RÈGLES :
  *   - L'acte est toujours gratuit (tarif acte = 0 F sur le reçu).
  *   - Statut de règlement : toujours 'regle' (paiement direct au comptoir).
- *   - On stocke option_gratuite dans la colonne avec_carnet (0/1/2)
+ *   - On stocke option_gratuite dans la colonne avec_carnet (0/1/2/3)
  *     et le montant total (carnet + éventuelle fiche) dans tarif_carnet.
  */
 ob_start();
@@ -49,9 +50,9 @@ $age        = max(0, (int)($_POST['age'] ?? 0));
 $provenance = trim($_POST['provenance'] ?? '');
 $acteId     = (int)($_POST['acte_id'] ?? 0);
 
-// ✅ Choix d'option : 0, 1 ou 2
+// ✅ Choix d'option : 0, 1, 2 ou 3
 $optionGratuite = (int)($_POST['option_gratuite'] ?? 0);
-if (!in_array($optionGratuite, [0, 1, 2], true)) {
+if (!in_array($optionGratuite, [0, 1, 2, 3], true)) {
     $optionGratuite = 0;
 }
 
@@ -125,12 +126,16 @@ try {
     //   0 → 0 F   (acte gratuit seul)
     //   1 → 100 F (carnet seul)
     //   2 → 400 F (carnet + fiche)
+    //   3 → 300 F (fiche seule)
     switch ($optionGratuite) {
         case 1:
             $tarifCarnet = TARIF_CARNET_SANTE_AG;             // 100
             break;
         case 2:
             $tarifCarnet = TARIF_CARNET_SANTE_AG + TARIF_FICHE_AG; // 400
+            break;
+        case 3:
+            $tarifCarnet = TARIF_FICHE_AG;                    // 300
             break;
         default:
             $tarifCarnet = 0;
@@ -158,8 +163,8 @@ try {
     $recuId = (int)$pdo->lastInsertId();
 
     // ── 5. Ligne consultation (acte gratuit + éventuel carnet/fiche) ─────
-    //    avec_carnet : 0 = aucun, 1 = carnet seul, 2 = carnet + fiche
-    //    tarif_carnet : 0, 100 ou 400 selon le choix
+    //    avec_carnet : 0 = aucun, 1 = carnet seul, 2 = carnet + fiche, 3 = fiche seule
+    //    tarif_carnet : 0, 100, 300 ou 400 selon le choix
     $pdo->prepare("
         INSERT INTO lignes_consultation
             (recu_id, acte_id, libelle, tarif, est_gratuit,
@@ -276,6 +281,9 @@ try {
             break;
         case 2:
             $message = 'Acte gratuit + Carnet + Fiche (400 F) enregistré.';
+            break;
+        case 3:
+            $message = 'Acte gratuit + Fiche (300 F) enregistré.';
             break;
         default:
             $message = 'Acte gratuit enregistré (sans carnet ni fiche).';

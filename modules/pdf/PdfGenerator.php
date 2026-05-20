@@ -1,6 +1,6 @@
 <?php
 /**
- * PdfGenerator – Génération des reçus A5 (CSI DirectAid Maradi)
+ * PdfGenerator – Génération des reçus A6 (CSI DirectAid Maradi)
  *
  * RÈGLES :
  *  - Consultation NORMALE (standard)  : 2 exemplaires + validité 3 jours
@@ -13,6 +13,7 @@
  *      avec_carnet=0 → 0 F
  *      avec_carnet=1 → Carnet 100 F (total 100 F)
  *      avec_carnet=2 → Carnet 100 F + Fiche 300 F (total 400 F)
+ *      avec_carnet=3 → Fiche 300 F (total 300 F)
  *  - Examen     : 2 exemplaires (1 page A5 si court, 2 pages sinon), sans validité
  *  - Pharmacie  : 2 exemplaires (1 page A5 si court, 2 pages sinon), sans validité
  *
@@ -197,7 +198,7 @@ class PdfGenerator
 
     /**
      * ✅ Détecte si la consultation est une "mise en observation".
-     * Le libellé de la ligne principale contient "observation".
+     * Triple critère : libellé contient "observation" OU tarif = 1000 F sur la ligne principale.
      */
   /**
  * ✅ Détecte si la consultation est une "mise en observation".
@@ -497,6 +498,18 @@ private function estConsultationObservation(array $items): bool
                     . number_format(self::TARIF_FICHE_AG, 0, ',', ' ') . " F</td>
                 </tr>";
                 $totalAff = self::TARIF_CARNET_AG + self::TARIF_FICHE_AG;
+            } elseif ($optionCarnet === 3) {
+                // ✅ NOUVELLE OPTION : Acte gratuit + Fiche seule
+                $rows .= "
+                <tr>
+                    <td style='padding:3pt 4pt;{$bdrC}'>
+                        Fiche de consultation
+                        <span style='color:#666;font-size:7pt;'> (premier passage)</span>
+                    </td>
+                    <td style='padding:3pt 4pt;text-align:right;font-weight:bold;{$bdrC}'>"
+                    . number_format(self::TARIF_FICHE_AG, 0, ',', ' ') . " F</td>
+                </tr>";
+                $totalAff = self::TARIF_FICHE_AG;
             }
 
             return $this->blocRecu($recu, 'CONSULTATION (ACTE GRATUIT)', $rows, $totalAff, false, false, '', 2, false);
@@ -1011,7 +1024,7 @@ private function estConsultationObservation(array $items): bool
 
     /**
      * Génère le QR code et retourne un tag <img> qui pointe vers
-     * un fichier PNG temporaire. Compatible XAMPP & production.
+     * un fichier PNG temporaire. Compatible XAMPA & production.
      */
     private function buildQrCode(array $recu, int $totalAffiche, bool $isOrphelin, bool $afficherValidite = false): string
     {
