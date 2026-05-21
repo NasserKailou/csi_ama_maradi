@@ -31,6 +31,15 @@ class Session
         return $_SESSION[CSRF_TOKEN_NAME];
     }
 
+    /**
+     * Alias de generateCsrfToken() – retourne le token existant sans régénérer.
+     * Utilisé dans les templates pour afficher le token courant.
+     */
+    public static function getCsrfToken(): string
+    {
+        return self::generateCsrfToken();
+    }
+
     public static function validateCsrfToken(string $token): bool
     {
         return isset($_SESSION[CSRF_TOKEN_NAME])

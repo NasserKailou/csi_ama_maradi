@@ -1384,9 +1384,6 @@ include ROOT_PATH . '/templates/layouts/header.php';
 
 </div> <!-- Fin container principal -->
 
-<script>
-    const INDEX_URL = <?= json_encode(url('index.php')) ?>;
-</script>
 <!-- JavaScript commun -->
 <script>
 
