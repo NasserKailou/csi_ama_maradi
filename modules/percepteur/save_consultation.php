@@ -27,6 +27,9 @@ require_once ROOT_PATH . '/config/config.php';
 require_once ROOT_PATH . '/core/autoload.php';
 require_once ROOT_PATH . '/core/helpers.php';
 
+require_once ROOT_PATH . '/core/CarnetsHelper.php';
+CarnetsHelper::ensureConfig($pdo, $userId);
+
 Session::start();
 requireRole('percepteur', 'admin', 'comptable', 'major');
 verifyCsrf();
@@ -126,12 +129,14 @@ try {
     $numRecu = getNextNumeroRecu($pdo);
 
 // ── 3. Calcul des montants ────────────────────────────────────────────
-    // Vérification stock carnets AVANT calcul (si carnet demandé)
-    $stockCarnets     = 0;
-    $seuilCarnets     = 10;
-    $carnetsStockRow  = $pdo->query("SELECT cle, valeur FROM config_systeme WHERE cle IN ('stock_carnets','seuil_alerte_carnets') AND isDeleted=0")->fetchAll(PDO::FETCH_KEY_PAIR);
-    $stockCarnets     = (int)($carnetsStockRow['stock_carnets'] ?? 0);
-    $seuilCarnets     = (int)($carnetsStockRow['seuil_alerte_carnets'] ?? 10);
+     // Vérification stock CARNET DE SOINS si demandé
+    if ($avecCarnet && $typePatient === 'normal' && $typeConsult === 'standard') {
+        $checkSoins = CarnetsHelper::getStock($pdo, CarnetsHelper::TYPE_SOINS);
+        if ($checkSoins['stock'] <= 0) {
+            $pdo->rollBack();
+            jsonError('Stock de carnets de soins épuisé. Veuillez réapprovisionner (Paramétrage → Carnets de soins).');
+        }
+    }
 
     if ($typeConsult === 'observation') {
         // MISE EN OBSERVATION : 1000 F fixe, pas de carnet, pas de supplément âge
@@ -259,22 +264,24 @@ if ($supplementAge > 0 && $typeConsult === 'standard') {
 
     // ── 7. Décrémentation stock carnets ──────────────────────────────────
     // Si carnet utilisé (consultation normale avec carnet)
+    $stockSoinsInfo = ['stock' => 0, 'seuil' => 10, 'alerte' => ''];
     if ($avecCarnet && $typePatient === 'normal' && $typeConsult === 'standard' && $tarifCarnet > 0) {
-        try {
-            $newStockCarnets = max(0, $stockCarnets - 1);
-            $pdo->prepare("INSERT INTO config_systeme (cle, valeur, whodone) VALUES ('stock_carnets',:v,:w)
-                           ON DUPLICATE KEY UPDATE valeur=:v2, whodone=:w2")
-                ->execute([':v'=>$newStockCarnets,':w'=>$userId,':v2'=>$newStockCarnets,':w2'=>$userId]);
-            // Mouvement carnet
-            $commentaireMvt = 'Carnet consultation #' . $numRecu;
-            $pdo->prepare("INSERT INTO mouvements_carnets
-                (type_mvt, quantite, stock_avant, stock_apres, recu_id, commentaire, whodone)
-                VALUES ('sortie',-1,:sb,:sa,:rid,:commentaire,:w)")
-                ->execute([':sb'=>$stockCarnets,':sa'=>$newStockCarnets,':rid'=>$recuId,':commentaire'=>$commentaireMvt,':w'=>$userId]);
-            $stockCarnets = $newStockCarnets;
-        } catch (Exception $ignored) {
-            // Ne pas bloquer si table mouvements_carnets pas encore créée
-        }
+        $res = CarnetsHelper::decrement(
+            $pdo,
+            CarnetsHelper::TYPE_SOINS,
+            $recuId,
+            'Carnet de soins consultation #' . $numRecu,
+            $userId
+        );
+        $stockSoinsInfo = [
+            'stock'  => $res['stock_apres'],
+            'seuil'  => $res['seuil'],
+            'alerte' => $res['alerte'],
+        ];
+    } else {
+        $infoSoins = CarnetsHelper::getStock($pdo, CarnetsHelper::TYPE_SOINS);
+        $stockSoinsInfo['stock'] = $infoSoins['stock'];
+        $stockSoinsInfo['seuil'] = $infoSoins['seuil'];
     }
 
     // ── 8. Génération du PDF ──────────────────────────────────────────────
@@ -317,8 +324,8 @@ if ($supplementAge > 0 && $typeConsult === 'standard') {
         'supplement_age'    => $supplementAge,
         'avec_carnet'       => (int)($avecCarnet && $typePatient === 'normal' && $typeConsult === 'standard'),
         'pdf_url'           => url('uploads/pdf/' . basename($pdfFile)),
-        'stock_carnets'     => $stockCarnets,
-        'alerte_carnets'    => $alertCarnets,
+        'stock_carnets_soins' => $stockSoinsInfo['stock'],
+        'alerte_carnets'      => $stockSoinsInfo['alerte']
     ]);
 
 } catch (PDOException $e) {

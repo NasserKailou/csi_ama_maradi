@@ -24,6 +24,9 @@ require_once ROOT_PATH . '/config/config.php';
 require_once ROOT_PATH . '/core/autoload.php';
 require_once ROOT_PATH . '/core/helpers.php';
 
+   require_once ROOT_PATH . '/core/CarnetsHelper.php';
+    CarnetsHelper::ensureConfig($pdo, $userId);
+    
 Session::start();
 requireRole('percepteur', 'admin', 'comptable', 'major');
 verifyCsrf();
@@ -182,49 +185,25 @@ try {
     ]);
 
     // ── 6. Décrémentation stock carnets si carnet distribué (option 1 ou 2) ──
-    $stockCarnets    = 0;
-    $seuilCarnets    = 10;
-    $alerteCarnets   = '';
-    if ($optionGratuite >= 1) {
-        $cfgRows = $pdo->query(
-            "SELECT cle, valeur FROM config_systeme WHERE cle IN ('stock_carnets','seuil_alerte_carnets') AND isDeleted=0"
-        )->fetchAll(PDO::FETCH_KEY_PAIR);
-        $stockCarnets = (int)($cfgRows['stock_carnets']        ?? 0);
-        $seuilCarnets = (int)($cfgRows['seuil_alerte_carnets'] ?? 10);
+    $stockCarnets   = 0;
+    $alerteCarnets  = '';
+    if ($optionGratuite === 1 || $optionGratuite === 2) {
+        $commentaireMvt = ($optionGratuite === 2)
+            ? 'Carnet de santé acte gratuit (+fiche) #' . $numRecu
+            : 'Carnet de santé acte gratuit #' . $numRecu;
 
-        if ($stockCarnets <= 0) {
-            // Stock épuisé : on laisse passer (acte gratuit prioritaire) mais on le signale
-            $alerteCarnets = 'ATTENTION : Stock de carnets épuisé — carnet non décompté.';
-        } else {
-            $newStock = max(0, $stockCarnets - 1);
-            $pdo->prepare(
-                "INSERT INTO config_systeme (cle, valeur, whodone) VALUES ('stock_carnets',:v,:w)
-                 ON DUPLICATE KEY UPDATE valeur=:v2, whodone=:w2"
-            )->execute([':v' => $newStock, ':w' => $userId, ':v2' => $newStock, ':w2' => $userId]);
-
-            $commentaireMvt = ($optionGratuite === 2)
-                ? 'Carnet acte gratuit (+fiche) #' . $numRecu
-                : 'Carnet acte gratuit #' . $numRecu;
-
-            $pdo->prepare(
-                "INSERT INTO mouvements_carnets
-                     (type_mvt, quantite, stock_avant, stock_apres, recu_id, commentaire, whodone)
-                 VALUES ('sortie', -1, :sb, :sa, :rid, :cmt, :who)"
-            )->execute([
-                ':sb'  => $stockCarnets,
-                ':sa'  => $newStock,
-                ':rid' => $recuId,
-                ':cmt' => $commentaireMvt,
-                ':who' => $userId,
-            ]);
-            $stockCarnets = $newStock;
-
-            if ($stockCarnets === 0) {
-                $alerteCarnets = 'ATTENTION : Plus aucun carnet disponible !';
-            } elseif ($stockCarnets <= $seuilCarnets) {
-                $alerteCarnets = 'Attention : Stock carnets bas – Reste ' . $stockCarnets . ' carnet(s).';
-            }
-        }
+        $res = CarnetsHelper::decrement(
+            $pdo,
+            CarnetsHelper::TYPE_SANTE,
+            $recuId,
+            $commentaireMvt,
+            $userId
+        );
+        $stockCarnets  = $res['stock_apres'];
+        $alerteCarnets = $res['alerte'];
+    } else {
+        $info = CarnetsHelper::getStock($pdo, CarnetsHelper::TYPE_SANTE);
+        $stockCarnets = $info['stock'];
     }
 
     // ── 7. Décrémentation stock fiches AG si option 2 (carnet + fiche) ──────
@@ -295,8 +274,8 @@ try {
         'option_gratuite'   => $optionGratuite,
         'montant_total'     => $montantTotal,
         'montant_encaisse'  => $montantEncaisse,
-        'stock_carnets'     => $stockCarnets,
-        'alerte_carnets'    => $alerteCarnets,
+        'stock_carnets_sante' => $stockCarnets,
+        'alerte_carnets'      => $alerteCarnets,
         'stock_fiches_ag'   => $stockFichesAg,
         'alerte_fiches_ag'  => $alerteFichesAg,
         'pdf_url'           => url('uploads/pdf/' . basename($pdfFile)),

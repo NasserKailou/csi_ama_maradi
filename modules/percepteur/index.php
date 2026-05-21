@@ -19,6 +19,30 @@ $pageTitle = 'Espace Percepteur';
 $isMajor = Session::hasRole('major');
 $isAdmin = Session::hasRole('admin');
 
+// ── Stocks carnets (deux types) + fiches AG ──────────────────────────────
+require_once ROOT_PATH . '/core/CarnetsHelper.php';
+CarnetsHelper::ensureConfig($pdo, $userId);
+
+$infoCarnetSoins = CarnetsHelper::getStock($pdo, CarnetsHelper::TYPE_SOINS);
+$infoCarnetSante = CarnetsHelper::getStock($pdo, CarnetsHelper::TYPE_SANTE);
+
+$stockCarnetsSoins = $infoCarnetSoins['stock'];
+$seuilCarnetsSoins = $infoCarnetSoins['seuil'];
+$stockCarnetsSante = $infoCarnetSante['stock'];
+$seuilCarnetsSante = $infoCarnetSante['seuil'];
+
+// Compatibilité descendante pour le JS existant
+$stockCarnets  = $stockCarnetsSoins;   // côté formulaire consultation normale
+$seuilCarnets  = $seuilCarnetsSoins;
+$alerteCarnets = ($stockCarnetsSoins === 0) ? 'danger' :
+                 ($stockCarnetsSoins <= $seuilCarnetsSoins ? 'warning' : '');
+
+// Fiches AG (inchangé)
+$cfgFagRows    = $pdo->query("SELECT cle, valeur FROM config_systeme WHERE cle IN ('stock_fiches_ag','seuil_alerte_fiches_ag') AND isDeleted=0")->fetchAll(PDO::FETCH_KEY_PAIR);
+$stockFichesAg = (int)($cfgFagRows['stock_fiches_ag']        ?? 0);
+$seuilFichesAg = (int)($cfgFagRows['seuil_alerte_fiches_ag'] ?? 10);
+
+
 // ═══════════════════════════════════════════════════════════════════════
 // ✅ ACTIONS SPÉCIFIQUES — DOIT ÊTRE TOUT EN HAUT, AVANT TOUT HTML
 // ═══════════════════════════════════════════════════════════════════════
@@ -941,13 +965,13 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         <!-- ✅ Situation stock carnets dans le formulaire acte gratuit -->
                         <div class="col-12">
                             <?php
-                            $agAlertCls  = $stockCarnets === 0 ? 'danger' : ($stockCarnets <= $seuilCarnets ? 'warning' : 'info');
-                            $agAlertIcon = $stockCarnets === 0 ? 'exclamation-octagon-fill' : ($stockCarnets <= $seuilCarnets ? 'exclamation-triangle-fill' : 'journal-medical');
-                            $agAlertTxt  = $stockCarnets === 0
-                                ? 'Aucun carnet disponible — les options carnet sont toujours accessibles pour les actes gratuits (priorité patient).'
-                                : ($stockCarnets <= $seuilCarnets
-                                    ? "Stock bas : <strong>{$stockCarnets}</strong> carnet(s) restant(s) (seuil : {$seuilCarnets})."
-                                    : "Stock carnets disponible : <strong>{$stockCarnets}</strong> carnet(s).");
+                            $agAlertCls  = $stockCarnetsSante === 0 ? 'danger' : ($stockCarnetsSante <= $seuilCarnetsSante ? 'warning' : 'info');
+                                $agAlertTxt  = $stockCarnetsSante === 0
+                                    ? 'Aucun carnet de santé disponible — les options carnet restent accessibles (priorité patient).'
+                                    : ($stockCarnetsSante <= $seuilCarnetsSante
+                                        ? "Stock carnets de santé bas : <strong>{$stockCarnetsSante}</strong> restant(s) (seuil : {$seuilCarnetsSante})."
+                                        : "Stock carnets de santé : <strong>{$stockCarnetsSante}</strong> disponible(s).");
+
                             ?>
                             <div class="alert alert-<?= $agAlertCls ?> py-2 mb-0 d-flex align-items-center gap-2">
                                 <i class="bi bi-<?= $agAlertIcon ?> flex-shrink-0"></i>
