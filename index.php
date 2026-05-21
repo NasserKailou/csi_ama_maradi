@@ -58,6 +58,9 @@ $routeMap = [
 
     // Récapitulatif patients (Admin + Comptable + Percepteur)
     'patients'         => ROOT_PATH . '/modules/patients/index.php',
+
+    // module reglement
+    'reglements'         => ROOT_PATH . '/modules/reglements/index.php',
 ];
 
 if (isset($routeMap[$page]) && file_exists($routeMap[$page])) {
