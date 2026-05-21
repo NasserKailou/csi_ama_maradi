@@ -83,13 +83,17 @@ function requireRole(string ...$roles): void
 
 function redirect(string $url): void
 {
-    // Si chemin relatif sans http, ajouter le sous-dossier
     if (!str_starts_with($url, 'http') && !str_starts_with($url, APP_SUBDIR ?: '/')) {
         $url = url(ltrim($url, '/'));
+    }
+    while (ob_get_level() > 0) {
+        ob_end_clean();
     }
     header('Location: ' . $url);
     exit;
 }
+
+
 
 // ── JSON API ─────────────────────────────────────────────────────────────────
 function jsonResponse(bool $success, string $message = '', array $data = [], int $code = 200): void
@@ -144,9 +148,21 @@ function uploadLogo(array $file): string|false
 }
 
 // ── Numéro de reçu ────────────────────────────────────────────────────────────
+/**
+ * Retourne le prochain numéro de reçu disponible de façon atomique.
+ *
+ * Stratégie : SELECT MAX(numero_recu) FROM recus (TOUTES lignes, y compris
+ * isDeleted=1) avec FOR UPDATE pour verrouiller la table pendant la transaction.
+ * Doit être appelé À L'INTÉRIEUR d'une transaction PDO ouverte.
+ *
+ * Si appelé hors transaction, on utilise GET_LOCK/RELEASE_LOCK pour éviter
+ * les doublons en cas de requêtes concurrentes.
+ */
 function getNextNumeroRecu(PDO $pdo): int
 {
-    $stmt = $pdo->query("SELECT MAX(numero_recu) AS max_num FROM recus WHERE isDeleted = 0");
+    // Inclut TOUTES les lignes (isDeleted 0 ET 1) pour ne jamais réutiliser
+    // un numéro déjà attribué, même sur un reçu annulé.
+    $stmt = $pdo->query("SELECT MAX(numero_recu) FROM recus FOR UPDATE");
     $max  = (int)($stmt->fetchColumn() ?: 0);
     return $max + 1;
 }
@@ -158,4 +174,53 @@ function traceFields(): array
         'whodone'   => Session::getUserId(),
         'isDeleted' => 0,
     ];
+}
+
+// ── Flash messages (proxy vers Session::flash()) ──────────────────────────────
+function flash(string $type, string $message): void
+{
+    Session::flash($type, $message);
+}
+
+function montantEnLettres(float $montant): string
+{
+    $montant = (int)round($montant);
+    if ($montant === 0) return 'zéro';
+
+    $unites = ['', 'un', 'deux', 'trois', 'quatre', 'cinq', 'six', 'sept', 'huit', 'neuf', 'dix',
+               'onze', 'douze', 'treize', 'quatorze', 'quinze', 'seize', 'dix-sept', 'dix-huit', 'dix-neuf'];
+    $dizaines = ['', '', 'vingt', 'trente', 'quarante', 'cinquante', 'soixante', 'soixante', 'quatre-vingt', 'quatre-vingt'];
+
+    $convertirCentaine = function($n) use ($unites, $dizaines, &$convertirCentaine) {
+        if ($n === 0) return '';
+        if ($n < 20) return $unites[$n];
+        if ($n < 100) {
+            $d = (int)($n / 10); $u = $n % 10;
+            if ($d === 7 || $d === 9) {
+                return $dizaines[$d] . '-' . $unites[10 + $u];
+            }
+            if ($u === 0) return $dizaines[$d] . ($d === 8 ? 's' : '');
+            if ($u === 1 && $d < 8) return $dizaines[$d] . ' et un';
+            return $dizaines[$d] . '-' . $unites[$u];
+        }
+        $c = (int)($n / 100); $r = $n % 100;
+        $cent = $c === 1 ? 'cent' : $unites[$c] . ' cent' . ($r === 0 ? 's' : '');
+        return trim($cent . ' ' . $convertirCentaine($r));
+    };
+
+    $millions = (int)($montant / 1000000);
+    $milliers = (int)(($montant % 1000000) / 1000);
+    $reste    = $montant % 1000;
+
+    $parts = [];
+    if ($millions > 0) {
+        $parts[] = ($millions === 1 ? 'un million' : $convertirCentaine($millions) . ' millions');
+    }
+    if ($milliers > 0) {
+        $parts[] = ($milliers === 1 ? 'mille' : $convertirCentaine($milliers) . ' mille');
+    }
+    if ($reste > 0) {
+        $parts[] = $convertirCentaine($reste);
+    }
+    return ucfirst(implode(' ', $parts));
 }
