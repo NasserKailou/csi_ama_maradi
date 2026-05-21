@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <?= csrfMeta() ?>
+ <meta name="csrf-token" content="<?= h(Session::getCsrfToken()) ?>">
+
+
     <title><?= h($pageTitle ?? 'Système CSI') ?> – CSI Direct Aid Maradi</title>
 
     <!-- Bootstrap 5 (local) -->

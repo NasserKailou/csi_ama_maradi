@@ -635,124 +635,125 @@ include ROOT_PATH . '/templates/layouts/header.php';
             </button>
         </div>
         <div class="card-body p-0">
-            <table class="table table-hover align-middle mb-0" data-datatable>
-                <thead class="table-light">
-                    <tr><th>Produit</th><th>Forme</th><th>Prix</th><th>Stock</th><th>Seuil</th><th>Péremption</th><th>Statut</th><th>Actions</th></tr>
-                </thead>
-                <tbody>
-                <?php foreach ($produits as $p):
-                    $enAlerte = $p['stock_actuel'] <= $p['seuil_alerte'] && $p['stock_actuel'] > 0;
-                    $enRupture = $p['stock_actuel'] <= 0;
-                    $perime = $p['date_peremption'] && $p['date_peremption'] <= date('Y-m-d');
-                ?>
-                    <tr class="<?= $enRupture || $perime ? 'table-danger' : ($enAlerte ? 'table-warning' : '') ?>">
-                        <td><strong><?= h($p['nom']) ?></strong></td>
-                        <td><span class="badge bg-secondary"><?= h($p['forme']) ?></span></td>
-                        <td><?= number_format($p['prix_unitaire'],0,',',' ') ?> F</td>
-                        <td class="<?= $enRupture ? 'text-danger fw-bold' : ($enAlerte ? 'text-warning fw-bold' : 'fw-bold') ?>">
-                            <?= $p['stock_actuel'] ?>
-                        </td>
-                        <td><small class="text-muted"><?= $p['seuil_alerte'] ?></small></td>
-                        <td>
-                            <?php if ($p['date_peremption']): ?>
-                                <small class="<?= $perime ? 'text-danger fw-bold' : '' ?>">
-                                    <?= date('d/m/Y', strtotime($p['date_peremption'])) ?>
-                                </small>
-                            <?php else: ?>
-                                <span class="text-muted">–</span>
-                            <?php endif; ?>
-                        </td>
-                        <td>
-                            <?php if ($enRupture): ?>
-                                <span class="badge bg-danger">Rupture</span>
-                            <?php elseif ($perime): ?>
-                                <span class="badge bg-danger">Périmé</span>
-                            <?php elseif ($enAlerte): ?>
-                                <span class="badge bg-warning text-dark">⚠ Alerte</span>
-                            <?php else: ?>
-                                <span class="badge bg-success">OK</span>
-                            <?php endif; ?>
-                        </td>
-                        <td>
-                            <button class="btn btn-sm btn-outline-success me-1" title="Approvisionner"
-                                    onclick="openApproModal(<?= $p['id'] ?>, '<?= h($p['nom']) ?>')">
-                                <i class="bi bi-plus-circle"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-warning me-1" title="Diminuer stock (correction)"
-                                    onclick="openDiminuerModal(<?= $p['id'] ?>, '<?= h($p['nom']) ?>', <?= (int)$p['stock_actuel'] ?>')">
-                                <i class="bi bi-dash-circle"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-info me-1" title="Historique mouvements"
-                                    onclick="voirHistoriqueStock(<?= $p['id'] ?>, '<?= h($p['nom']) ?>')">
-                                <i class="bi bi-clock-history"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-primary me-1" onclick="openProduitModal(<?= htmlspecialchars(json_encode($p), ENT_QUOTES) ?>)">
-                                <i class="bi bi-pencil"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-danger" onclick="deleteItem('produit', <?= $p['id'] ?>, '<?= h($p['nom']) ?>')">
-                                <i class="bi bi-trash"></i>
-                            </button>
-                        </td>
-                    </tr>
-                <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
-    </div>
-
-    <!-- Modal Produit -->
-    <div class="modal fade" id="modalProduit" tabindex="-1">
-        <div class="modal-dialog modal-lg">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Produit pharmaceutique</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <form id="formProduit">
-                        <input type="hidden" name="action" value="save_produit">
-                        <input type="hidden" name="id" id="prodId" value="">
-                        <div class="row g-3">
-                            <div class="col-md-8">
-                                <label class="form-label">Nom <span class="text-danger">*</span></label>
-                                <input type="text" class="form-control" name="nom" id="prodNom" required>
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label">Forme</label>
-                                <select class="form-select" name="forme" id="prodForme">
-                                    <?php foreach (['comprimé','sirop','ampoule','gélule','suppositoire','pommade','solution','autre'] as $f): ?>
-                                        <option><?= h($f) ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label">Prix unitaire (F)</label>
-                                <input type="number" class="form-control" name="prix_unitaire" id="prodPrix" min="0" value="0">
-                            </div>
-                            <div class="col-md-4" id="stockInitBlock">
-                                <label class="form-label">Stock initial</label>
-                                <input type="number" class="form-control" name="stock_initial" id="prodStock" min="0" value="0">
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label">Seuil d'alerte</label>
-                                <input type="number" class="form-control" name="seuil_alerte" id="prodSeuil" min="0" value="10">
-                            </div>
-                            <div class="col-md-6">
-                                <label class="form-label">Date de péremption</label>
-                                <input type="date" class="form-control" name="date_peremption" id="prodPeremption">
-                            </div>
-                        </div>
-                    </form>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="button" class="btn text-white" style="background:var(--csi-green);" onclick="saveParam('formProduit', '<?= url('index.php') ?>?page=parametrage&section=pharmacie')">
-                        <i class="bi bi-save me-1"></i>Enregistrer
+    <table class="table table-hover align-middle mb-0" data-datatable>
+        <thead class="table-light">
+            <tr><th>Produit</th><th>Forme</th><th>Prix</th><th>Stock</th><th>Seuil</th><th>Péremption</th><th>Statut</th><th>Actions</th></tr>
+        </thead>
+        <tbody>
+        <?php foreach ($produits as $p):
+            $enAlerte = $p['stock_actuel'] <= $p['seuil_alerte'] && $p['stock_actuel'] > 0;
+            $enRupture = $p['stock_actuel'] <= 0;
+            $perime = $p['date_peremption'] && $p['date_peremption'] <= date('Y-m-d');
+        ?>
+            <tr class="<?= $enRupture || $perime ? 'table-danger' : ($enAlerte ? 'table-warning' : '') ?>">
+                <td><strong><?= h($p['nom']) ?></strong></td>
+                <td><span class="badge bg-secondary"><?= h($p['forme']) ?></span></td>
+                <td><?= number_format($p['prix_unitaire'],0,',',' ') ?> F</td>
+                <td class="<?= $enRupture ? 'text-danger fw-bold' : ($enAlerte ? 'text-warning fw-bold' : 'fw-bold') ?>">
+                    <?= $p['stock_actuel'] ?>
+                </td>
+                <td><small class="text-muted"><?= $p['seuil_alerte'] ?></small></td>
+                <td>
+                    <?php if ($p['date_peremption']): ?>
+                        <small class="<?= $perime ? 'text-danger fw-bold' : '' ?>">
+                            <?= date('d/m/Y', strtotime($p['date_peremption'])) ?>
+                        </small>
+                    <?php else: ?>
+                        <span class="text-muted">–</span>
+                    <?php endif; ?>
+                </td>
+                <td>
+                    <?php if ($enRupture): ?>
+                        <span class="badge bg-danger">Rupture</span>
+                    <?php elseif ($perime): ?>
+                        <span class="badge bg-danger">Périmé</span>
+                    <?php elseif ($enAlerte): ?>
+                        <span class="badge bg-warning text-dark">⚠ Alerte</span>
+                    <?php else: ?>
+                        <span class="badge bg-success">OK</span>
+                    <?php endif; ?>
+                </td>
+                <td>
+                    <button class="btn btn-sm btn-outline-success me-1" title="Approvisionner"
+                            onclick="openApproModal(<?= $p['id'] ?>, '<?= h($p['nom']) ?>')">
+                        <i class="bi bi-plus-circle"></i>
                     </button>
-                </div>
+                    <button class="btn btn-sm btn-outline-warning me-1" title="Diminuer stock (correction)"
+                            onclick="openDiminuerModal(<?= $p['id'] ?>, '<?= h($p['nom']) ?>', <?= (int)$p['stock_actuel'] ?>)">
+                        <i class="bi bi-dash-circle"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-info me-1" title="Historique mouvements"
+                            onclick="voirHistoriqueStock(<?= $p['id'] ?>, '<?= h($p['nom']) ?>')">
+                        <i class="bi bi-clock-history"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-primary me-1" onclick="openProduitModal(<?= htmlspecialchars(json_encode($p), ENT_QUOTES) ?>)">
+                        <i class="bi bi-pencil"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="deleteItem('produit', <?= $p['id'] ?>, '<?= h($p['nom']) ?>')">
+                        <i class="bi bi-trash"></i>
+                    </button>
+                </td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+</div>
+</div>
+
+<!-- Modal Produit -->
+<div class="modal fade" id="modalProduit" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Produit pharmaceutique</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="formProduit">
+                    <input type="hidden" name="action" value="save_produit">
+                    <input type="hidden" name="id" id="prodId" value="">
+                    <div class="row g-3">
+                        <div class="col-md-8">
+                            <label class="form-label">Nom <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" name="nom" id="prodNom" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Forme</label>
+                            <select class="form-select" name="forme" id="prodForme">
+                                <?php foreach (['comprimé','sirop','ampoule','gélule','suppositoire','pommade','solution','autre'] as $f): ?>
+                                    <option><?= h($f) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Prix unitaire (F)</label>
+                            <input type="number" class="form-control" name="prix_unitaire" id="prodPrix" min="0" value="0">
+                        </div>
+                        <div class="col-md-4" id="stockInitBlock">
+                            <label class="form-label">Stock initial</label>
+                            <input type="number" class="form-control" name="stock_initial" id="prodStock" min="0" value="0">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Seuil d'alerte</label>
+                            <input type="number" class="form-control" name="seuil_alerte" id="prodSeuil" min="0" value="10">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Date de péremption</label>
+                            <input type="date" class="form-control" name="date_peremption" id="prodPeremption">
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn text-white" style="background:var(--csi-green);" onclick="saveParam('formProduit', '<?= url('index.php') ?>?page=parametrage&section=pharmacie')">
+                    <i class="bi bi-save me-1"></i>Enregistrer
+                </button>
             </div>
         </div>
     </div>
+</div>
+
 
     <!-- Modal Appro -->
     <div class="modal fade" id="modalAppro" tabindex="-1">
@@ -997,7 +998,8 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         <td><small><?= h(trim(($mv['user_nom'] ?? '').' '.($mv['user_prenom'] ?? ''))) ?: '—' ?></small></td>
                         <td class="text-center">
                             <button class="btn btn-sm btn-outline-primary"
-                                    onclick="ouvrirEditMvtCarnet(<?= (int)$mv['id'] ?>, <?= (int)$mv['quantite'] ?>, '<?= addslashes(h($mv['commentaire'] ?? '')) ?>')">
+                                    onclick='ouvrirEditMvtCarnet(<?= (int)$mv['id'] ?>, <?= (int)$mv['quantite'] ?>, <?= htmlspecialchars(json_encode($mv['commentaire'] ?? ''), ENT_QUOTES) ?>)'>
+
                                 <i class="bi bi-pencil"></i>
                             </button>
                             <button class="btn btn-sm btn-outline-danger"
@@ -1319,7 +1321,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                 <i class="bi bi-pencil"></i>
                             </button>
                             <button class="btn btn-sm btn-outline-danger"
-                                    onclick="supprimerMvtFicheAg(<?= (int)$mv['id'] ?>, <?= (int)$mv['quantite'] ?>')">
+                                    onclick="supprimerMvtFicheAg(<?= (int)$mv['id'] ?>, <?= (int)$mv['quantite'] ?>)">
                                 <i class="bi bi-trash"></i>
                             </button>
                         </td>
@@ -1382,31 +1384,128 @@ include ROOT_PATH . '/templates/layouts/header.php';
 
 </div> <!-- Fin container principal -->
 
+<script>
+    const INDEX_URL = <?= json_encode(url('index.php')) ?>;
+</script>
 <!-- JavaScript commun -->
 <script>
-// ─── Helper CSRF — lit directement le meta-tag, sans dépendre de app.js ───────
-function getCsrf() {
-    return document.querySelector('meta[name="csrf-token"]')?.content || '';
-}
 
-// ─── Helper encode HTML (sécurité XSS) ────────────────────────────────────────
-function h(str) {
-    if (!str) return '';
-    return String(str)
-        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-        .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-}
+    // ─── Helper CSRF — lit directement le meta-tag, sans dépendre de app.js ───────
+    function getCsrf() {
+        return document.querySelector('meta[name="csrf-token"]')?.content || '';
+    }
 
-// ─── Formater date MySQL → format français ─────────────────────────────────────
-function formatDate(dateString) {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('fr-FR', {
-        day: '2-digit', month: '2-digit', year: 'numeric',
-        hour: '2-digit', minute: '2-digit'
-    });
-}
+    // ─── Helper encode HTML (sécurité XSS) ────────────────────────────────────────
+    function h(str) {
+        if (!str) return '';
+        return String(str)
+            .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+            .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    }
 
-// ─── Sauvegarde générique d'un formulaire via AJAX (GLOBAL) ───────────────────
+    // ─── Formater date MySQL → format français ─────────────────────────────────────
+    function formatDate(dateString) {
+        const date = new Date(dateString);
+        return date.toLocaleDateString('fr-FR', {
+            day: '2-digit', month: '2-digit', year: 'numeric',
+            hour: '2-digit', minute: '2-digit'
+        });
+    }
+
+    // ─── Éditer/Supprimer mouvement carnet (GLOBAL) ────────────────────────────────
+    function postParam(section, fields) {
+        const body = new URLSearchParams();
+        body.append('csrf_token', getCsrf());
+        for (const k in fields) body.append(k, fields[k]);
+
+        return fetch(INDEX_URL + '?page=parametrage&section=' + section, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-CSRF-TOKEN': getCsrf()
+            },
+            body: body.toString()
+        })
+        .then(r => r.text())
+        .then(text => {
+            try {
+                return JSON.parse(text);
+            } catch (e) {
+                console.error('Réponse non-JSON:', text);
+                throw new Error('Réponse serveur invalide : ' + text.substring(0, 200));
+            }
+        });
+    }
+
+    function ouvrirEditMvtCarnet(mvtId, quantite, commentaire) {
+        const newQty = prompt('Nouvelle quantité (actuelle : ' + quantite + ') :', quantite);
+        if (newQty === null) return;
+        const qty = parseInt(newQty, 10);
+        if (isNaN(qty) || qty <= 0) { alert('Quantité invalide.'); return; }
+        const newComment = prompt('Commentaire (optionnel) :', commentaire || '');
+        if (newComment === null) return;
+
+        postParam('carnets', {
+            action: 'edit_mouvement_carnet',
+            mvt_id: mvtId,
+            quantite: qty,
+            commentaire: newComment
+        })
+        .then(d => {
+            if (d.success) location.reload();
+            else alert('Erreur : ' + (d.message || 'inconnue'));
+        })
+        .catch(err => alert(err.message));
+    }
+
+    function supprimerMvtCarnet(mvtId, quantite) {
+        if (!confirm('Supprimer ce mouvement ? Cela ajustera le stock de ' + quantite + ' unités.')) return;
+        postParam('carnets', {
+            action: 'delete_mouvement_carnet',
+            mvt_id: mvtId
+        })
+        .then(d => {
+            if (d.success) location.reload();
+            else alert('Erreur : ' + (d.message || 'inconnue'));
+        })
+        .catch(err => alert(err.message));
+    }
+
+    function ouvrirEditMvtFicheAg(mvtId, quantite, commentaire) {
+        const newQty = prompt('Nouvelle quantité (actuelle : ' + quantite + ') :', quantite);
+        if (newQty === null) return;
+        const qty = parseInt(newQty, 10);
+        if (isNaN(qty) || qty <= 0) { alert('Quantité invalide.'); return; }
+        const newComment = prompt('Commentaire (optionnel) :', commentaire || '');
+        if (newComment === null) return;
+
+        postParam('fiches_ag', {
+            action: 'edit_mouvement_fiche_ag',
+            mvt_id: mvtId,
+            quantite: qty,
+            commentaire: newComment
+        })
+        .then(d => {
+            if (d.success) location.reload();
+            else alert('Erreur : ' + (d.message || 'inconnue'));
+        })
+        .catch(err => alert(err.message));
+    }
+
+    function supprimerMvtFicheAg(mvtId, quantite) {
+        if (!confirm('Supprimer ce mouvement ? Cela ajustera le stock de ' + quantite + ' fiches.')) return;
+        postParam('fiches_ag', {
+            action: 'delete_mouvement_fiche_ag',
+            mvt_id: mvtId
+        })
+        .then(d => {
+            if (d.success) location.reload();
+            else alert('Erreur : ' + (d.message || 'inconnue'));
+        })
+        .catch(err => alert(err.message));
+    }
+
+    // ─── Sauvegarde générique d'un formulaire via AJAX (GLOBAL) ───────────────────
 function saveParam(formId, url) {
     const form = document.getElementById(formId);
     if (!form) {
@@ -1419,6 +1518,8 @@ function saveParam(formId, url) {
         return;
     }
     const formData = new FormData(form);
+    // Ajout du token CSRF dans le corps
+    formData.append('csrf_token', getCsrf());
     fetch(url, {
         method: 'POST',
         headers: { 'X-CSRF-TOKEN': getCsrf() },
@@ -1447,7 +1548,7 @@ function saveParam(formId, url) {
     });
 }
 
-// ─── deleteItem générique (soft-delete via AJAX) — GLOBAL ─────────────────────
+    // ─── deleteItem générique (soft-delete via AJAX) — GLOBAL ─────────────────────
 function deleteItem(type, id, libelle) {
     if (!confirm('Supprimer « ' + libelle + ' » ?')) return;
     const sectionMap = { acte: 'actes', examen: 'examens', produit: 'pharmacie' };
@@ -1455,6 +1556,8 @@ function deleteItem(type, id, libelle) {
     const fd = new FormData();
     fd.append('action', 'delete_' + type);
     fd.append('id', id);
+    // Ajout du token CSRF dans le corps
+    fd.append('csrf_token', getCsrf());
     fetch(INDEX_URL + '?page=parametrage&section=' + section, {
         method: 'POST',
         headers: { 'X-CSRF-TOKEN': getCsrf() },
@@ -1474,294 +1577,233 @@ function deleteItem(type, id, libelle) {
     .catch(() => alert('Erreur réseau.'));
 }
 
-// ─── Modal Acte (GLOBAL) ───────────────────────────────────────────────────────
-function openActeModal(acte) {
-    acte = acte || null;
-    const modalEl = document.getElementById('modalActe');
-    if (!modalEl) return;
-    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-    const form = document.getElementById('formActe');
-    form.reset();
-    document.getElementById('acteId').value = '';
-    if (acte) {
-        document.getElementById('acteId').value = acte.id;
-        document.getElementById('acteLibelle').value = acte.libelle;
-        document.getElementById('acteTarif').value = acte.tarif;
-        document.getElementById('acteGratuit').checked = acte.est_gratuit == 1;
-    }
-    modal.show();
-}
-
-// ─── Modal Examen (GLOBAL) ─────────────────────────────────────────────────────
-function openExamenModal(examen) {
-    examen = examen || null;
-    const modalEl = document.getElementById('modalExamen');
-    if (!modalEl) return;
-    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-    const form = document.getElementById('formExamen');
-    form.reset();
-    document.getElementById('examId').value = '';
-    const montEl = document.getElementById('montLaboCalc');
-    if (montEl) montEl.textContent = '0 F';
-    if (examen) {
-        document.getElementById('examId').value = examen.id;
-        document.getElementById('examLibelle').value = examen.libelle;
-        document.getElementById('examCout').value = examen.cout_total;
-        document.getElementById('examPct').value = examen.pourcentage_labo;
-        const cout = parseFloat(examen.cout_total) || 0;
-        const pct  = parseFloat(examen.pourcentage_labo) || 0;
-        if (montEl) montEl.textContent = Math.round(cout * pct / 100) + ' F';
-    }
-    modal.show();
-}
-
-// ─── Modal Produit (GLOBAL) ────────────────────────────────────────────────────
-function openProduitModal(produit) {
-    produit = produit || null;
-    const modalEl = document.getElementById('modalProduit');
-    if (!modalEl) return;
-    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-    const form = document.getElementById('formProduit');
-    form.reset();
-    document.getElementById('prodId').value = '';
-    if (produit) {
-        document.getElementById('prodId').value = produit.id;
-        document.getElementById('prodNom').value = produit.nom;
-        document.getElementById('prodForme').value = produit.forme;
-        document.getElementById('prodPrix').value = produit.prix_unitaire;
-        document.getElementById('prodStock').value = produit.stock_initial;
-        document.getElementById('prodSeuil').value = produit.seuil_alerte;
-        const peremEl = document.getElementById('prodPeremption');
-        if (peremEl && produit.date_peremption) peremEl.value = produit.date_peremption;
-    }
-    modal.show();
-}
-
-// ─── Modal Approvisionnement (GLOBAL) ─────────────────────────────────────────
-function openApproModal(produitId, produitNom) {
-    const modalEl = document.getElementById('modalAppro');
-    if (!modalEl) return;
-    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-    document.getElementById('approProduitId').value = produitId;
-    const nomEl = document.getElementById('approProduitNom');
-    if (nomEl) nomEl.textContent = produitNom;
-    modal.show();
-}
-
-// ─── Modal Diminuer Stock (GLOBAL) ────────────────────────────────────────────
-function openDiminuerModal(produitId, produitNom, stockActuel) {
-    const modalEl = document.getElementById('modalDiminuer');
-    if (!modalEl) return;
-    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-    document.getElementById('dimProduitId').value = produitId;
-    const nomEl = document.getElementById('dimProduitNom');
-    if (nomEl) nomEl.textContent = produitNom;
-    const stockEl = document.getElementById('dimStockActuel');
-    if (stockEl) stockEl.textContent = stockActuel + ' unités';
-    modal.show();
-}
-
-// ─── Modal Historique Stock (GLOBAL) ──────────────────────────────────────────
-function voirHistoriqueStock(produitId, produitNom) {
-    const modalEl = document.getElementById('modalHistoriqueStock');
-    if (!modalEl) return;
-    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-    const nomEl  = document.getElementById('histProduitNom');
-    if (nomEl) nomEl.textContent = produitNom;
-    const loading = document.getElementById('histLoading');
-    const content = document.getElementById('histContent');
-    if (loading) { loading.style.display = 'block'; }
-    if (content) { content.style.display = 'none'; content.innerHTML = ''; }
-    modal.show();
-    fetch(INDEX_URL + '?page=parametrage&section=pharmacie', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': getCsrf() },
-        body: JSON.stringify({ action: 'get_historique_stock', produit_id: produitId })
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (loading) loading.style.display = 'none';
-        if (!content) return;
-        if (data.success && data.data && data.data.length > 0) {
-            let rows = '';
-            data.data.forEach(row => {
-                const badge = row.type_mvt === 'entree'
-                    ? '<span class="badge bg-success">Entr</span>'
-                    : '<span class="badge bg-danger">Sort</span>';
-                rows += `<tr>
-                    <td>${formatDate(row.whendone)}</td>
-                    <td>${badge}</td>
-                    <td class="fw-bold">${row.quantite}</td>
-                    <td class="text-muted">${row.stock_avant}</td>
-                    <td class="fw-bold">${row.stock_apres}</td>
-                    <td>${h(row.commentaire)}</td>
-                    <td>${h(row.user_nom)} ${h(row.user_prenom)}</td>
-                </tr>`;
-            });
-            content.innerHTML = `<table class="table table-hover align-middle mb-0 small">
-                <thead class="table-light"><tr>
-                    <th>Date</th><th>Type</th><th>Qté</th>
-                    <th>Avant</th><th>Après</th><th>Commentaire</th><th>Par</th>
-                </tr></thead><tbody>${rows}</tbody></table>`;
-        } else {
-            content.innerHTML = '<div class="alert alert-warning">Aucun historique trouvé.</div>';
+    // ─── Modal Acte (GLOBAL) ───────────────────────────────────────────────────────
+    function openActeModal(acte) {
+        acte = acte || null;
+        const modalEl = document.getElementById('modalActe');
+        if (!modalEl) return;
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        const form = document.getElementById('formActe');
+        form.reset();
+        document.getElementById('acteId').value = '';
+        if (acte) {
+            document.getElementById('acteId').value = acte.id;
+            document.getElementById('acteLibelle').value = acte.libelle;
+            document.getElementById('acteTarif').value = acte.tarif;
+            document.getElementById('acteGratuit').checked = acte.est_gratuit == 1;
         }
-        content.style.display = 'block';
-    })
-    .catch(() => {
-        if (loading) loading.style.display = 'none';
-        if (content) {
-            content.innerHTML = '<div class="alert alert-danger">Erreur réseau.</div>';
+        modal.show();
+    }
+
+    // ─── Modal Examen (GLOBAL) ─────────────────────────────────────────────────────
+    function openExamenModal(examen) {
+        examen = examen || null;
+        const modalEl = document.getElementById('modalExamen');
+        if (!modalEl) return;
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        const form = document.getElementById('formExamen');
+        form.reset();
+        document.getElementById('examId').value = '';
+        const montEl = document.getElementById('montLaboCalc');
+        if (montEl) montEl.textContent = '0 F';
+        if (examen) {
+            document.getElementById('examId').value = examen.id;
+            document.getElementById('examLibelle').value = examen.libelle;
+            document.getElementById('examCout').value = examen.cout_total;
+            document.getElementById('examPct').value = examen.pourcentage_labo;
+            const cout = parseFloat(examen.cout_total) || 0;
+            const pct  = parseFloat(examen.pourcentage_labo) || 0;
+            if (montEl) montEl.textContent = Math.round(cout * pct / 100) + ' F';
+        }
+        modal.show();
+    }
+
+    // ─── Modal Produit (GLOBAL) ────────────────────────────────────────────────────
+    function openProduitModal(produit) {
+        produit = produit || null;
+        const modalEl = document.getElementById('modalProduit');
+        if (!modalEl) return;
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        const form = document.getElementById('formProduit');
+        form.reset();
+        document.getElementById('prodId').value = '';
+        if (produit) {
+            document.getElementById('prodId').value = produit.id;
+            document.getElementById('prodNom').value = produit.nom;
+            document.getElementById('prodForme').value = produit.forme;
+            document.getElementById('prodPrix').value = produit.prix_unitaire;
+            document.getElementById('prodStock').value = produit.stock_initial;
+            document.getElementById('prodSeuil').value = produit.seuil_alerte;
+            const peremEl = document.getElementById('prodPeremption');
+            if (peremEl && produit.date_peremption) peremEl.value = produit.date_peremption;
+        }
+        modal.show();
+    }
+
+    // ─── Modal Approvisionnement (GLOBAL) ─────────────────────────────────────────
+    function openApproModal(produitId, produitNom) {
+        const modalEl = document.getElementById('modalAppro');
+        if (!modalEl) return;
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        document.getElementById('approProduitId').value = produitId;
+        const nomEl = document.getElementById('approProduitNom');
+        if (nomEl) nomEl.textContent = produitNom;
+        modal.show();
+    }
+
+    // ─── Modal Diminuer Stock (GLOBAL) ────────────────────────────────────────────
+    function openDiminuerModal(produitId, produitNom, stockActuel) {
+        const modalEl = document.getElementById('modalDiminuer');
+        if (!modalEl) return;
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        document.getElementById('dimProduitId').value = produitId;
+        const nomEl = document.getElementById('dimProduitNom');
+        if (nomEl) nomEl.textContent = produitNom;
+        const stockEl = document.getElementById('dimStockActuel');
+        if (stockEl) stockEl.textContent = stockActuel + ' unités';
+        modal.show();
+    }
+
+    // ─── Modal Historique Stock (GLOBAL) ──────────────────────────────────────────
+    function voirHistoriqueStock(produitId, produitNom) {
+        const modalEl = document.getElementById('modalHistoriqueStock');
+        if (!modalEl) return;
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        const nomEl  = document.getElementById('histProduitNom');
+        if (nomEl) nomEl.textContent = produitNom;
+        const loading = document.getElementById('histLoading');
+        const content = document.getElementById('histContent');
+        if (loading) { loading.style.display = 'block'; }
+        if (content) { content.style.display = 'none'; content.innerHTML = ''; }
+        modal.show();
+        fetch(INDEX_URL + '?page=parametrage&section=pharmacie', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': getCsrf() },
+            body: JSON.stringify({ action: 'get_historique_stock', produit_id: produitId })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (loading) loading.style.display = 'none';
+            if (!content) return;
+            if (data.success && data.data && data.data.length > 0) {
+                let rows = '';
+                data.data.forEach(row => {
+                    const badge = row.type_mvt === 'entree'
+                        ? '<span class="badge bg-success">Entr</span>'
+                        : '<span class="badge bg-danger">Sort</span>';
+                    rows += `<tr>
+                        <td>${formatDate(row.whendone)}</td>
+                        <td>${badge}</td>
+                        <td class="fw-bold">${row.quantite}</td>
+                        <td class="text-muted">${row.stock_avant}</td>
+                        <td class="fw-bold">${row.stock_apant}</td>
+                        <td>${h(row.commentaire)}</td>
+                        <td>${h(row.user_nom)} ${h(row.user_prenom)}</td>
+                    </tr>`;
+                });
+                content.innerHTML = `<table class="table table-hover align-middle mb-0 small">
+                    <thead class="table-light"><tr>
+                        <th>Date</th><th>Type</th><th>Qté</th>
+                        <th>Avant</th><th>Après</th><th>Commentaire</th><th>Par</th>
+                    </tr></thead><tbody>${rows}</tbody></table>`;
+            } else {
+                content.innerHTML = '<div class="alert alert-warning">Aucun historique trouvé.</div>';
+            }
             content.style.display = 'block';
+        })
+        .catch(() => {
+            if (loading) loading.style.display = 'none';
+            if (content) {
+                content.innerHTML = '<div class="alert alert-danger">Erreur réseau.</div>';
+                content.style.display = 'block';
+            }
+        });
+    }
+
+    // ─── Modal Fiche AG (GLOBAL) ──────────────────────────────────────────────────
+    function openFicheAgModal() {
+        const modalEl = document.getElementById('modalFicheAg');
+        if (!modalEl) return;
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        const form = document.getElementById('formStockFichesAg');
+        if (form) form.reset();
+        modal.show();
+    }
+
+    // ─── DOMContentLoaded : uniquement bindings addEventListener + previews ─────────
+    document.addEventListener('DOMContentLoaded', function() {
+
+        // ── Calcul montant labo (modal examen) ────────────────────────────────────
+        const examCout = document.getElementById('examCout');
+        const examPct  = document.getElementById('examPct');
+        if (examCout && examPct) {
+            function _updateMontLabo() {
+                const cout = parseFloat(examCout.value) || 0;
+                const pct  = parseFloat(examPct.value)  || 0;
+                const el   = document.getElementById('montLaboCalc');
+                if (el) el.textContent = Math.round(cout * pct / 100) + ' F';
+            }
+            examCout.addEventListener('input', _updateMontLabo);
+            examPct.addEventListener('input', _updateMontLabo);
         }
-    });
-}
 
-// ─── Modal Fiche AG (GLOBAL) ──────────────────────────────────────────────────
-function openFicheAgModal() {
-    const modalEl = document.getElementById('modalFicheAg');
-    if (!modalEl) return;
-    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-    const form = document.getElementById('formStockFichesAg');
-    if (form) form.reset();
-    modal.show();
-}
-
-// ─── Éditer/Supprimer mouvement carnet (GLOBAL) ────────────────────────────────
-function ouvrirEditMvtCarnet(mvtId, quantite, commentaire) {
-    const newQty = prompt('Nouvelle quantité (actuelle : ' + quantite + ') :', quantite);
-    if (newQty === null) return;
-    const qty = parseInt(newQty, 10);
-    if (isNaN(qty) || qty <= 0) { alert('Quantité invalide.'); return; }
-    const newComment = prompt('Commentaire (optionnel) :', commentaire);
-    if (newComment === null) return;
-    const comment = encodeURIComponent(newComment);
-    fetch(INDEX_URL + '?page=parametrage&section=carnets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-TOKEN': getCsrf() },
-        body: 'action=edit_mouvement_carnet&mvt_id=' + mvtId + '&quantite=' + qty + '&commentaire=' + comment
-    })
-    .then(r => r.json())
-    .then(data => { if (data.success) location.reload(); else alert('Erreur : ' + data.message); })
-    .catch(() => alert('Erreur réseau.'));
-}
-
-function supprimerMvtCarnet(mvtId, quantite) {
-    if (!confirm('Supprimer ce mouvement ? Cela ajustera le stock de ' + quantite + ' unités.')) return;
-    fetch(INDEX_URL + '?page=parametrage&section=carnets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-TOKEN': getCsrf() },
-        body: 'action=delete_mouvement_carnet&mvt_id=' + mvtId
-    })
-    .then(r => r.json())
-    .then(data => { if (data.success) location.reload(); else alert('Erreur : ' + data.message); })
-    .catch(() => alert('Erreur réseau.'));
-}
-
-// ─── Éditer/Supprimer mouvement fiche AG (GLOBAL) ─────────────────────────────
-function ouvrirEditMvtFicheAg(mvtId, quantite, commentaire) {
-    const newQty = prompt('Nouvelle quantité (actuelle : ' + quantite + ') :', quantite);
-    if (newQty === null) return;
-    const qty = parseInt(newQty, 10);
-    if (isNaN(qty) || qty <= 0) { alert('Quantité invalide.'); return; }
-    const newComment = prompt('Commentaire (optionnel) :', commentaire);
-    if (newComment === null) return;
-    const comment = encodeURIComponent(newComment);
-    fetch(INDEX_URL + '?page=parametrage&section=fiches_ag', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-TOKEN': getCsrf() },
-        body: 'action=edit_mouvement_fiche_ag&mvt_id=' + mvtId + '&quantite=' + qty + '&commentaire=' + comment
-    })
-    .then(r => r.json())
-    .then(data => { if (data.success) location.reload(); else alert('Erreur : ' + data.message); })
-    .catch(() => alert('Erreur réseau.'));
-}
-
-function supprimerMvtFicheAg(mvtId, quantite) {
-    if (!confirm('Supprimer ce mouvement ? Cela ajustera le stock de ' + quantite + ' fiches.')) return;
-    fetch(INDEX_URL + '?page=parametrage&section=fiches_ag', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-TOKEN': getCsrf() },
-        body: 'action=delete_mouvement_fiche_ag&mvt_id=' + mvtId
-    })
-    .then(r => r.json())
-    .then(data => { if (data.success) location.reload(); else alert('Erreur : ' + data.message); })
-    .catch(() => alert('Erreur réseau.'));
-}
-
-// ─── DOMContentLoaded : uniquement bindings addEventListener + previews ─────────
-document.addEventListener('DOMContentLoaded', function() {
-
-    // ── Calcul montant labo (modal examen) ────────────────────────────────────
-    const examCout = document.getElementById('examCout');
-    const examPct  = document.getElementById('examPct');
-    if (examCout && examPct) {
-        function _updateMontLabo() {
-            const cout = parseFloat(examCout.value) || 0;
-            const pct  = parseFloat(examPct.value)  || 0;
-            const el   = document.getElementById('montLaboCalc');
-            if (el) el.textContent = Math.round(cout * pct / 100) + ' F';
-        }
-        examCout.addEventListener('input', _updateMontLabo);
-        examPct.addEventListener('input', _updateMontLabo);
-    }
-
-    // ── Stock prévisionnel : carnets soins ────────────────────────────────────
-    const qtyCarnetSoins = document.getElementById('qtyCarnetSoins');
-    if (qtyCarnetSoins) {
-        qtyCarnetSoins.addEventListener('input', function() {
-            const stockActuel = <?= (int)($stockCarnetsSoins ?? 0) ?>;
-            const ajout = parseInt(this.value, 10) || 0;
-            const el = document.getElementById('prevStockSoins');
-            if (el) el.textContent = stockActuel + ajout;
-        });
-    }
-
-    // ── Stock prévisionnel : carnets santé ────────────────────────────────────
-    const qtyCarnetSante = document.getElementById('qtyCarnetSante');
-    if (qtyCarnetSante) {
-        qtyCarnetSante.addEventListener('input', function() {
-            const stockActuel = <?= (int)($stockCarnetsSante ?? 0) ?>;
-            const ajout = parseInt(this.value, 10) || 0;
-            const el = document.getElementById('prevStockSante');
-            if (el) el.textContent = stockActuel + ajout;
-        });
-    }
-
-    // ── Stock prévisionnel : fiches AG ────────────────────────────────────────
-    const qtyFicheAg = document.getElementById('qtyFicheAg');
-    if (qtyFicheAg) {
-        qtyFicheAg.addEventListener('input', function() {
-            const stockActuel = <?= (int)($stockFichesAg ?? 0) ?>;
-            const ajout = parseInt(this.value, 10) || 0;
-            const el = document.getElementById('prevStockFichesAg');
-            if (el) el.textContent = stockActuel + ajout;
-        });
-    }
-
-    // ── Submit via addEventListener (fallback pour formulaires sans onclick) ──
-    const formBindings = [
-        ['formStockCarnetsSoins', INDEX_URL + '?page=parametrage&section=carnets'],
-        ['formStockCarnetsSante', INDEX_URL + '?page=parametrage&section=carnets'],
-        ['formStockFichesAg',     INDEX_URL + '?page=parametrage&section=fiches_ag'],
-        ['formActe',              INDEX_URL + '?page=parametrage&section=actes'],
-        ['formExamen',            INDEX_URL + '?page=parametrage&section=examens'],
-        ['formProduit',           INDEX_URL + '?page=parametrage&section=pharmacie'],
-        ['formAppro',             INDEX_URL + '?page=parametrage&section=pharmacie'],
-        ['formDiminuer',          INDEX_URL + '?page=parametrage&section=pharmacie'],
-        ['formConfig',            INDEX_URL + '?page=parametrage&section=config'],
-    ];
-    formBindings.forEach(function([id, url]) {
-        const el = document.getElementById(id);
-        if (el) {
-            el.addEventListener('submit', function(e) {
-                e.preventDefault();
-                saveParam(id, url);
+        // ── Stock prévisionnel : carnets soins ────────────────────────────────────
+        const qtyCarnetSoins = document.getElementById('qtyCarnetSoins');
+        if (qtyCarnetSoins) {
+            qtyCarnetSoins.addEventListener('input', function() {
+                const stockActuel = <?= (int)($stockCarnetsSoins ?? 0) ?>;
+                const ajout = parseInt(this.value, 10) || 0;
+                const el = document.getElementById('prevStockSoins');
+                if (el) el.textContent = stockActuel + ajout;
             });
         }
+
+        // ── Stock prévisionnel : carnets santé ────────────────────────────────────
+        const qtyCarnetSante = document.getElementById('qtyCarnetSante');
+        if (qtyCarnetSante) {
+            qtyCarnetSante.addEventListener('input', function() {
+                const stockActuel = <?= (int)($stockCarnetsSante ?? 0) ?>;
+                const ajout = parseInt(this.value, 10) || 0;
+                const el = document.getElementById('prevStockSante');
+                if (el) el.textContent = stockActuel + ajout;
+            });
+        }
+
+        // ── Stock prévisionnel : fiches AG ────────────────────────────────────────
+        const qtyFicheAg = document.getElementById('qtyFicheAg');
+        if (qtyFicheAg) {
+            qtyFicheAg.addEventListener('input', function() {
+                const stockActuel = <?= (int)($stockFichesAg ?? 0) ?>;
+                const ajout = parseInt(this.value, 10) || 0;
+                const el = document.getElementById('prevStockFichesAg');
+                if (el) el.textContent = stockActuel + ajout;
+            });
+        }
+
+        // ── Submit via addEventListener (fallback pour formulaires sans onclick) ──
+        const formBindings = [
+            ['formStockCarnetsSoins', INDEX_URL + '?page=parametrage&section=carnets'],
+            ['formStockCarnetsSante', INDEX_URL + '?page=parametrage&section=carnets'],
+            ['formStockFichesAg',     INDEX_URL + '?page=parametrage&section=fiches_ag'],
+            ['formActe',              INDEX_URL + '?page=parametrage&section=actes'],
+            ['formExamen',            INDEX_URL + '?page=parametrage&section=examens'],
+            ['formProduit',           INDEX_URL + '?page=parametrage&section=pharmacie'],
+            ['formAppro',             INDEX_URL + '?page=parametrage&section=pharmacie'],
+            ['formDiminuer',          INDEX_URL + '?page=parametrage&section=pharmacie'],
+            ['formConfig',            INDEX_URL + '?page=parametrage&section=config'],
+        ];
+        formBindings.forEach(function([id, url]) {
+            const el = document.getElementById(id);
+            if (el) {
+                el.addEventListener('submit', function(e) {
+                    e.preventDefault();
+                    saveParam(id, url);
+                });
+            }
+        });
     });
-});
 </script>
+
 
 <?php
 include ROOT_PATH . '/templates/layouts/footer.php';
