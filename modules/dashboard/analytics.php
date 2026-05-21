@@ -630,6 +630,46 @@ $dataSexe   = array_column($demoSexe, 'nb');
 $labelsAge = array_column($demoAge, 'tranche');
 $dataAge   = array_column($demoAge, 'nb');
 
+// ════════════════════════════════════════════════════════════════════════════
+// 20. Stocks carnets & fiches (situation en temps réel)
+// ════════════════════════════════════════════════════════════════════════════
+require_once ROOT_PATH . '/core/CarnetsHelper.php';
+CarnetsHelper::ensureConfig($pdo, 0);
+$infoCarnetSoins = CarnetsHelper::getStock($pdo, CarnetsHelper::TYPE_SOINS);
+$infoCarnetSante = CarnetsHelper::getStock($pdo, CarnetsHelper::TYPE_SANTE);
+$cfgFag20 = $pdo->query(
+    "SELECT cle, valeur FROM config_systeme WHERE cle IN ('stock_fiches_ag','seuil_alerte_fiches_ag') AND isDeleted=0"
+)->fetchAll(PDO::FETCH_KEY_PAIR);
+$stockFichesAg20  = (int)($cfgFag20['stock_fiches_ag']        ?? 0);
+$seuilFichesAg20  = (int)($cfgFag20['seuil_alerte_fiches_ag'] ?? 10);
+
+// Sorties carnets soins sur la période
+$sortiesSoinsStmt = $pdo->prepare("
+    SELECT COALESCE(ABS(SUM(quantite)), 0) AS sorties
+    FROM mouvements_carnets
+    WHERE type_carnet = 'soins' AND type_mvt = 'sortie'
+      AND DATE(whendone) BETWEEN :d AND :f
+");
+try { $sortiesSoinsStmt->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $sortiesSoinsPeriode = (int)$sortiesSoinsStmt->fetchColumn(); } catch (Exception $e) { $sortiesSoinsPeriode = 0; }
+
+// Sorties carnets sante sur la période
+$sortiesSanteStmt = $pdo->prepare("
+    SELECT COALESCE(ABS(SUM(quantite)), 0) AS sorties
+    FROM mouvements_carnets
+    WHERE type_carnet = 'sante' AND type_mvt = 'sortie'
+      AND DATE(whendone) BETWEEN :d AND :f
+");
+try { $sortiesSanteStmt->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $sortiesSantePeriode = (int)$sortiesSanteStmt->fetchColumn(); } catch (Exception $e) { $sortiesSantePeriode = 0; }
+
+// Sorties fiches AG sur la période
+$sortiesFagStmt = $pdo->prepare("
+    SELECT COALESCE(ABS(SUM(quantite)), 0) AS sorties
+    FROM mouvements_fiches_ag
+    WHERE type_mvt = 'sortie'
+      AND DATE(whendone) BETWEEN :d AND :f
+");
+try { $sortiesFagStmt->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $sortiesFagPeriode = (int)$sortiesFagStmt->fetchColumn(); } catch (Exception $e) { $sortiesFagPeriode = 0; }
+
 include ROOT_PATH . '/templates/layouts/header.php';
 ?>
 
@@ -972,6 +1012,106 @@ include ROOT_PATH . '/templates/layouts/header.php';
                     <h6 class="mb-0"><i class="bi bi-capsule me-2"></i>Top 10 Produits Pharmacie consommés</h6>
                 </div>
                 <div class="card-body"><canvas id="chartProduits" height="120"></canvas></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Ligne 5b : Situation Carnets & Fiches AG -->
+    <div class="row g-3 mb-4">
+        <!-- Graphique secteur -->
+        <div class="col-md-5">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header border-0" style="background:linear-gradient(90deg,#1565c0,#2e7d32);color:#fff;">
+                    <h6 class="mb-0">
+                        <i class="bi bi-pie-chart-fill me-2"></i>Situation Carnets &amp; Fiches
+                        <small class="ms-2 opacity-75">(stocks actuels)</small>
+                    </h6>
+                </div>
+                <div class="card-body d-flex align-items-center justify-content-center">
+                    <?php
+                    $totalStocks = $infoCarnetSoins['stock'] + $infoCarnetSante['stock'] + $stockFichesAg20;
+                    ?>
+                    <?php if ($totalStocks === 0): ?>
+                        <p class="text-muted text-center py-4">Tous les stocks sont à zéro.</p>
+                    <?php else: ?>
+                        <canvas id="chartCarnetsFiches" height="220"></canvas>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+        <!-- KPIs stocks détaillés -->
+        <div class="col-md-7">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header border-0 bg-light">
+                    <h6 class="mb-0"><i class="bi bi-journal-check me-2"></i>Détail stocks &amp; consommation (période)</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <!-- Carnet de soins -->
+                        <?php
+                        $clsSoins = $infoCarnetSoins['stock'] === 0 ? 'danger' :
+                                   ($infoCarnetSoins['stock'] <= $infoCarnetSoins['seuil'] ? 'warning' : 'success');
+                        ?>
+                        <div class="col-md-4 col-sm-6">
+                            <div class="card border-<?= $clsSoins ?> h-100">
+                                <div class="card-body text-center p-3">
+                                    <i class="bi bi-journal-medical fs-3 text-<?= $clsSoins ?>"></i>
+                                    <div class="fw-bold fs-4 text-<?= $clsSoins ?> mt-1"><?= $infoCarnetSoins['stock'] ?></div>
+                                    <div class="text-muted small">Carnets de soins</div>
+                                    <hr class="my-2">
+                                    <div class="small">
+                                        <span class="text-danger"><i class="bi bi-arrow-down-circle me-1"></i><?= $sortiesSoinsPeriode ?> distribués</span><br>
+                                        <span class="text-muted">Seuil : <?= $infoCarnetSoins['seuil'] ?></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Carnet de santé -->
+                        <?php
+                        $clsSante = $infoCarnetSante['stock'] === 0 ? 'danger' :
+                                   ($infoCarnetSante['stock'] <= $infoCarnetSante['seuil'] ? 'warning' : 'success');
+                        ?>
+                        <div class="col-md-4 col-sm-6">
+                            <div class="card border-<?= $clsSante ?> h-100">
+                                <div class="card-body text-center p-3">
+                                    <i class="bi bi-journal-plus fs-3 text-<?= $clsSante ?>"></i>
+                                    <div class="fw-bold fs-4 text-<?= $clsSante ?> mt-1"><?= $infoCarnetSante['stock'] ?></div>
+                                    <div class="text-muted small">Carnets de santé</div>
+                                    <hr class="my-2">
+                                    <div class="small">
+                                        <span class="text-danger"><i class="bi bi-arrow-down-circle me-1"></i><?= $sortiesSantePeriode ?> distribués</span><br>
+                                        <span class="text-muted">Seuil : <?= $infoCarnetSante['seuil'] ?></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Fiches AG -->
+                        <?php
+                        $clsFag = $stockFichesAg20 === 0 ? 'danger' :
+                                 ($stockFichesAg20 <= $seuilFichesAg20 ? 'warning' : 'success');
+                        ?>
+                        <div class="col-md-4 col-sm-6">
+                            <div class="card border-<?= $clsFag ?> h-100">
+                                <div class="card-body text-center p-3">
+                                    <i class="bi bi-file-medical fs-3 text-<?= $clsFag ?>"></i>
+                                    <div class="fw-bold fs-4 text-<?= $clsFag ?> mt-1"><?= $stockFichesAg20 ?></div>
+                                    <div class="text-muted small">Fiches AG</div>
+                                    <hr class="my-2">
+                                    <div class="small">
+                                        <span class="text-danger"><i class="bi bi-arrow-down-circle me-1"></i><?= $sortiesFagPeriode ?> distribuées</span><br>
+                                        <span class="text-muted">Seuil : <?= $seuilFichesAg20 ?></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Lien paramétrage -->
+                    <div class="mt-3 text-end">
+                        <a href="<?= url('index.php?page=parametrage&section=carnets') ?>" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-gear me-1"></i>Gérer les stocks
+                        </a>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -2059,6 +2199,13 @@ $jsDataSexe        = json_encode($dataSexe);
 $jsLabelsAge       = json_encode($labelsAge);
 $jsDataAge         = json_encode($dataAge);
 
+// Carnets & fiches – données pour le graphique secteur
+$jsDataCarnetsFiches = json_encode([
+    $infoCarnetSoins['stock'],
+    $infoCarnetSante['stock'],
+    $stockFichesAg20,
+]);
+
 $jsImprimerRedevancesUrl = json_encode(url('modules/dashboard/imprimer_redevances.php'));
 $jsImprimerPharmacieUrl  = json_encode(url('modules/dashboard/imprimer_pharmacie.php'));
 
@@ -2183,6 +2330,51 @@ new Chart(document.getElementById('chartProduits'),{
         type:'polarArea',
         data:{labels,datasets:[{data,backgroundColor:PALETTE.map(c=>c+'cc'),borderWidth:1}]},
         options:{responsive:true,plugins:{legend:{position:'bottom'}}}
+    });
+})();
+
+// ─── Graphique secteur : Carnets & Fiches ───────────────────────────────────
+(function(){
+    const cfCanvas = document.getElementById('chartCarnetsFiches');
+    if (!cfCanvas) return;
+    const cfData   = {$jsDataCarnetsFiches};
+    const cfLabels = ['Carnets de soins', 'Carnets de santé', 'Fiches AG'];
+    const cfColors = ['#1565c0', '#2e7d32', '#e65100'];
+    const total    = cfData.reduce((a, b) => a + b, 0);
+    if (total === 0) {
+        cfCanvas.closest('.card-body').innerHTML =
+            '<p class="text-muted text-center py-4">Tous les stocks sont à zéro.</p>';
+        return;
+    }
+    new Chart(cfCanvas, {
+        type: 'doughnut',
+        data: {
+            labels: cfLabels,
+            datasets: [{
+                data: cfData,
+                backgroundColor: cfColors,
+                borderColor: '#fff',
+                borderWidth: 3,
+                hoverOffset: 8,
+            }]
+        },
+        options: {
+            responsive: true,
+            cutout: '55%',
+            plugins: {
+                legend: { position: 'bottom', labels: { padding: 14, font: { size: 12 } } },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => {
+                            const pct = total > 0
+                                ? Math.round((ctx.parsed / total) * 100)
+                                : 0;
+                            return ' ' + ctx.label + ' : ' + ctx.parsed + ' (' + pct + '%)';
+                        }
+                    }
+                }
+            }
+        }
     });
 })();
 

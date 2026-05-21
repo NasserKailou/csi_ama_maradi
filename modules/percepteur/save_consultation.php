@@ -153,10 +153,11 @@ try {
                           ? (int)TARIF_CARNET_SOINS
                           : 0;
 
-        // Bloquer si carnet demandé et stock = 0
-        if ($avecCarnet && $typePatient === 'normal' && $stockCarnets <= 0) {
+        // Bloquer si carnet demandé et stock = 0 (déjà vérifié avant la transaction, mais doublon de sécurité)
+        // Note : $checkSoins est déjà lu juste avant la transaction, on réutilise sa valeur
+        if ($avecCarnet && $typePatient === 'normal' && isset($checkSoins) && $checkSoins['stock'] <= 0) {
             $pdo->rollBack();
-            jsonError('Stock de carnets épuisé. Veuillez réapprovisionner les carnets (Paramétrage → Carnets).');
+            jsonError('Stock de carnets de soins épuisé. Veuillez réapprovisionner (Paramétrage → Carnets de soins).');
         }
 
         $supplementAge = ($age > AGE_LIMITE_SUPPLEMENT) ? (int)TARIF_SUPPLEMENT_ADULTE : 0;
@@ -303,15 +304,8 @@ if ($supplementAge > 0 && $typeConsult === 'standard') {
         ? 'Reçu orphelin enregistré (gratuité totale — montant théorique : ' . $montantTotal . ' F).'
         : 'Reçu enregistré : ' . $montantTotal . ' F = ' . implode(' + ', $details);
 
-    // Alerte carnets bas
-    $alertCarnets = '';
-    if ($avecCarnet && $typePatient === 'normal' && $typeConsult === 'standard') {
-        if ($stockCarnets === 0) {
-            $alertCarnets = 'ATTENTION : Plus aucun carnet disponible !';
-        } elseif ($stockCarnets <= $seuilCarnets) {
-            $alertCarnets = 'Attention : Stock carnets bas – Reste ' . $stockCarnets . ' carnet(s). Seuil d\'alerte : ' . $seuilCarnets . '.';
-        }
-    }
+    // Alerte carnets bas — basée sur $stockSoinsInfo qui est déjà rempli
+    $alertCarnets = $stockSoinsInfo['alerte'] ?? '';
 
     jsonSuccess($message, [
         'recu_id'           => $recuId,
