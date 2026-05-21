@@ -59,6 +59,12 @@ if (!in_array($optionGratuite, [0, 1, 2, 3], true)) {
     $optionGratuite = 0;
 }
 
+// ✅ Type de carnet choisi : 'soins' ou 'sante' (obligatoire si option 1 ou 2)
+// Par défaut : 'soins' (sécurité — ne doit pas arriver si JS valide)
+$carnetTypePost = strtolower(trim($_POST['carnet_type'] ?? 'soins'));
+$carnetType     = ($carnetTypePost === 'sante') ? CarnetsHelper::TYPE_SANTE : CarnetsHelper::TYPE_SOINS;
+$carnetTypeLib  = ($carnetType === CarnetsHelper::TYPE_SANTE) ? 'santé' : 'soins';
+
 // ─── Validations ──────────────────────────────────────────────────────────
 if (!$nom || !$acteId) {
     jsonError('Nom et acte gratuit obligatoires.');
@@ -185,16 +191,17 @@ try {
     ]);
 
     // ── 6. Décrémentation stock carnets si carnet distribué (option 1 ou 2) ──
+    //    On décrémente le TYPE choisi par le percepteur (soins OU santé)
     $stockCarnets   = 0;
     $alerteCarnets  = '';
     if ($optionGratuite === 1 || $optionGratuite === 2) {
         $commentaireMvt = ($optionGratuite === 2)
-            ? 'Carnet de santé acte gratuit (+fiche) #' . $numRecu
-            : 'Carnet de santé acte gratuit #' . $numRecu;
+            ? "Carnet de {$carnetTypeLib} acte gratuit (+fiche) #{$numRecu}"
+            : "Carnet de {$carnetTypeLib} acte gratuit #{$numRecu}";
 
         $res = CarnetsHelper::decrement(
             $pdo,
-            CarnetsHelper::TYPE_SANTE,
+            $carnetType,          // ← TYPE_SOINS ou TYPE_SANTE selon le choix
             $recuId,
             $commentaireMvt,
             $userId
@@ -202,8 +209,9 @@ try {
         $stockCarnets  = $res['stock_apres'];
         $alerteCarnets = $res['alerte'];
     } else {
-        $info = CarnetsHelper::getStock($pdo, CarnetsHelper::TYPE_SANTE);
-        $stockCarnets = $info['stock'];
+        // Pas de carnet : on renvoie les stocks des deux types pour info
+        $infoSoins    = CarnetsHelper::getStock($pdo, CarnetsHelper::TYPE_SOINS);
+        $stockCarnets = $infoSoins['stock']; // stock soins renvoyé par défaut
     }
 
     // ── 7. Décrémentation stock fiches AG si option 2 (carnet + fiche) ──────
@@ -254,12 +262,13 @@ try {
     $pdfFile = $pdf->generateConsultation($recuId);
 
     // ── 9. Réponse JSON ──────────────────────────────────────────────────
+    $carnetLibMsg = ucfirst($carnetTypeLib); // 'Soins' ou 'Santé'
     switch ($optionGratuite) {
         case 1:
-            $message = 'Acte gratuit + Carnet (100 F) enregistré.';
+            $message = "Acte gratuit + Carnet de {$carnetTypeLib} (100 F) enregistré.";
             break;
         case 2:
-            $message = 'Acte gratuit + Carnet + Fiche (400 F) enregistré.';
+            $message = "Acte gratuit + Carnet de {$carnetTypeLib} + Fiche (400 F) enregistré.";
             break;
         case 3:
             $message = 'Acte gratuit + Fiche (300 F) enregistré.';
@@ -272,10 +281,11 @@ try {
         'recu_id'           => $recuId,
         'numero_recu'       => $numRecu,
         'option_gratuite'   => $optionGratuite,
+        'carnet_type'       => ($optionGratuite === 1 || $optionGratuite === 2) ? $carnetType : null,
         'montant_total'     => $montantTotal,
         'montant_encaisse'  => $montantEncaisse,
-        'stock_carnets_sante' => $stockCarnets,
-        'alerte_carnets'      => $alerteCarnets,
+        'stock_carnets'     => $stockCarnets,
+        'alerte_carnets'    => $alerteCarnets,
         'stock_fiches_ag'   => $stockFichesAg,
         'alerte_fiches_ag'  => $alerteFichesAg,
         'pdf_url'           => url('uploads/pdf/' . basename($pdfFile)),

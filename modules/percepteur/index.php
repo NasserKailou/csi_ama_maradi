@@ -962,19 +962,37 @@ include ROOT_PATH . '/templates/layouts/header.php';
 
                         <!-- ✅ Situation stock carnets dans le formulaire acte gratuit -->
                         <div class="col-12">
-                            <?php
-                            $agAlertCls  = $stockCarnetsSante === 0 ? 'danger' : ($stockCarnetsSante <= $seuilCarnetsSante ? 'warning' : 'info');
-                            $agAlertIcon = $stockCarnetsSante === 0 ? 'exclamation-octagon-fill' : ($stockCarnetsSante <= $seuilCarnetsSante ? 'exclamation-triangle-fill' : 'journal-plus');
-                                $agAlertTxt  = $stockCarnetsSante === 0
-                                    ? 'Aucun carnet de santé disponible — les options carnet restent accessibles (priorité patient).'
+                            <div class="row g-2">
+                                <?php
+                                // Carnet de soins
+                                $agSoinsCls  = $stockCarnetsSoins === 0 ? 'danger' : ($stockCarnetsSoins <= $seuilCarnetsSoins ? 'warning' : 'info');
+                                $agSoinsIcon = $stockCarnetsSoins === 0 ? 'exclamation-octagon-fill' : ($stockCarnetsSoins <= $seuilCarnetsSoins ? 'exclamation-triangle-fill' : 'journal-plus');
+                                $agSoinsTxt  = $stockCarnetsSoins === 0
+                                    ? 'Aucun carnet de soins disponible.'
+                                    : ($stockCarnetsSoins <= $seuilCarnetsSoins
+                                        ? "Carnets de soins bas : <strong>{$stockCarnetsSoins}</strong> restant(s)."
+                                        : "Carnets de soins : <strong>{$stockCarnetsSoins}</strong> disponible(s).");
+                                // Carnet de santé
+                                $agSanteCls  = $stockCarnetsSante === 0 ? 'danger' : ($stockCarnetsSante <= $seuilCarnetsSante ? 'warning' : 'info');
+                                $agSanteIcon = $stockCarnetsSante === 0 ? 'exclamation-octagon-fill' : ($stockCarnetsSante <= $seuilCarnetsSante ? 'exclamation-triangle-fill' : 'journal-plus');
+                                $agSanteTxt  = $stockCarnetsSante === 0
+                                    ? 'Aucun carnet de santé disponible.'
                                     : ($stockCarnetsSante <= $seuilCarnetsSante
-                                        ? "Stock carnets de santé bas : <strong>{$stockCarnetsSante}</strong> restant(s) (seuil : {$seuilCarnetsSante})."
-                                        : "Stock carnets de santé : <strong>{$stockCarnetsSante}</strong> disponible(s).");
-
-                            ?>
-                            <div class="alert alert-<?= $agAlertCls ?> py-2 mb-0 d-flex align-items-center gap-2">
-                                <i class="bi bi-<?= $agAlertIcon ?> flex-shrink-0"></i>
-                                <span class="small"><?= $agAlertTxt ?></span>
+                                        ? "Carnets de santé bas : <strong>{$stockCarnetsSante}</strong> restant(s)."
+                                        : "Carnets de santé : <strong>{$stockCarnetsSante}</strong> disponible(s).");
+                                ?>
+                                <div class="col-md-6">
+                                    <div class="alert alert-<?= $agSoinsCls ?> py-2 mb-0 d-flex align-items-center gap-2">
+                                        <i class="bi bi-<?= $agSoinsIcon ?> flex-shrink-0"></i>
+                                        <span class="small"><i class="bi bi-baby me-1"></i><?= $agSoinsTxt ?></span>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="alert alert-<?= $agSanteCls ?> py-2 mb-0 d-flex align-items-center gap-2">
+                                        <i class="bi bi-<?= $agSanteIcon ?> flex-shrink-0"></i>
+                                        <span class="small"><i class="bi bi-heart-pulse me-1"></i><?= $agSanteTxt ?></span>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -1048,6 +1066,54 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                             <div class="text-muted small">Carnet 100 F + Fiche 300 F</div>
                                             <div class="fw-bold text-warning mt-1"><strong>400 F</strong></div>
                                         </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ✅ Choix type de carnet — visible seulement si option 1 ou 2 cochée -->
+                        <div class="col-12" id="agCarnetTypeWrapper" style="display:none;">
+                            <div class="p-3 rounded border border-primary-subtle" style="background:#f0f4ff;">
+                                <label class="form-label fw-semibold mb-2">
+                                    <i class="bi bi-bookmark-check-fill text-primary me-1"></i>
+                                    Type de carnet à distribuer <span class="text-danger">*</span>
+                                </label>
+                                <div class="row g-2">
+                                    <div class="col-md-6">
+                                        <div class="form-check border rounded p-3 h-100 ag-carnet-type-card" id="optCarnetSoinsCard">
+                                            <input class="form-check-input" type="radio"
+                                                   name="carnet_type" id="agCarnetSoins" value="soins" checked>
+                                            <label class="form-check-label w-100" for="agCarnetSoins">
+                                                <span class="fw-semibold">
+                                                    <i class="bi bi-baby text-success me-1"></i>
+                                                    Carnet de soins
+                                                </span>
+                                                <div class="text-muted small mt-1">Nourrissons &amp; enfants</div>
+                                                <div class="mt-1">
+                                                    <span class="badge bg-success-subtle text-success border border-success-subtle">
+                                                        Stock : <?= $stockCarnetsSoins ?>
+                                                    </span>
+                                                </div>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="form-check border rounded p-3 h-100 ag-carnet-type-card" id="optCarnetSanteCard">
+                                            <input class="form-check-input" type="radio"
+                                                   name="carnet_type" id="agCarnetSante" value="sante">
+                                            <label class="form-check-label w-100" for="agCarnetSante">
+                                                <span class="fw-semibold">
+                                                    <i class="bi bi-heart-pulse text-danger me-1"></i>
+                                                    Carnet de santé
+                                                </span>
+                                                <div class="text-muted small mt-1">Femmes CPN &amp; consultations prénatales</div>
+                                                <div class="mt-1">
+                                                    <span class="badge bg-danger-subtle text-danger border border-danger-subtle">
+                                                        Stock : <?= $stockCarnetsSante ?>
+                                                    </span>
+                                                </div>
+                                            </label>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -1721,10 +1787,23 @@ function updateMontantActeGratuit() {
     const checked = document.querySelector('.ag-carnet-radio:checked');
     const display = document.getElementById('agMontantAffiche');
     const detail  = document.getElementById('agMontantDetail');
+    const carnetTypeWrapper = document.getElementById('agCarnetTypeWrapper');
 
     if (!checked || !display) return;
 
     const option = parseInt(checked.value, 10);
+    const avecCarnet = (option === 1 || option === 2);
+
+    // Afficher / cacher le sous-sélecteur type de carnet
+    if (carnetTypeWrapper) {
+        carnetTypeWrapper.style.display = avecCarnet ? '' : 'none';
+    }
+
+    // Déduire le libellé du type de carnet sélectionné
+    const carnetTypeChecked = document.querySelector('input[name="carnet_type"]:checked');
+    const carnetType = carnetTypeChecked ? carnetTypeChecked.value : 'soins';
+    const carnetLibelle = carnetType === 'sante' ? 'Carnet de santé' : 'Carnet de soins';
+
     let montant = 0;
     let colorClass = 'text-success';
     let detailText = 'Acte gratuit seul';
@@ -1732,11 +1811,11 @@ function updateMontantActeGratuit() {
     if (option === 1) {
         montant = TARIF_CARNET_SANTE; // 100
         colorClass = 'text-primary';
-        detailText = `Acte gratuit + Carnet ${TARIF_CARNET_SANTE} F`;
+        detailText = `Acte gratuit + ${carnetLibelle} ${TARIF_CARNET_SANTE} F`;
     } else if (option === 2) {
         montant = TARIF_CARNET_SANTE + TARIF_FICHE; // 100 + 300 = 400
         colorClass = 'text-warning';
-        detailText = `Acte gratuit + Carnet ${TARIF_CARNET_SANTE} F + Fiche ${TARIF_FICHE} F`;
+        detailText = `Acte gratuit + ${carnetLibelle} ${TARIF_CARNET_SANTE} F + Fiche ${TARIF_FICHE} F`;
     } else if (option === 3) {
         montant = TARIF_FICHE; // 300
         colorClass = 'text-warning';
@@ -1748,7 +1827,7 @@ function updateMontantActeGratuit() {
 
     if (detail) detail.textContent = detailText;
 
-    // Mise à jour des styles des cartes
+    // Styles des cartes option
     const optSans = document.getElementById('optAGSansCarnet');
     const optAvec = document.getElementById('optAGAvecCarnet');
     const optAvecFiche = document.getElementById('optAGAvecFiche');
@@ -1763,7 +1842,29 @@ function updateMontantActeGratuit() {
     if (option === 1 && optAvec) optAvec.style.background = '#e3f2fd';
     if (option === 2 && optAvecCarnetFiche) optAvecCarnetFiche.style.background = '#fff8e1';
     if (option === 3 && optAvecFiche) optAvecFiche.style.background = '#fff8e1';
+
+    // Styles des cartes type de carnet
+    const cardSoins = document.getElementById('optCarnetSoinsCard');
+    const cardSante = document.getElementById('optCarnetSanteCard');
+    if (cardSoins && cardSante) {
+        cardSoins.style.background = (carnetType === 'soins') ? '#e8f5e9' : '';
+        cardSante.style.background = (carnetType === 'sante') ? '#fce4ec' : '';
+    }
 }
+
+// Mise à jour du libellé quand on change de type de carnet
+document.querySelectorAll('input[name="carnet_type"]').forEach(r =>
+    r.addEventListener('change', function() {
+        updateMontantActeGratuit();
+        // Styles
+        const cardSoins = document.getElementById('optCarnetSoinsCard');
+        const cardSante = document.getElementById('optCarnetSanteCard');
+        if (cardSoins && cardSante) {
+            cardSoins.style.background = (this.value === 'soins') ? '#e8f5e9' : '';
+            cardSante.style.background = (this.value === 'sante') ? '#fce4ec' : '';
+        }
+    })
+);
 
 document.querySelectorAll('.ag-carnet-radio').forEach(r =>
     r.addEventListener('change', updateMontantActeGratuit)
@@ -1775,6 +1876,18 @@ if (modalAGEl) {
     modalAGEl.addEventListener('show.bs.modal', function() {
         const r = document.getElementById('agSansCarnet');
         if (r) r.checked = true;
+
+        // Réinitialiser type carnet → soins par défaut
+        const defaultCarnet = document.getElementById('agCarnetSoins');
+        if (defaultCarnet) defaultCarnet.checked = true;
+        const cardSoins = document.getElementById('optCarnetSoinsCard');
+        const cardSante = document.getElementById('optCarnetSanteCard');
+        if (cardSoins) cardSoins.style.background = '';
+        if (cardSante) cardSante.style.background = '';
+
+        // Masquer le sélecteur type de carnet (option 0 cochée par défaut)
+        const carnetTypeWrapper = document.getElementById('agCarnetTypeWrapper');
+        if (carnetTypeWrapper) carnetTypeWrapper.style.display = 'none';
 
         const tel  = document.getElementById('fTelAG');
         const nom  = document.getElementById('fNomAG');
@@ -1815,11 +1928,20 @@ window.saveActeGratuit = function() {
         return;
     }
 
+    // Validation type de carnet obligatoire si option 1 ou 2
+    const avecCarnetOpt = (data.option_gratuite === '1' || data.option_gratuite === '2');
+    if (avecCarnetOpt && !data.carnet_type) {
+        showToast('warning', 'Veuillez choisir le type de carnet (soins ou santé).');
+        return;
+    }
+
+    const carnetLibelle = data.carnet_type === 'sante' ? 'Carnet de santé' : 'Carnet de soins';
+
     let libelleMontant = '0 F (acte gratuit seul)';
     if (data.option_gratuite === '1') {
-        libelleMontant = '100 F (acte gratuit + carnet)';
+        libelleMontant = `100 F (acte gratuit + ${carnetLibelle})`;
     } else if (data.option_gratuite === '2') {
-        libelleMontant = '400 F (acte gratuit + carnet + fiche)';
+        libelleMontant = `400 F (acte gratuit + ${carnetLibelle} + fiche)`;
     } else if (data.option_gratuite === '3') {
         libelleMontant = '300 F (acte gratuit + fiche)';
     }
