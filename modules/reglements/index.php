@@ -26,6 +26,9 @@ switch ($action) {
     case 'facture':
         afficherFacture($pdo);
         exit;
+    case 'pdf_instance':
+        imprimerInstancePdf($pdo);
+        exit;
     case 'liste':
     default:
         afficherListe($pdo);
@@ -342,6 +345,286 @@ function afficherFacture(PDO $pdo) {
     <?php
 }
 
+
+// =====================================================================
+// PDF : LISTE DES REGLEMENTS ORPHELINS EN INSTANCE
+// Pharmacie + Examens uniquement (consultations gratuites non incluses)
+// =====================================================================
+function imprimerInstancePdf(PDO $pdo) {
+
+    // Nom du centre
+    $nomCentre = $pdo->query("SELECT valeur FROM config_systeme WHERE cle='nom_centre' AND isDeleted=0 LIMIT 1")->fetchColumn() ?: 'CSI AMA MARADI';
+
+    // Stats globaux (pharmacie + examens uniquement)
+    $statsGlobal = $pdo->query("
+        SELECT COUNT(DISTINCT id) AS nb_recus,
+               COUNT(DISTINCT patient_id) AS nb_orphelins,
+               COALESCE(SUM(montant_total), 0) AS grand_total
+        FROM recus
+        WHERE isDeleted = 0 AND type_patient = 'orphelin'
+          AND statut_reglement = 'en_instance'
+          AND type_recu IN ('examen', 'pharmacie')
+    ")->fetch(PDO::FETCH_ASSOC) ?: ['nb_recus' => 0, 'nb_orphelins' => 0, 'grand_total' => 0];
+
+    // Orphelins avec leurs recus pharmacie+examen en instance
+    $orphelins = $pdo->query("
+        SELECT p.id AS patient_id, p.nom, p.sexe, p.age, p.provenance,
+               COUNT(r.id) AS nb_recus,
+               COALESCE(SUM(r.montant_total), 0) AS total_du,
+               MIN(r.whendone) AS premiere_visite,
+               MAX(r.whendone) AS derniere_visite
+        FROM patients p
+        JOIN recus r ON r.patient_id = p.id AND r.isDeleted = 0
+                    AND r.type_patient = 'orphelin'
+                    AND r.statut_reglement = 'en_instance'
+                    AND r.type_recu IN ('examen', 'pharmacie')
+        WHERE p.isDeleted = 0
+        GROUP BY p.id
+        ORDER BY p.nom ASC
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+    // Pour chaque orphelin, charger ses recus + lignes details
+    $recusParOrphelin = [];
+    $detailsParRecu   = [];
+    if (!empty($orphelins)) {
+        $patientIds = array_column($orphelins, 'patient_id');
+        $phP = implode(',', array_fill(0, count($patientIds), '?'));
+
+        $stmtR = $pdo->prepare("
+            SELECT r.id, r.numero_recu, r.type_recu, r.montant_total, r.whendone, r.patient_id
+            FROM recus r
+            WHERE r.isDeleted = 0 AND r.type_patient = 'orphelin'
+              AND r.statut_reglement = 'en_instance'
+              AND r.type_recu IN ('examen', 'pharmacie')
+              AND r.patient_id IN ($phP)
+            ORDER BY r.patient_id, r.whendone ASC
+        ");
+        $stmtR->execute($patientIds);
+        $allRecus = $stmtR->fetchAll(PDO::FETCH_ASSOC);
+
+        foreach ($allRecus as $r) {
+            $recusParOrphelin[$r['patient_id']][] = $r;
+        }
+
+        if (!empty($allRecus)) {
+            $recuIds = array_column($allRecus, 'id');
+            $phR = implode(',', array_fill(0, count($recuIds), '?'));
+
+            // Lignes examen
+            $stmtE = $pdo->prepare("SELECT recu_id, libelle, cout_total FROM lignes_examen WHERE isDeleted=0 AND recu_id IN ($phR)");
+            $stmtE->execute($recuIds);
+            foreach ($stmtE as $l) {
+                $detailsParRecu[$l['recu_id']][] = ['lib' => $l['libelle'], 'mt' => $l['cout_total']];
+            }
+
+            // Lignes pharmacie
+            $stmtP = $pdo->prepare("SELECT recu_id, nom, quantite, total_ligne FROM lignes_pharmacie WHERE isDeleted=0 AND recu_id IN ($phR)");
+            $stmtP->execute($recuIds);
+            foreach ($stmtP as $l) {
+                $detailsParRecu[$l['recu_id']][] = ['lib' => $l['nom'] . ' x' . $l['quantite'], 'mt' => $l['total_ligne']];
+            }
+        }
+    }
+
+    // Reference document + QR code (via api.qrserver.com)
+    $docRef  = 'INST-' . date('Ymd') . '-' . strtoupper(substr(md5(uniqid()), 0, 6));
+    $dateDoc = date('d/m/Y');
+    $qrData  = 'Ref:' . $docRef . '|Date:' . $dateDoc . '|Orphelins:' . $statsGlobal['nb_orphelins'] . '|Total:' . number_format((float)$statsGlobal['grand_total'], 0, ',', ' ') . ' FCFA';
+    $qrUrl   = 'https://api.qrserver.com/v1/create-qr-code/?size=110x110&data=' . urlencode($qrData);
+
+    ?>
+    <!DOCTYPE html>
+    <html lang="fr">
+    <head>
+    <meta charset="UTF-8">
+    <title>Reglements en instance &mdash; <?= h($docRef) ?></title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #222; padding: 18px 22px; }
+
+        /* ===== EN-TETE ===== */
+        .doc-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px double #1a5276; padding-bottom: 10px; margin-bottom: 14px; }
+        .doc-header-left { flex: 1; }
+        .doc-header-left h1 { font-size: 17px; color: #1a5276; margin-bottom: 2px; }
+        .doc-header-left .subtitle { font-size: 12px; color: #555; }
+        .doc-header-left .doc-title { font-size: 14px; font-weight: bold; color: #922b21; margin-top: 6px; text-transform: uppercase; letter-spacing: .5px; }
+        .doc-header-right { text-align: right; }
+        .doc-header-right img { display: block; margin-left: auto; margin-bottom: 4px; }
+        .doc-ref { font-size: 10px; color: #555; }
+
+        /* ===== BANDEAU STATS ===== */
+        .stats-band { display: flex; gap: 10px; margin-bottom: 14px; }
+        .stat-box { flex: 1; border: 1px solid #d5d8dc; border-radius: 5px; padding: 8px 10px; text-align: center; background: #f8f9fa; }
+        .stat-box .val { font-size: 18px; font-weight: bold; color: #1a5276; }
+        .stat-box .lbl { font-size: 10px; color: #666; }
+        .notice-box { background: #fef9e7; border-left: 4px solid #f39c12; padding: 7px 10px; margin-bottom: 14px; font-size: 10.5px; color: #6d4c0a; border-radius: 3px; }
+
+        /* ===== ORPHELINS ===== */
+        .orphelin-block { margin-bottom: 16px; page-break-inside: avoid; border: 1px solid #d0d3d4; border-radius: 5px; overflow: hidden; }
+        .orphelin-header { display: flex; justify-content: space-between; align-items: center; background: #1a5276; color: #fff; padding: 6px 10px; }
+        .orphelin-header .oname { font-weight: bold; font-size: 12px; }
+        .orphelin-header .ometa { font-size: 10px; opacity: .85; }
+        .orphelin-header .ototal { font-weight: bold; font-size: 13px; background: #d6eaf8; color: #1a5276; padding: 2px 8px; border-radius: 4px; }
+
+        table.recus-table { width: 100%; border-collapse: collapse; }
+        table.recus-table thead tr { background: #eaf2ff; }
+        table.recus-table th { padding: 5px 7px; text-align: left; font-size: 10.5px; border-bottom: 1px solid #ccc; }
+        table.recus-table td { padding: 4px 7px; border-bottom: 1px solid #e8e8e8; vertical-align: top; font-size: 10.5px; }
+        table.recus-table tr:last-child td { border-bottom: none; }
+        .badge-type { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 9.5px; font-weight: bold; }
+        .badge-examen    { background: #d6eaf8; color: #1a5276; }
+        .badge-pharmacie { background: #d5f5e3; color: #1e8449; }
+        table.recus-table .text-right { text-align: right; }
+        .subtotal-row td { background: #eaf2ff; font-weight: bold; text-align: right; border-top: 1px solid #aed6f1; }
+
+        /* ===== GRAND TOTAL ===== */
+        .grand-total-box { border: 2px solid #1a5276; border-radius: 5px; padding: 10px 16px; margin-top: 16px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; background: #eaf2ff; page-break-inside: avoid; }
+        .grand-total-box .gt-label { font-size: 13px; font-weight: bold; color: #1a5276; }
+        .grand-total-box .gt-value { font-size: 20px; font-weight: bold; color: #922b21; }
+
+        /* ===== SIGNATURES ===== */
+        .signatures { display: flex; justify-content: space-around; margin-top: 40px; page-break-inside: avoid; }
+        .sig-box { text-align: center; width: 28%; }
+        .sig-line { border-top: 1px solid #555; margin-top: 55px; padding-top: 4px; font-size: 10.5px; }
+
+        /* ===== PRINT ===== */
+        .no-print { margin-bottom: 14px; display: flex; gap: 10px; }
+        .btn-print { padding: 7px 16px; background: #1a5276; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
+        .btn-back  { padding: 7px 16px; background: #6c757d; color: #fff; border: none; border-radius: 4px; text-decoration: none; font-size: 13px; }
+        @media print {
+            .no-print { display: none !important; }
+            body { padding: 8px 12px; }
+            .orphelin-block { page-break-inside: avoid; }
+        }
+    </style>
+    </head>
+    <body>
+
+    <div class="no-print">
+        <button class="btn-print" onclick="window.print()">&#128438; Imprimer / Enregistrer PDF</button>
+        <a class="btn-back" href="<?= url('index.php?page=reglements') ?>">&#8592; Retour</a>
+    </div>
+
+    <!-- En-tete document -->
+    <div class="doc-header">
+        <div class="doc-header-left">
+            <h1><?= h($nomCentre) ?></h1>
+            <div class="subtitle">Programme DirectAid AMA &mdash; Maradi, Niger</div>
+            <div class="doc-title">Situation des reglements orphelins en instance</div>
+            <div class="doc-ref" style="margin-top:6px;">
+                <strong>Ref. document :</strong> <?= h($docRef) ?> &nbsp;|&nbsp;
+                <strong>Edite le :</strong> <?= $dateDoc ?> a <?= date('H:i') ?> &nbsp;|&nbsp;
+                <strong>Objet :</strong> Pharmacie &amp; Examens (consultations gratuites non comprises)
+            </div>
+        </div>
+        <div class="doc-header-right">
+            <img src="<?= $qrUrl ?>" width="110" height="110" alt="QR Code" title="QR Code de verification">
+            <div class="doc-ref" style="font-size:9px; text-align:center;"><?= h($docRef) ?></div>
+        </div>
+    </div>
+
+    <!-- Bandeau stats -->
+    <div class="stats-band">
+        <div class="stat-box">
+            <div class="val"><?= $statsGlobal['nb_orphelins'] ?></div>
+            <div class="lbl">Orphelins en instance</div>
+        </div>
+        <div class="stat-box">
+            <div class="val"><?= $statsGlobal['nb_recus'] ?></div>
+            <div class="lbl">Recus (exam. + pharm.)</div>
+        </div>
+        <div class="stat-box" style="background:#fef5e7; border-color:#f39c12;">
+            <div class="val" style="color:#922b21;"><?= number_format((float)$statsGlobal['grand_total'], 0, ',', ' ') ?></div>
+            <div class="lbl">Total du (FCFA)</div>
+        </div>
+    </div>
+
+    <!-- Note metier -->
+    <div class="notice-box">
+        <strong>Note :</strong> Conformement aux regles du programme DirectAid AMA, les consultations sont gratuites pour les orphelins et ne figurent pas dans ce document. Seules les depenses <strong>pharmacie</strong> et <strong>examens medicaux</strong> sont prises en charge.
+    </div>
+
+    <?php if (empty($orphelins)): ?>
+    <div style="text-align:center; padding:40px; color:#555; border:1px dashed #bbb; border-radius:6px;">
+        <strong>Aucune depense en instance</strong> &mdash; Toutes les situations sont a jour.
+    </div>
+    <?php else: ?>
+
+    <?php $rowNum = 1; foreach ($orphelins as $o): ?>
+    <div class="orphelin-block">
+        <div class="orphelin-header">
+            <div>
+                <span class="oname"><?= $rowNum++ ?>. <?= h($o['nom']) ?></span>
+                <span class="ometa">&nbsp;&mdash;&nbsp;<?= $o['sexe'] === 'F' ? 'Fille' : 'Garcon' ?>, <?= $o['age'] ?> ans<?= $o['provenance'] ? ' &mdash; ' . h($o['provenance']) : '' ?></span>
+            </div>
+            <div style="display:flex; align-items:center; gap:10px;">
+                <span class="ometa">
+                    <?= $o['nb_recus'] ?> recu<?= (int)$o['nb_recus'] > 1 ? 's' : '' ?> &nbsp;|&nbsp;
+                    <?= date('d/m/Y', strtotime($o['premiere_visite'])) ?>
+                    <?= $o['premiere_visite'] !== $o['derniere_visite'] ? ' > ' . date('d/m/Y', strtotime($o['derniere_visite'])) : '' ?>
+                </span>
+                <span class="ototal"><?= number_format((float)$o['total_du'], 0, ',', ' ') ?> FCFA</span>
+            </div>
+        </div>
+        <table class="recus-table">
+            <thead>
+                <tr>
+                    <th style="width:130px;">N Recu</th>
+                    <th style="width:85px;">Date</th>
+                    <th style="width:80px;">Type</th>
+                    <th>Details des prestations</th>
+                    <th style="width:110px;" class="text-right">Montant (FCFA)</th>
+                </tr>
+            </thead>
+            <tbody>
+            <?php foreach (($recusParOrphelin[$o['patient_id']] ?? []) as $r):
+                $typeLabel = $r['type_recu'] === 'examen' ? 'Examen' : 'Pharmacie';
+                $typeCls   = $r['type_recu'] === 'examen' ? 'badge-examen' : 'badge-pharmacie';
+                $lignes    = $detailsParRecu[$r['id']] ?? [];
+            ?>
+                <tr>
+                    <td><strong><?= h($r['numero_recu']) ?></strong></td>
+                    <td><?= date('d/m/Y', strtotime($r['whendone'])) ?></td>
+                    <td><span class="badge-type <?= $typeCls ?>"><?= $typeLabel ?></span></td>
+                    <td>
+                        <?php foreach ($lignes as $l): ?>
+                            &bull; <?= h($l['lib']) ?><br>
+                        <?php endforeach; ?>
+                        <?php if (empty($lignes)): ?><em style="color:#999;">—</em><?php endif; ?>
+                    </td>
+                    <td class="text-right"><?= number_format((float)$r['montant_total'], 0, ',', ' ') ?></td>
+                </tr>
+            <?php endforeach; ?>
+                <tr class="subtotal-row">
+                    <td colspan="4">Sous-total <?= h($o['nom']) ?> :</td>
+                    <td><?= number_format((float)$o['total_du'], 0, ',', ' ') ?> FCFA</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+    <?php endforeach; ?>
+
+    <!-- Grand total -->
+    <div class="grand-total-box">
+        <div class="gt-label">GRAND TOTAL A REGLER &mdash; <?= (int)$statsGlobal['nb_orphelins'] ?> orphelin<?= (int)$statsGlobal['nb_orphelins'] > 1 ? 's' : '' ?> (<?= (int)$statsGlobal['nb_recus'] ?> recus pharmacie &amp; examens)</div>
+        <div class="gt-value"><?= number_format((float)$statsGlobal['grand_total'], 0, ',', ' ') ?> FCFA</div>
+    </div>
+
+    <!-- Signatures -->
+    <div class="signatures">
+        <div class="sig-box"><div class="sig-line">Le Comptable</div></div>
+        <div class="sig-box"><div class="sig-line">Le Representant DirectAid AMA</div></div>
+        <div class="sig-box"><div class="sig-line">Le Directeur du CSI</div></div>
+    </div>
+
+    <?php endif; ?>
+
+    </body>
+    </html>
+    <?php
+}
+
+
 // =====================================================================
 // LISTE PRINCIPALE
 // =====================================================================
@@ -490,6 +773,9 @@ function afficherListe(PDO $pdo) {
                                     <button class="btn btn-warning" onclick="reglerTout()">
                                         <i class="bi bi-check2-all"></i> TOUT régler (<?= number_format((float)$statsInstance['total_du'],0,',',' ') ?> FCFA)
                                     </button>
+                                    <a href="<?= url('index.php?page=reglements&action=pdf_instance') ?>" target="_blank" class="btn btn-outline-danger">
+                                        <i class="bi bi-file-earmark-pdf"></i> PDF en instance
+                                    </a>
                                 </div>
                             </div>
 

@@ -670,6 +670,69 @@ $sortiesFagStmt = $pdo->prepare("
 ");
 try { $sortiesFagStmt->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $sortiesFagPeriode = (int)$sortiesFagStmt->fetchColumn(); } catch (Exception $e) { $sortiesFagPeriode = 0; }
 
+// ════════════════════════════════════════════════════════════════════════════
+// 20b. Stats carnets & fiches depuis les reçus émis (période)
+// ════════════════════════════════════════════════════════════════════════════
+// Carnet de soins : reçus normaux dont au moins une ligne a avec_carnet=1
+$stmtCsoinsRecus = $pdo->prepare("
+    SELECT COUNT(DISTINCT r.id) AS nb
+    FROM recus r
+    JOIN lignes_consultation lc ON lc.recu_id = r.id AND lc.isDeleted = 0
+    WHERE r.isDeleted = 0 AND r.type_recu = 'consultation'
+      AND lc.avec_carnet = 1
+      AND DATE(r.whendone) BETWEEN :d AND :f
+");
+try { $stmtCsoinsRecus->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbRecusCarnetSoins = (int)$stmtCsoinsRecus->fetchColumn(); } catch (Exception $e) { $nbRecusCarnetSoins = 0; }
+
+// Carnet santé : reçus normaux dont au moins une ligne a avec_carnet=2
+$stmtCsanteRecus = $pdo->prepare("
+    SELECT COUNT(DISTINCT r.id) AS nb
+    FROM recus r
+    JOIN lignes_consultation lc ON lc.recu_id = r.id AND lc.isDeleted = 0
+    WHERE r.isDeleted = 0 AND r.type_recu = 'consultation'
+      AND lc.avec_carnet = 2
+      AND DATE(r.whendone) BETWEEN :d AND :f
+");
+try { $stmtCsanteRecus->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbRecusCarnetSante = (int)$stmtCsanteRecus->fetchColumn(); } catch (Exception $e) { $nbRecusCarnetSante = 0; }
+
+// Carnet AG (acte gratuit avec carnet) : option_gratuite IN (1,2) sur reçus acte_gratuit
+$stmtCagRecus = $pdo->prepare("
+    SELECT COUNT(DISTINCT id) AS nb
+    FROM recus
+    WHERE isDeleted = 0 AND type_recu = 'acte_gratuit'
+      AND option_gratuite IN (1, 2)
+      AND DATE(whendone) BETWEEN :d AND :f
+");
+try { $stmtCagRecus->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbRecusCarnetAg = (int)$stmtCagRecus->fetchColumn(); } catch (Exception $e) { $nbRecusCarnetAg = 0; }
+
+// Fiche AG : option_gratuite IN (2,3) sur reçus acte_gratuit
+$stmtFagRecus = $pdo->prepare("
+    SELECT COUNT(DISTINCT id) AS nb
+    FROM recus
+    WHERE isDeleted = 0 AND type_recu = 'acte_gratuit'
+      AND option_gratuite IN (2, 3)
+      AND DATE(whendone) BETWEEN :d AND :f
+");
+try { $stmtFagRecus->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbRecusFicheAg = (int)$stmtFagRecus->fetchColumn(); } catch (Exception $e) { $nbRecusFicheAg = 0; }
+
+// Total reçus consultation période (tous types confondus, pour % utilisation carnet soins)
+$stmtTotalConsult = $pdo->prepare("
+    SELECT COUNT(DISTINCT id) AS nb
+    FROM recus
+    WHERE isDeleted = 0 AND type_recu = 'consultation'
+      AND DATE(whendone) BETWEEN :d AND :f
+");
+try { $stmtTotalConsult->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbTotalConsult = (int)$stmtTotalConsult->fetchColumn(); } catch (Exception $e) { $nbTotalConsult = 0; }
+
+// Total reçus acte_gratuit période
+$stmtTotalAg = $pdo->prepare("
+    SELECT COUNT(DISTINCT id) AS nb
+    FROM recus
+    WHERE isDeleted = 0 AND type_recu = 'acte_gratuit'
+      AND DATE(whendone) BETWEEN :d AND :f
+");
+try { $stmtTotalAg->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbTotalAg = (int)$stmtTotalAg->fetchColumn(); } catch (Exception $e) { $nbTotalAg = 0; }
+
 include ROOT_PATH . '/templates/layouts/header.php';
 ?>
 
@@ -1051,6 +1114,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         <?php
                         $clsSoins = $infoCarnetSoins['stock'] === 0 ? 'danger' :
                                    ($infoCarnetSoins['stock'] <= $infoCarnetSoins['seuil'] ? 'warning' : 'success');
+                        $pctSoins = $nbTotalConsult > 0 ? round($nbRecusCarnetSoins / $nbTotalConsult * 100) : 0;
                         ?>
                         <div class="col-md-4 col-sm-6">
                             <div class="card border-<?= $clsSoins ?> h-100">
@@ -1063,6 +1127,20 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                         <span class="text-danger"><i class="bi bi-arrow-down-circle me-1"></i><?= $sortiesSoinsPeriode ?> distribués</span><br>
                                         <span class="text-muted">Seuil : <?= $infoCarnetSoins['seuil'] ?></span>
                                     </div>
+                                    <hr class="my-2">
+                                    <div class="small fw-semibold text-primary">
+                                        <i class="bi bi-receipt me-1"></i>Utilisés sur reçus
+                                    </div>
+                                    <div class="small">
+                                        <span class="text-primary fw-bold fs-5"><?= $nbRecusCarnetSoins ?></span>
+                                        <span class="text-muted"> reçu<?= $nbRecusCarnetSoins !== 1 ? 's' : '' ?></span>
+                                    </div>
+                                    <?php if ($nbTotalConsult > 0): ?>
+                                    <div class="progress mt-1" style="height:5px;" title="<?= $pctSoins ?>% des <?= $nbTotalConsult ?> consultations">
+                                        <div class="progress-bar bg-primary" style="width:<?= $pctSoins ?>%"></div>
+                                    </div>
+                                    <div class="text-muted" style="font-size:0.72rem;"><?= $pctSoins ?>% des <?= $nbTotalConsult ?> consultations</div>
+                                    <?php endif; ?>
                                 </div>
                             </div>
                         </div>
@@ -1070,6 +1148,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         <?php
                         $clsSante = $infoCarnetSante['stock'] === 0 ? 'danger' :
                                    ($infoCarnetSante['stock'] <= $infoCarnetSante['seuil'] ? 'warning' : 'success');
+                        $pctSante = $nbTotalConsult > 0 ? round($nbRecusCarnetSante / $nbTotalConsult * 100) : 0;
                         ?>
                         <div class="col-md-4 col-sm-6">
                             <div class="card border-<?= $clsSante ?> h-100">
@@ -1082,6 +1161,20 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                         <span class="text-danger"><i class="bi bi-arrow-down-circle me-1"></i><?= $sortiesSantePeriode ?> distribués</span><br>
                                         <span class="text-muted">Seuil : <?= $infoCarnetSante['seuil'] ?></span>
                                     </div>
+                                    <hr class="my-2">
+                                    <div class="small fw-semibold text-primary">
+                                        <i class="bi bi-receipt me-1"></i>Utilisés sur reçus
+                                    </div>
+                                    <div class="small">
+                                        <span class="text-primary fw-bold fs-5"><?= $nbRecusCarnetSante ?></span>
+                                        <span class="text-muted"> reçu<?= $nbRecusCarnetSante !== 1 ? 's' : '' ?></span>
+                                    </div>
+                                    <?php if ($nbTotalConsult > 0): ?>
+                                    <div class="progress mt-1" style="height:5px;" title="<?= $pctSante ?>% des <?= $nbTotalConsult ?> consultations">
+                                        <div class="progress-bar bg-primary" style="width:<?= $pctSante ?>%"></div>
+                                    </div>
+                                    <div class="text-muted" style="font-size:0.72rem;"><?= $pctSante ?>% des <?= $nbTotalConsult ?> consultations</div>
+                                    <?php endif; ?>
                                 </div>
                             </div>
                         </div>
@@ -1089,6 +1182,8 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         <?php
                         $clsFag = $stockFichesAg20 === 0 ? 'danger' :
                                  ($stockFichesAg20 <= $seuilFichesAg20 ? 'warning' : 'success');
+                        $pctFag = $nbTotalAg > 0 ? round($nbRecusFicheAg / $nbTotalAg * 100) : 0;
+                        $pctCag = $nbTotalAg > 0 ? round($nbRecusCarnetAg / $nbTotalAg * 100) : 0;
                         ?>
                         <div class="col-md-4 col-sm-6">
                             <div class="card border-<?= $clsFag ?> h-100">
@@ -1101,6 +1196,24 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                         <span class="text-danger"><i class="bi bi-arrow-down-circle me-1"></i><?= $sortiesFagPeriode ?> distribuées</span><br>
                                         <span class="text-muted">Seuil : <?= $seuilFichesAg20 ?></span>
                                     </div>
+                                    <hr class="my-2">
+                                    <div class="small fw-semibold text-primary">
+                                        <i class="bi bi-receipt me-1"></i>Utilisées sur reçus AG
+                                    </div>
+                                    <div class="small">
+                                        <span class="text-warning fw-bold"><?= $nbRecusCarnetAg ?></span>
+                                        <span class="text-muted"> carnet AG</span>
+                                        &nbsp;·&nbsp;
+                                        <span class="text-primary fw-bold"><?= $nbRecusFicheAg ?></span>
+                                        <span class="text-muted"> fiche AG</span>
+                                    </div>
+                                    <?php if ($nbTotalAg > 0): ?>
+                                    <div class="progress mt-1" style="height:5px;" title="<?= $pctFag ?>% des <?= $nbTotalAg ?> actes gratuits">
+                                        <div class="progress-bar bg-warning" style="width:<?= $pctCag ?>%"></div>
+                                        <div class="progress-bar bg-primary" style="width:<?= $pctFag ?>%"></div>
+                                    </div>
+                                    <div class="text-muted" style="font-size:0.72rem;">Sur <?= $nbTotalAg ?> acte<?= $nbTotalAg !== 1 ? 's' : '' ?> gratuit<?= $nbTotalAg !== 1 ? 's' : '' ?></div>
+                                    <?php endif; ?>
                                 </div>
                             </div>
                         </div>
