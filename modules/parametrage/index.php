@@ -1155,23 +1155,26 @@ include ROOT_PATH . '/templates/layouts/header.php';
                     </thead>
                    <tbody>
 <?php foreach ($allMvts as $mv): ?>
+    <?php
+    $tc  = $mv['type_carnet'] ?? 'soins';
+    $tm  = $mv['type_mvt']   ?? 'sortie';
+    $tcLabel = ($tc === 'sante')
+        ? '<span class="badge bg-success">Santé</span>'
+        : '<span class="badge bg-primary">Soins</span>';
+    $tmLabel = ($tm === 'sortie')
+        ? '<span class="badge bg-danger">Sortie</span>'
+        : '<span class="badge bg-info text-dark">Entrée</span>';
+    ?>
     <tr>
-        <td class="text-center">
-            <?php 
-            $tc = $mv['type_carnet'] ?? 'soins';
-            if ($tc === 'sante'): 
-            ?>
-                <span class="badge bg-success">Entrée</span>
-            <?php else: ?>
-                <span class="badge bg-danger">Sortie</span>
-            <?php endif; ?>
-        </td>
-        <td class="text-center fw-bold"><?= (int)$mv['quantite'] ?></td>
-        <td class="text-center"><?= (int)$mv['stock_avant'] ?></td>
-        <td class="text-center"><?= (int)$mv['stock_apres'] ?></td>
+        <td><?= date('d/m/Y H:i', strtotime($mv['whendone'] ?? 'now')) ?></td>
+        <td class="text-center"><?= $tcLabel ?></td>
+        <td class="text-center"><?= $tmLabel ?></td>
+        <td class="text-center fw-bold"><?= abs((int)$mv['quantite']) ?></td>
+        <td class="text-center text-muted"><?= (int)$mv['stock_avant'] ?></td>
+        <td class="text-center fw-bold"><?= (int)$mv['stock_apres'] ?></td>
         <td>
-            <?php if ($mv['type_mvt'] === 'sortie' && $mv['recu_id']): ?>
-                <small class="text-muted">#<?= $mv['numero_recu'] ?></small>
+            <?php if ($tm === 'sortie' && !empty($mv['recu_id'])): ?>
+                <small class="text-muted">#<?= h($mv['numero_recu'] ?? '') ?></small>
             <?php else: ?>
                 <span class="text-muted">—</span>
             <?php endif; ?>
@@ -1383,6 +1386,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         fetch(url, {
             method: 'POST',
+            headers: { 'X-CSRF-TOKEN': CSRF_TOKEN },
             body: formData
         })
         .then(response => {
@@ -1551,7 +1555,7 @@ document.addEventListener('DOMContentLoaded', function() {
             const comment = newComment ? encodeURIComponent(newComment) : '';
             fetch('/index.php?page=parametrage&section=carnets', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-TOKEN': CSRF_TOKEN},
                 body: 'action=edit_mouvement_carnet&mvt_id=' + mvtId + '&quantite=' + qty + '&commentaire=' + comment
             })
             .then(response => response.json())
@@ -1566,7 +1570,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (confirm('Supprimer ce mouvement ? Cela ajustera le stock de ' + quantite + ' unités.')) {
             fetch('/index.php?page=parametrage&section=carnets', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-TOKEN': CSRF_TOKEN},
                 body: 'action=delete_mouvement_carnet&mvt_id=' + mvtId
             })
             .then(response => response.json())

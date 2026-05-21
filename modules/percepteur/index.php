@@ -119,13 +119,11 @@ function reimprimerRecu(PDO $pdo, int $recuId): void {
 $actes         = $pdo->query("SELECT id, libelle, tarif, est_gratuit FROM actes_medicaux WHERE isDeleted=0 ORDER BY libelle")->fetchAll();
 $actesGratuits = array_filter($actes, fn($a) => $a['est_gratuit']);
 
-// ── Stock carnets + fiches AG ─────────────────────────────────────────────
-$cfgStockRows   = $pdo->query("SELECT cle, valeur FROM config_systeme WHERE cle IN ('stock_carnets','seuil_alerte_carnets','stock_fiches_ag','seuil_alerte_fiches_ag') AND isDeleted=0")->fetchAll(PDO::FETCH_KEY_PAIR);
-$stockCarnets   = (int)($cfgStockRows['stock_carnets']           ?? 0);
-$seuilCarnets   = (int)($cfgStockRows['seuil_alerte_carnets']    ?? 10);
+// ── Stock fiches AG (carnets déjà chargés via CarnetsHelper en haut de page) ─
+$cfgStockRows   = $pdo->query("SELECT cle, valeur FROM config_systeme WHERE cle IN ('stock_fiches_ag','seuil_alerte_fiches_ag') AND isDeleted=0")->fetchAll(PDO::FETCH_KEY_PAIR);
+// $stockCarnets / $seuilCarnets / $alerteCarnets sont déjà définis via CarnetsHelper (lignes 26-37)
 $stockFichesAg  = (int)($cfgStockRows['stock_fiches_ag']         ?? 0);
 $seuilFichesAg  = (int)($cfgStockRows['seuil_alerte_fiches_ag']  ?? 10);
-$alerteCarnets  = ($stockCarnets === 0) ? 'danger' : ($stockCarnets <= $seuilCarnets ? 'warning' : '');
 
 // ── Récupérer les examens configurés ──────────────────────────────────────
 $examens = $pdo->query("SELECT id, libelle, cout_total, pourcentage_labo FROM examens WHERE isDeleted=0 ORDER BY libelle")->fetchAll();
@@ -966,6 +964,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         <div class="col-12">
                             <?php
                             $agAlertCls  = $stockCarnetsSante === 0 ? 'danger' : ($stockCarnetsSante <= $seuilCarnetsSante ? 'warning' : 'info');
+                            $agAlertIcon = $stockCarnetsSante === 0 ? 'exclamation-octagon-fill' : ($stockCarnetsSante <= $seuilCarnetsSante ? 'exclamation-triangle-fill' : 'journal-plus');
                                 $agAlertTxt  = $stockCarnetsSante === 0
                                     ? 'Aucun carnet de santé disponible — les options carnet restent accessibles (priorité patient).'
                                     : ($stockCarnetsSante <= $seuilCarnetsSante
