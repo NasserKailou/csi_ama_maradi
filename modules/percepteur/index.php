@@ -1196,8 +1196,32 @@ include ROOT_PATH . '/templates/layouts/header.php';
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                <button type="button" class="btn text-white fw-bold" style="background:#006064;" onclick="savePharmacie()">
-                    <i class="bi bi-printer me-1"></i>Valider & Imprimer Reçu Pharmacie
+                <button type="button" class="btn text-white fw-bold" style="background:#006064;" onclick="previewPharmacie()">
+                    <i class="bi bi-eye me-1"></i>Vérifier &amp; Valider
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL : Confirmation pharmacie (recap avant validation) -->
+<div class="modal fade" id="modalConfirmPharma" tabindex="-1" data-bs-backdrop="static">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header text-white" style="background:#006064;">
+                <h5 class="modal-title"><i class="bi bi-clipboard-check me-2"></i>Récapitulatif &mdash; Vérification avant impression</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="confirmPharmaBody">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary"
+                        onclick="bootstrap.Modal.getInstance(document.getElementById('modalConfirmPharma')).hide();
+                                 bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPharmacie')).show();">
+                    <i class="bi bi-arrow-left me-1"></i>Modifier
+                </button>
+                <button type="button" class="btn text-white fw-bold" style="background:#006064;" onclick="confirmerPharmacie()">
+                    <i class="bi bi-printer me-1"></i>Confirmer &amp; Imprimer Reçu Pharmacie
                 </button>
             </div>
         </div>
@@ -1982,6 +2006,107 @@ window.saveActeGratuit = function() {
             setTimeout(() => location.reload(), 1000);
         });
     };
+
+    // ── Preview pharmacie (recap avant validation) ──
+    window.previewPharmacie = function() {
+        const items = [];
+        const recuId     = document.getElementById('pharmaRecuId').value;
+        const patientNom = document.getElementById('pharmaPatientNom').textContent;
+        const numRecu    = document.getElementById('pharmaNumeroRecu').textContent;
+        const isOrphelin = document.getElementById('pharmaRecuId').dataset.orphelin === '1';
+
+        document.querySelectorAll('.produit-qte').forEach(inp => {
+            const qty = parseInt(inp.value, 10) || 0;
+            if (qty > 0) {
+                items.push({
+                    id:    inp.dataset.id,
+                    qte:   qty,
+                    nom:   inp.dataset.nom,
+                    forme: inp.dataset.forme || '',
+                    prix:  parseInt(inp.dataset.prix, 10) || 0
+                });
+            }
+        });
+
+        if (!items.length) { showToast('warning', 'Aucun produit sélectionné.'); return; }
+        if (!recuId)        { showToast('warning', 'Aucun reçu lié.'); return; }
+
+        const total      = items.reduce((s, it) => s + it.qte * it.prix, 0);
+        const totalLabel = isOrphelin ? '0 F <em>(Gratuit)</em>' : total.toLocaleString('fr-FR') + ' F';
+
+        let rows = '';
+        items.forEach((it, i) => {
+            const ligne = it.qte * it.prix;
+            rows += `<tr>
+                <td>${i + 1}</td>
+                <td><strong>${it.nom}</strong>${it.forme ? '<br><small class="text-muted">' + it.forme + '</small>' : ''}</td>
+                <td class="text-center"><span class="badge bg-primary">${it.qte}</span></td>
+                <td class="text-end">${it.prix.toLocaleString('fr-FR')} F</td>
+                <td class="text-end fw-bold">${ligne.toLocaleString('fr-FR')} F</td>
+            </tr>`;
+        });
+
+        const html = `
+        <div class="alert alert-info mb-3 py-2">
+            <i class="bi bi-person-fill me-2"></i>
+            <strong>${patientNom}</strong> &mdash; Reçu N° ${numRecu}
+            ${isOrphelin ? '<span class="badge bg-warning text-dark ms-2"><i class="bi bi-star-fill"></i> ORPHELIN</span>' : ''}
+        </div>
+        <div class="table-responsive">
+            <table class="table table-bordered table-hover align-middle mb-0">
+                <thead class="table-dark">
+                    <tr>
+                        <th style="width:35px;">#</th>
+                        <th>Produit</th>
+                        <th class="text-center" style="width:70px;">Qté</th>
+                        <th class="text-end" style="width:120px;">Prix/unité</th>
+                        <th class="text-end" style="width:120px;">Sous-total</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+                <tfoot>
+                    <tr class="table-success">
+                        <td colspan="4" class="text-end fw-bold fs-6">TOTAL À ENCAISSER :</td>
+                        <td class="text-end fw-bold fs-5 text-success">${totalLabel}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+        ${isOrphelin ? '<div class="alert alert-warning mt-3 mb-0 py-2"><i class="bi bi-gift me-2"></i><strong>Orphelin — Gratuité totale.</strong> Montant encaissé = 0 F. Le stock sera mis à jour.</div>' : ''}
+        <p class="text-muted small mt-3 mb-0"><i class="bi bi-info-circle me-1"></i>Vérifiez les quantités avant de confirmer. Cliquez <em>Modifier</em> pour corriger.</p>`;
+
+        document.getElementById('confirmPharmaBody').innerHTML = html;
+
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalPharmacie')).hide();
+        setTimeout(() => {
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('modalConfirmPharma')).show();
+        }, 350);
+    };
+
+    // ── Confirmer la pharmacie après validation du recap ──
+    window.confirmerPharmacie = function() {
+        const items  = [];
+        const recuId = document.getElementById('pharmaRecuId').value;
+
+        document.querySelectorAll('.produit-qte').forEach(inp => {
+            const qty = parseInt(inp.value, 10) || 0;
+            if (qty > 0) {
+                items.push({ id: inp.dataset.id, qte: qty, nom: inp.dataset.nom, forme: inp.dataset.forme, prix: inp.dataset.prix });
+            }
+        });
+
+        if (!items.length || !recuId) { showToast('warning', 'Données invalides.'); return; }
+
+        ajaxPost(SAVE_PHARMA_URL, {
+            recu_id: recuId,
+            produits: JSON.stringify(items)
+        }, function(res) {
+            bootstrap.Modal.getInstance(document.getElementById('modalConfirmPharma')).hide();
+            if (res.pdf_url) window.open(res.pdf_url, '_blank');
+            setTimeout(() => location.reload(), 1000);
+        });
+    };
+
 
     // ── Récapitulatif ──
     window.openRecapModal = function(recuId) {

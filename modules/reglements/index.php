@@ -346,9 +346,11 @@ function afficherFacture(PDO $pdo) {
 }
 
 
+
 // =====================================================================
 // PDF : LISTE DES REGLEMENTS ORPHELINS EN INSTANCE
 // Pharmacie + Examens uniquement (consultations gratuites non incluses)
+// Style : vert / bien mis en forme / QR code
 // =====================================================================
 function imprimerInstancePdf(PDO $pdo) {
 
@@ -383,9 +385,9 @@ function imprimerInstancePdf(PDO $pdo) {
         ORDER BY p.nom ASC
     ")->fetchAll(PDO::FETCH_ASSOC);
 
-    // Pour chaque orphelin, charger ses recus + lignes details
     $recusParOrphelin = [];
     $detailsParRecu   = [];
+
     if (!empty($orphelins)) {
         $patientIds = array_column($orphelins, 'patient_id');
         $phP = implode(',', array_fill(0, count($patientIds), '?'));
@@ -408,25 +410,47 @@ function imprimerInstancePdf(PDO $pdo) {
 
         if (!empty($allRecus)) {
             $recuIds = array_column($allRecus, 'id');
-            $phR = implode(',', array_fill(0, count($recuIds), '?'));
+            $phR     = implode(',', array_fill(0, count($recuIds), '?'));
 
             // Lignes examen
-            $stmtE = $pdo->prepare("SELECT recu_id, libelle, cout_total FROM lignes_examen WHERE isDeleted=0 AND recu_id IN ($phR)");
+            $stmtE = $pdo->prepare("
+                SELECT recu_id, libelle, cout_total
+                FROM lignes_examen
+                WHERE isDeleted = 0 AND recu_id IN ($phR)
+                ORDER BY recu_id, id
+            ");
             $stmtE->execute($recuIds);
             foreach ($stmtE as $l) {
-                $detailsParRecu[$l['recu_id']][] = ['lib' => $l['libelle'], 'mt' => $l['cout_total']];
+                $detailsParRecu[$l['recu_id']][] = [
+                    'type'   => 'examen',
+                    'lib'    => $l['libelle'],
+                    'qte'    => null,
+                    'pu'     => null,
+                    'total'  => (float)$l['cout_total'],
+                ];
             }
 
-            // Lignes pharmacie
-            $stmtP = $pdo->prepare("SELECT recu_id, nom, quantite, total_ligne FROM lignes_pharmacie WHERE isDeleted=0 AND recu_id IN ($phR)");
+            // Lignes pharmacie — avec quantite ET prix unitaire
+            $stmtP = $pdo->prepare("
+                SELECT recu_id, nom, quantite, prix_unitaire, total_ligne
+                FROM lignes_pharmacie
+                WHERE isDeleted = 0 AND recu_id IN ($phR)
+                ORDER BY recu_id, id
+            ");
             $stmtP->execute($recuIds);
             foreach ($stmtP as $l) {
-                $detailsParRecu[$l['recu_id']][] = ['lib' => $l['nom'] . ' x' . $l['quantite'], 'mt' => $l['total_ligne']];
+                $detailsParRecu[$l['recu_id']][] = [
+                    'type'  => 'pharmacie',
+                    'lib'   => $l['nom'],
+                    'qte'   => (int)$l['quantite'],
+                    'pu'    => (float)$l['prix_unitaire'],
+                    'total' => (float)$l['total_ligne'],
+                ];
             }
         }
     }
 
-    // Reference document + QR code (via api.qrserver.com)
+    // Reference document + QR code
     $docRef  = 'INST-' . date('Ymd') . '-' . strtoupper(substr(md5(uniqid()), 0, 6));
     $dateDoc = date('d/m/Y');
     $qrData  = 'Ref:' . $docRef . '|Date:' . $dateDoc . '|Orphelins:' . $statsGlobal['nb_orphelins'] . '|Total:' . number_format((float)$statsGlobal['grand_total'], 0, ',', ' ') . ' FCFA';
@@ -440,60 +464,81 @@ function imprimerInstancePdf(PDO $pdo) {
     <title>Reglements en instance &mdash; <?= h($docRef) ?></title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #222; padding: 18px 22px; }
+        body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #1a2e1a; padding: 18px 22px; background: #fff; }
 
-        /* ===== EN-TETE ===== */
-        .doc-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px double #1a5276; padding-bottom: 10px; margin-bottom: 14px; }
+        /* === EN-TETE === */
+        .doc-header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px double #1b5e20; padding-bottom: 10px; margin-bottom: 14px; }
         .doc-header-left { flex: 1; }
-        .doc-header-left h1 { font-size: 17px; color: #1a5276; margin-bottom: 2px; }
-        .doc-header-left .subtitle { font-size: 12px; color: #555; }
-        .doc-header-left .doc-title { font-size: 14px; font-weight: bold; color: #922b21; margin-top: 6px; text-transform: uppercase; letter-spacing: .5px; }
+        .doc-header-left h1 { font-size: 17px; color: #1b5e20; margin-bottom: 2px; font-weight: bold; }
+        .doc-header-left .subtitle { font-size: 11.5px; color: #2e7d32; }
+        .doc-header-left .doc-title { font-size: 14px; font-weight: bold; color: #1b5e20; margin-top: 8px; text-transform: uppercase; letter-spacing: .5px; border-left: 4px solid #4caf50; padding-left: 8px; }
         .doc-header-right { text-align: right; }
-        .doc-header-right img { display: block; margin-left: auto; margin-bottom: 4px; }
-        .doc-ref { font-size: 10px; color: #555; }
+        .doc-header-right img { display: block; margin-left: auto; margin-bottom: 4px; border: 2px solid #a5d6a7; border-radius: 4px; }
+        .doc-ref { font-size: 9.5px; color: #555; margin-top: 3px; }
 
-        /* ===== BANDEAU STATS ===== */
+        /* === BANDEAU STATS === */
         .stats-band { display: flex; gap: 10px; margin-bottom: 14px; }
-        .stat-box { flex: 1; border: 1px solid #d5d8dc; border-radius: 5px; padding: 8px 10px; text-align: center; background: #f8f9fa; }
-        .stat-box .val { font-size: 18px; font-weight: bold; color: #1a5276; }
-        .stat-box .lbl { font-size: 10px; color: #666; }
-        .notice-box { background: #fef9e7; border-left: 4px solid #f39c12; padding: 7px 10px; margin-bottom: 14px; font-size: 10.5px; color: #6d4c0a; border-radius: 3px; }
+        .stat-box { flex: 1; border: 1px solid #a5d6a7; border-radius: 6px; padding: 9px 10px; text-align: center; background: #f1f8e9; }
+        .stat-box .val { font-size: 20px; font-weight: bold; color: #1b5e20; }
+        .stat-box .lbl { font-size: 10px; color: #388e3c; margin-top: 2px; }
+        .stat-box.highlight { background: #e8f5e9; border-color: #66bb6a; }
+        .stat-box.highlight .val { color: #2e7d32; font-size: 22px; }
 
-        /* ===== ORPHELINS ===== */
-        .orphelin-block { margin-bottom: 16px; page-break-inside: avoid; border: 1px solid #d0d3d4; border-radius: 5px; overflow: hidden; }
-        .orphelin-header { display: flex; justify-content: space-between; align-items: center; background: #1a5276; color: #fff; padding: 6px 10px; }
-        .orphelin-header .oname { font-weight: bold; font-size: 12px; }
-        .orphelin-header .ometa { font-size: 10px; opacity: .85; }
-        .orphelin-header .ototal { font-weight: bold; font-size: 13px; background: #d6eaf8; color: #1a5276; padding: 2px 8px; border-radius: 4px; }
+        /* === NOTE METIER === */
+        .notice-box { background: #e8f5e9; border-left: 4px solid #43a047; padding: 7px 10px; margin-bottom: 14px; font-size: 10.5px; color: #1b5e20; border-radius: 3px; }
 
+        /* === BLOC PAR ORPHELIN === */
+        .orphelin-block { margin-bottom: 18px; page-break-inside: avoid; border: 1px solid #a5d6a7; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+        .orphelin-header { display: flex; justify-content: space-between; align-items: center; background: linear-gradient(90deg, #1b5e20, #2e7d32); color: #fff; padding: 7px 12px; }
+        .orphelin-header .oname { font-weight: bold; font-size: 12.5px; }
+        .orphelin-header .ometa { font-size: 10px; opacity: .88; margin-left: 6px; }
+        .orphelin-header .ototal { font-weight: bold; font-size: 13px; background: #c8e6c9; color: #1b5e20; padding: 3px 10px; border-radius: 4px; }
+
+        /* === TABLEAU RECUS === */
         table.recus-table { width: 100%; border-collapse: collapse; }
-        table.recus-table thead tr { background: #eaf2ff; }
-        table.recus-table th { padding: 5px 7px; text-align: left; font-size: 10.5px; border-bottom: 1px solid #ccc; }
-        table.recus-table td { padding: 4px 7px; border-bottom: 1px solid #e8e8e8; vertical-align: top; font-size: 10.5px; }
-        table.recus-table tr:last-child td { border-bottom: none; }
-        .badge-type { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 9.5px; font-weight: bold; }
-        .badge-examen    { background: #d6eaf8; color: #1a5276; }
-        .badge-pharmacie { background: #d5f5e3; color: #1e8449; }
+        table.recus-table thead tr { background: #e8f5e9; }
+        table.recus-table th { padding: 5px 7px; text-align: left; font-size: 10.5px; border-bottom: 2px solid #a5d6a7; color: #1b5e20; font-weight: bold; }
+        table.recus-table th.text-right { text-align: right; }
+        table.recus-table td { padding: 4px 7px; border-bottom: 1px solid #e8f5e9; vertical-align: top; font-size: 10.5px; }
+        table.recus-table tr:nth-child(even) td { background: #f9fbe7; }
         table.recus-table .text-right { text-align: right; }
-        .subtotal-row td { background: #eaf2ff; font-weight: bold; text-align: right; border-top: 1px solid #aed6f1; }
+        table.recus-table .text-center { text-align: center; }
 
-        /* ===== GRAND TOTAL ===== */
-        .grand-total-box { border: 2px solid #1a5276; border-radius: 5px; padding: 10px 16px; margin-top: 16px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; background: #eaf2ff; page-break-inside: avoid; }
-        .grand-total-box .gt-label { font-size: 13px; font-weight: bold; color: #1a5276; }
-        .grand-total-box .gt-value { font-size: 20px; font-weight: bold; color: #922b21; }
+        /* === BADGES TYPE === */
+        .badge-type { display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 9.5px; font-weight: bold; }
+        .badge-examen    { background: #e3f2fd; color: #1565c0; }
+        .badge-pharmacie { background: #e8f5e9; color: #1b5e20; border: 1px solid #a5d6a7; }
 
-        /* ===== SIGNATURES ===== */
+        /* === LIGNES DETAIL === */
+        table.detail-table { width: 100%; border-collapse: collapse; margin: 3px 0 2px 0; }
+        table.detail-table td { padding: 2px 4px; font-size: 10px; color: #333; vertical-align: top; }
+        table.detail-table .d-lib { color: #333; }
+        table.detail-table .d-qte { text-align: center; color: #2e7d32; font-weight: bold; width: 40px; }
+        table.detail-table .d-pu  { text-align: right; color: #555; width: 70px; }
+        table.detail-table .d-tot { text-align: right; color: #1b5e20; font-weight: bold; width: 75px; }
+        .detail-header td { font-size: 9px; color: #888; border-bottom: 1px dotted #ccc; padding-bottom: 1px; margin-bottom: 2px; }
+
+        /* === SOUS-TOTAL PAR ORPHELIN === */
+        .subtotal-row td { background: #c8e6c9; font-weight: bold; color: #1b5e20; border-top: 2px solid #81c784; padding: 5px 7px; }
+        .subtotal-row .text-right { text-align: right; }
+
+        /* === GRAND TOTAL === */
+        .grand-total-box { border: 2px solid #1b5e20; border-radius: 6px; padding: 12px 18px; margin-top: 16px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; background: linear-gradient(90deg, #e8f5e9, #f1f8e9); page-break-inside: avoid; }
+        .grand-total-box .gt-label { font-size: 13px; font-weight: bold; color: #1b5e20; }
+        .grand-total-box .gt-value { font-size: 22px; font-weight: bold; color: #1b5e20; background: #fff; border: 2px solid #4caf50; padding: 4px 14px; border-radius: 5px; }
+
+        /* === SIGNATURES === */
         .signatures { display: flex; justify-content: space-around; margin-top: 40px; page-break-inside: avoid; }
         .sig-box { text-align: center; width: 28%; }
-        .sig-line { border-top: 1px solid #555; margin-top: 55px; padding-top: 4px; font-size: 10.5px; }
+        .sig-line { border-top: 1px solid #388e3c; margin-top: 55px; padding-top: 5px; font-size: 10.5px; color: #1b5e20; font-weight: bold; }
 
-        /* ===== PRINT ===== */
+        /* === PRINT === */
         .no-print { margin-bottom: 14px; display: flex; gap: 10px; }
-        .btn-print { padding: 7px 16px; background: #1a5276; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
-        .btn-back  { padding: 7px 16px; background: #6c757d; color: #fff; border: none; border-radius: 4px; text-decoration: none; font-size: 13px; }
+        .btn-print { padding: 8px 18px; background: #2e7d32; color: #fff; border: none; border-radius: 5px; cursor: pointer; font-size: 13px; font-weight: bold; }
+        .btn-back  { padding: 8px 18px; background: #546e7a; color: #fff; border: none; border-radius: 5px; text-decoration: none; font-size: 13px; }
         @media print {
             .no-print { display: none !important; }
-            body { padding: 8px 12px; }
+            body { padding: 6px 10px; }
             .orphelin-block { page-break-inside: avoid; }
         }
     </style>
@@ -512,40 +557,41 @@ function imprimerInstancePdf(PDO $pdo) {
             <div class="subtitle">Programme DirectAid AMA &mdash; Maradi, Niger</div>
             <div class="doc-title">Situation des reglements orphelins en instance</div>
             <div class="doc-ref" style="margin-top:6px;">
-                <strong>Ref. document :</strong> <?= h($docRef) ?> &nbsp;|&nbsp;
-                <strong>Edite le :</strong> <?= $dateDoc ?> a <?= date('H:i') ?> &nbsp;|&nbsp;
-                <strong>Objet :</strong> Pharmacie &amp; Examens (consultations gratuites non comprises)
+                <strong>Ref. document :</strong> <?= h($docRef) ?> &nbsp;&bull;&nbsp;
+                <strong>Date :</strong> <?= $dateDoc ?> a <?= date('H:i') ?> &nbsp;&bull;&nbsp;
+                <strong>Objet :</strong> Pharmacie &amp; Examens uniquement (consultations : gratuites)
             </div>
         </div>
         <div class="doc-header-right">
-            <img src="<?= $qrUrl ?>" width="110" height="110" alt="QR Code" title="QR Code de verification">
-            <div class="doc-ref" style="font-size:9px; text-align:center;"><?= h($docRef) ?></div>
+            <img src="<?= $qrUrl ?>" width="110" height="110" alt="QR" title="QR Code de verification">
+            <div class="doc-ref" style="text-align:center;"><?= h($docRef) ?></div>
         </div>
     </div>
 
-    <!-- Bandeau stats -->
+    <!-- Bandeau KPIs -->
     <div class="stats-band">
         <div class="stat-box">
-            <div class="val"><?= $statsGlobal['nb_orphelins'] ?></div>
+            <div class="val"><?= (int)$statsGlobal['nb_orphelins'] ?></div>
             <div class="lbl">Orphelins en instance</div>
         </div>
         <div class="stat-box">
-            <div class="val"><?= $statsGlobal['nb_recus'] ?></div>
+            <div class="val"><?= (int)$statsGlobal['nb_recus'] ?></div>
             <div class="lbl">Recus (exam. + pharm.)</div>
         </div>
-        <div class="stat-box" style="background:#fef5e7; border-color:#f39c12;">
-            <div class="val" style="color:#922b21;"><?= number_format((float)$statsGlobal['grand_total'], 0, ',', ' ') ?></div>
-            <div class="lbl">Total du (FCFA)</div>
+        <div class="stat-box highlight">
+            <div class="val"><?= number_format((float)$statsGlobal['grand_total'], 0, ',', ' ') ?></div>
+            <div class="lbl">Grand total a regler (FCFA)</div>
         </div>
     </div>
 
-    <!-- Note metier -->
     <div class="notice-box">
-        <strong>Note :</strong> Conformement aux regles du programme DirectAid AMA, les consultations sont gratuites pour les orphelins et ne figurent pas dans ce document. Seules les depenses <strong>pharmacie</strong> et <strong>examens medicaux</strong> sont prises en charge.
+        <strong>&#9432; Note :</strong> Les consultations sont gratuites pour les orphelins (programme DirectAid AMA).
+        Ce document ne recense que les <strong>depenses pharmacie</strong> et <strong>examens medicaux</strong> en attente de reglement.
     </div>
 
     <?php if (empty($orphelins)): ?>
-    <div style="text-align:center; padding:40px; color:#555; border:1px dashed #bbb; border-radius:6px;">
+    <div style="text-align:center; padding:40px; color:#2e7d32; border:2px dashed #a5d6a7; border-radius:6px; background:#f1f8e9;">
+        <div style="font-size:32px;">&#9989;</div>
         <strong>Aucune depense en instance</strong> &mdash; Toutes les situations sont a jour.
     </div>
     <?php else: ?>
@@ -555,25 +601,27 @@ function imprimerInstancePdf(PDO $pdo) {
         <div class="orphelin-header">
             <div>
                 <span class="oname"><?= $rowNum++ ?>. <?= h($o['nom']) ?></span>
-                <span class="ometa">&nbsp;&mdash;&nbsp;<?= $o['sexe'] === 'F' ? 'Fille' : 'Garcon' ?>, <?= $o['age'] ?> ans<?= $o['provenance'] ? ' &mdash; ' . h($o['provenance']) : '' ?></span>
-            </div>
-            <div style="display:flex; align-items:center; gap:10px;">
                 <span class="ometa">
-                    <?= $o['nb_recus'] ?> recu<?= (int)$o['nb_recus'] > 1 ? 's' : '' ?> &nbsp;|&nbsp;
-                    <?= date('d/m/Y', strtotime($o['premiere_visite'])) ?>
-                    <?= $o['premiere_visite'] !== $o['derniere_visite'] ? ' > ' . date('d/m/Y', strtotime($o['derniere_visite'])) : '' ?>
+                    &mdash; <?= $o['sexe'] === 'F' ? 'Fille' : 'Garcon' ?>, <?= $o['age'] ?> ans
+                    <?= $o['provenance'] ? ' &bull; ' . h($o['provenance']) : '' ?>
+                    &bull; <?= (int)$o['nb_recus'] ?> recu<?= (int)$o['nb_recus'] > 1 ? 's' : '' ?>
+                    &bull; <?= date('d/m/Y', strtotime($o['premiere_visite'])) ?>
+                    <?= $o['premiere_visite'] !== $o['derniere_visite'] ? ' au ' . date('d/m/Y', strtotime($o['derniere_visite'])) : '' ?>
                 </span>
+            </div>
+            <div>
                 <span class="ototal"><?= number_format((float)$o['total_du'], 0, ',', ' ') ?> FCFA</span>
             </div>
         </div>
+
         <table class="recus-table">
             <thead>
                 <tr>
-                    <th style="width:130px;">N Recu</th>
-                    <th style="width:85px;">Date</th>
-                    <th style="width:80px;">Type</th>
-                    <th>Details des prestations</th>
-                    <th style="width:110px;" class="text-right">Montant (FCFA)</th>
+                    <th style="width:120px;">N Recu</th>
+                    <th style="width:80px;">Date</th>
+                    <th style="width:78px;">Type</th>
+                    <th>Prestations / Produits</th>
+                    <th class="text-right" style="width:115px;">Montant (FCFA)</th>
                 </tr>
             </thead>
             <tbody>
@@ -587,17 +635,39 @@ function imprimerInstancePdf(PDO $pdo) {
                     <td><?= date('d/m/Y', strtotime($r['whendone'])) ?></td>
                     <td><span class="badge-type <?= $typeCls ?>"><?= $typeLabel ?></span></td>
                     <td>
-                        <?php foreach ($lignes as $l): ?>
-                            &bull; <?= h($l['lib']) ?><br>
-                        <?php endforeach; ?>
-                        <?php if (empty($lignes)): ?><em style="color:#999;">—</em><?php endif; ?>
+                        <?php if (!empty($lignes)): ?>
+                        <table class="detail-table">
+                            <?php if ($r['type_recu'] === 'pharmacie'): ?>
+                            <tr class="detail-header">
+                                <td class="d-lib">Produit</td>
+                                <td class="d-qte">Qte</td>
+                                <td class="d-pu">P.U. (F)</td>
+                                <td class="d-tot">Total (F)</td>
+                            </tr>
+                            <?php endif; ?>
+                            <?php foreach ($lignes as $l): ?>
+                            <tr>
+                                <td class="d-lib">&bull; <?= h($l['lib']) ?></td>
+                                <?php if ($l['type'] === 'pharmacie'): ?>
+                                <td class="d-qte"><?= $l['qte'] ?></td>
+                                <td class="d-pu"><?= number_format($l['pu'], 0, ',', ' ') ?></td>
+                                <td class="d-tot"><?= number_format($l['total'], 0, ',', ' ') ?></td>
+                                <?php else: ?>
+                                <td colspan="3" class="d-tot"><?= number_format($l['total'], 0, ',', ' ') ?> F</td>
+                                <?php endif; ?>
+                            </tr>
+                            <?php endforeach; ?>
+                        </table>
+                        <?php else: ?>
+                        <em style="color:#999;font-size:10px;">Pas de detail disponible</em>
+                        <?php endif; ?>
                     </td>
-                    <td class="text-right"><?= number_format((float)$r['montant_total'], 0, ',', ' ') ?></td>
+                    <td class="text-right"><strong><?= number_format((float)$r['montant_total'], 0, ',', ' ') ?></strong></td>
                 </tr>
             <?php endforeach; ?>
                 <tr class="subtotal-row">
-                    <td colspan="4">Sous-total <?= h($o['nom']) ?> :</td>
-                    <td><?= number_format((float)$o['total_du'], 0, ',', ' ') ?> FCFA</td>
+                    <td colspan="4" class="text-right">Sous-total <?= h($o['nom']) ?> :</td>
+                    <td class="text-right"><?= number_format((float)$o['total_du'], 0, ',', ' ') ?> FCFA</td>
                 </tr>
             </tbody>
         </table>
@@ -606,7 +676,12 @@ function imprimerInstancePdf(PDO $pdo) {
 
     <!-- Grand total -->
     <div class="grand-total-box">
-        <div class="gt-label">GRAND TOTAL A REGLER &mdash; <?= (int)$statsGlobal['nb_orphelins'] ?> orphelin<?= (int)$statsGlobal['nb_orphelins'] > 1 ? 's' : '' ?> (<?= (int)$statsGlobal['nb_recus'] ?> recus pharmacie &amp; examens)</div>
+        <div class="gt-label">
+            GRAND TOTAL A REGLER &mdash;
+            <?= (int)$statsGlobal['nb_orphelins'] ?> orphelin<?= (int)$statsGlobal['nb_orphelins'] > 1 ? 's' : '' ?>
+            &bull; <?= (int)$statsGlobal['nb_recus'] ?> recu<?= (int)$statsGlobal['nb_recus'] > 1 ? 's' : '' ?>
+            pharmacie &amp; examens
+        </div>
         <div class="gt-value"><?= number_format((float)$statsGlobal['grand_total'], 0, ',', ' ') ?> FCFA</div>
     </div>
 
@@ -632,12 +707,15 @@ function afficherListe(PDO $pdo) {
     $filtreDebut = $_GET['filtre_debut'] ?? date('Y-m-01');
     $filtreFin   = $_GET['filtre_fin']   ?? date('Y-m-d');
 
+    // Stats en instance : pharmacie + examens UNIQUEMENT (consultations gratuites exclues)
     $statsInstance = $pdo->query("
         SELECT COUNT(DISTINCT r.id) AS nb_recus,
                COUNT(DISTINCT r.patient_id) AS nb_orphelins,
                COALESCE(SUM(r.montant_total),0) AS total_du
         FROM recus r
-        WHERE r.isDeleted=0 AND r.type_patient='orphelin' AND r.statut_reglement='en_instance'
+        WHERE r.isDeleted=0 AND r.type_patient='orphelin'
+          AND r.statut_reglement='en_instance'
+          AND r.type_recu IN ('examen','pharmacie')
     ")->fetch(PDO::FETCH_ASSOC) ?: ['nb_recus'=>0,'nb_orphelins'=>0,'total_du'=>0];
 
     $stmt = $pdo->prepare("
@@ -658,6 +736,7 @@ function afficherListe(PDO $pdo) {
         FROM patients p
         JOIN recus r ON r.patient_id=p.id AND r.isDeleted=0
                     AND r.type_patient='orphelin' AND r.statut_reglement='en_instance'
+                    AND r.type_recu IN ('examen','pharmacie')
         WHERE p.isDeleted=0
         GROUP BY p.id
         ORDER BY total_du DESC

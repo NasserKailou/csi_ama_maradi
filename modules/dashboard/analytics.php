@@ -695,22 +695,23 @@ $stmtCsanteRecus = $pdo->prepare("
 ");
 try { $stmtCsanteRecus->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbRecusCarnetSante = (int)$stmtCsanteRecus->fetchColumn(); } catch (Exception $e) { $nbRecusCarnetSante = 0; }
 
-// Carnet AG (acte gratuit avec carnet) : option_gratuite IN (1,2) sur reçus acte_gratuit
+// Carnet AG (acte gratuit avec carnet) : avec_carnet IN (1,2) sur reçus acte_gratuit
+// Note: option_gratuite est stocké dans la colonne avec_carnet (0=aucun,1=carnet,2=carnet+fiche,3=fiche)
 $stmtCagRecus = $pdo->prepare("
     SELECT COUNT(DISTINCT id) AS nb
     FROM recus
     WHERE isDeleted = 0 AND type_recu = 'acte_gratuit'
-      AND option_gratuite IN (1, 2)
+      AND avec_carnet IN (1, 2)
       AND DATE(whendone) BETWEEN :d AND :f
 ");
 try { $stmtCagRecus->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbRecusCarnetAg = (int)$stmtCagRecus->fetchColumn(); } catch (Exception $e) { $nbRecusCarnetAg = 0; }
 
-// Fiche AG : option_gratuite IN (2,3) sur reçus acte_gratuit
+// Fiche AG : avec_carnet IN (2,3) sur reçus acte_gratuit
 $stmtFagRecus = $pdo->prepare("
     SELECT COUNT(DISTINCT id) AS nb
     FROM recus
     WHERE isDeleted = 0 AND type_recu = 'acte_gratuit'
-      AND option_gratuite IN (2, 3)
+      AND avec_carnet IN (2, 3)
       AND DATE(whendone) BETWEEN :d AND :f
 ");
 try { $stmtFagRecus->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbRecusFicheAg = (int)$stmtFagRecus->fetchColumn(); } catch (Exception $e) { $nbRecusFicheAg = 0; }
