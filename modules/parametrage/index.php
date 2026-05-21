@@ -367,15 +367,20 @@ $seuilAlerteCarnetsSante = $infoSante['seuil'];
 $stockCarnets = $stockCarnetsSoins + $stockCarnetsSante;
 $seuilAlerteCarnets = $seuilAlerteCarnetsSoins;
 
-$historiqueCarnets = $pdo->query("
-    SELECT mc.id, mc.type_mvt, mc.type_carnet, mc.quantite, mc.stock_avant, mc.stock_apres,
-           mc.commentaire, mc.whendone,
-           u.nom AS user_nom, u.prenom AS user_prenom
-    FROM mouvements_carnets mc
-    LEFT JOIN utilisateurs u ON u.id = mc.whodone
-    WHERE mc.type_mvt = 'initialisation'
-    ORDER BY mc.whendone DESC
-")->fetchAll();
+try {
+    $historiqueCarnets = $pdo->query("
+        SELECT mc.id, mc.type_mvt, mc.type_carnet, mc.quantite, mc.stock_avant, mc.stock_apres,
+               mc.commentaire, mc.whendone,
+               u.nom AS user_nom, u.prenom AS user_prenom
+        FROM mouvements_carnets mc
+        LEFT JOIN utilisateurs u ON u.id = mc.whodone
+        WHERE mc.type_mvt = 'initialisation'
+        ORDER BY mc.whendone DESC
+    ")->fetchAll();
+} catch (PDOException $e) {
+    $historiqueCarnets = [];
+    $historiqueCarnetsErreur = 'Table mouvements_carnets introuvable — exécutez le patch SQL 2026_05_20_carnets_soins_sante.sql';
+}
 
 $stockFichesAg = (int)($cfg['stock_fiches_ag'] ?? 0);
 $seuilAlerteFichesAg = (int)($cfg['seuil_alerte_fiches_ag'] ?? 10);
@@ -949,6 +954,9 @@ include ROOT_PATH . '/templates/layouts/header.php';
         </div>
 
         <!-- Historique soins -->
+        <?php if (!empty($historiqueCarnetsErreur)): ?>
+        <div class="alert alert-warning m-3"><i class="bi bi-exclamation-triangle me-2"></i><?= h($historiqueCarnetsErreur) ?></div>
+        <?php endif; ?>
         <?php
         $histSoins = array_filter($historiqueCarnets, fn($m) => ($m['type_carnet'] ?? 'soins') === 'soins');
         ?>
@@ -1126,6 +1134,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
     <!-- ─── TAB HISTORIQUE GLOBAL (tous mouvements, y compris sorties) ─── -->
     <div class="tab-pane fade" id="tab-historique">
         <?php
+        try {
         $allMvts = $pdo->query("
             SELECT mc.*, u.nom AS user_nom, u.prenom AS user_prenom,
                    r.numero_recu, r.type_patient
@@ -1135,6 +1144,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
             ORDER BY mc.whendone DESC
             LIMIT 200
         ")->fetchAll();
+        } catch (PDOException $e) { $allMvts = []; }
         ?>
         <div class="card">
             <div class="card-header bg-csi-light">

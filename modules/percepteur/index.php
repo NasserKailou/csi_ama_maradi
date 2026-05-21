@@ -1641,7 +1641,7 @@ window.selectPrestation = function(typeConsult, avecCarnet) {
         data.type_consultation = currentTypeConsult || 'standard';
 
         if (!data.nom || data.age === '' || data.age === undefined) {
-            showToast('warning', 'Veuillez renseigner le nom et l’âge du patient.');
+            showToast('warning', 'Veuillez renseigner le nom et l'âge du patient.');
             return;
         }
 
@@ -1773,7 +1773,7 @@ window.saveActeGratuit = function() {
     data.telephone = nettoyerTelephone(data.telephone);
 
     if (!data.nom || data.age === '' || data.age === undefined || !data.acte_id) {
-        showToast('warning', 'Veuillez renseigner le nom, l’âge et l’acte gratuit.');
+        showToast('warning', 'Veuillez renseigner le nom, l'âge et l'acte gratuit.');
         return;
     }
 
