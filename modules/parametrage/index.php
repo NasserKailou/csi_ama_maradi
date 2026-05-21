@@ -525,7 +525,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="button" class="btn text-white" style="background:var(--csi-green);" onclick="saveParam('formActe', '/index.php?page=parametrage&section=actes')">
+                    <button type="button" class="btn text-white" style="background:var(--csi-green);" onclick="saveParam('formActe', '<?= url('index.php') ?>?page=parametrage&section=actes')">
                         <i class="bi bi-save me-1"></i>Enregistrer
                     </button>
                 </div>
@@ -605,7 +605,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="button" class="btn text-white" style="background:var(--csi-green);" onclick="saveParam('formExamen', '/index.php?page=parametrage&section=examens')">
+                    <button type="button" class="btn text-white" style="background:var(--csi-green);" onclick="saveParam('formExamen', '<?= url('index.php') ?>?page=parametrage&section=examens')">
                         <i class="bi bi-save me-1"></i>Enregistrer
                     </button>
                 </div>
@@ -734,7 +734,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="button" class="btn text-white" style="background:var(--csi-green);" onclick="saveParam('formProduit', '/index.php?page=parametrage&section=pharmacie')">
+                    <button type="button" class="btn text-white" style="background:var(--csi-green);" onclick="saveParam('formProduit', '<?= url('index.php') ?>?page=parametrage&section=pharmacie')">
                         <i class="bi bi-save me-1"></i>Enregistrer
                     </button>
                 </div>
@@ -775,7 +775,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="button" class="btn text-white" style="background:#1b5e20;" onclick="saveParam('formAppro', '/index.php?page=parametrage&section=pharmacie')">
+                    <button type="button" class="btn text-white" style="background:#1b5e20;" onclick="saveParam('formAppro', '<?= url('index.php') ?>?page=parametrage&section=pharmacie')">
                         <i class="bi bi-save me-1"></i>Enregistrer
                     </button>
                 </div>
@@ -820,7 +820,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
-                    <button type="button" class="btn text-white" style="background:#b71c1c;" onclick="saveParam('formDiminuer', '/index.php?page=parametrage&section=pharmacie')">
+                    <button type="button" class="btn text-white" style="background:#b71c1c;" onclick="saveParam('formDiminuer', '<?= url('index.php') ?>?page=parametrage&section=pharmacie')">
                         <i class="bi bi-dash-circle me-1"></i>Diminuer le stock
                     </button>
                 </div>
@@ -937,7 +937,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                         Nouveau : <strong id="prevStockSoins"><?= $stockCarnetsSoins ?></strong>
                                     </div>
                                     <button type="button" class="btn text-white w-100" style="background:var(--csi-green);"
-                                            onclick="saveParam('formStockCarnetsSoins','/index.php?page=parametrage&section=carnets')">
+                                            onclick="saveParam('formStockCarnetsSoins','<?= url('index.php') ?>?page=parametrage&section=carnets')">
                                         <i class="bi bi-save me-1"></i>Enregistrer
                                     </button>
                                 </div>
@@ -1061,7 +1061,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                         Nouveau : <strong id="prevStockSante"><?= $stockCarnetsSante ?></strong>
                                     </div>
                                     <button type="button" class="btn text-white w-100" style="background:var(--csi-green);"
-                                            onclick="saveParam('formStockCarnetsSante','/index.php?page=parametrage&section=carnets')">
+                                            onclick="saveParam('formStockCarnetsSante','<?= url('index.php') ?>?page=parametrage&section=carnets')">
                                         <i class="bi bi-save me-1"></i>Enregistrer
                                     </button>
                                 </div>
@@ -1255,7 +1255,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                             Nouveau : <strong id="prevStockFichesAg"><?= $stockFichesAg ?></strong>
                                         </div>
                                         <button type="button" class="btn text-white w-100" style="background:var(--csi-green);"
-                                                onclick="saveParam('formStockFichesAg','/index.php?page=parametrage&section=fiches_ag')">
+                                                onclick="saveParam('formStockFichesAg','<?= url('index.php') ?>?page=parametrage&section=fiches_ag')">
                                             <i class="bi bi-save me-1"></i>Enregistrer
                                         </button>
                                     </div>
@@ -1352,7 +1352,7 @@ include ROOT_PATH . '/templates/layouts/header.php';
                     </div>
                     <div class="col-12">
                         <button type="button" class="btn text-white" style="background:var(--csi-green);"
-                                onclick="saveParam('formConfig','/index.php?page=parametrage&section=config')">
+                                onclick="saveParam('formConfig','<?= url('index.php') ?>?page=parametrage&section=config')">
                             <i class="bi bi-save me-1"></i>Enregistrer la configuration
                         </button>
                     </div>
@@ -1438,7 +1438,7 @@ function deleteItem(type, id, libelle) {
     const fd = new FormData();
     fd.append('action', 'delete_' + type);
     fd.append('id', id);
-    fetch('/index.php?page=parametrage&section=' + section, {
+    fetch(INDEX_URL + '?page=parametrage&section=' + section, {
         method: 'POST',
         headers: { 'X-CSRF-TOKEN': getCsrf() },
         body: fd
@@ -1556,7 +1556,7 @@ function voirHistoriqueStock(produitId, produitNom) {
     if (loading) { loading.style.display = 'block'; }
     if (content) { content.style.display = 'none'; content.innerHTML = ''; }
     modal.show();
-    fetch('/index.php?page=parametrage&section=pharmacie', {
+    fetch(INDEX_URL + '?page=parametrage&section=pharmacie', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': getCsrf() },
         body: JSON.stringify({ action: 'get_historique_stock', produit_id: produitId })
@@ -1619,7 +1619,7 @@ function ouvrirEditMvtCarnet(mvtId, quantite, commentaire) {
     const newComment = prompt('Commentaire (optionnel) :', commentaire);
     if (newComment === null) return;
     const comment = encodeURIComponent(newComment);
-    fetch('/index.php?page=parametrage&section=carnets', {
+    fetch(INDEX_URL + '?page=parametrage&section=carnets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-TOKEN': getCsrf() },
         body: 'action=edit_mouvement_carnet&mvt_id=' + mvtId + '&quantite=' + qty + '&commentaire=' + comment
@@ -1631,7 +1631,7 @@ function ouvrirEditMvtCarnet(mvtId, quantite, commentaire) {
 
 function supprimerMvtCarnet(mvtId, quantite) {
     if (!confirm('Supprimer ce mouvement ? Cela ajustera le stock de ' + quantite + ' unités.')) return;
-    fetch('/index.php?page=parametrage&section=carnets', {
+    fetch(INDEX_URL + '?page=parametrage&section=carnets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-TOKEN': getCsrf() },
         body: 'action=delete_mouvement_carnet&mvt_id=' + mvtId
@@ -1650,7 +1650,7 @@ function ouvrirEditMvtFicheAg(mvtId, quantite, commentaire) {
     const newComment = prompt('Commentaire (optionnel) :', commentaire);
     if (newComment === null) return;
     const comment = encodeURIComponent(newComment);
-    fetch('/index.php?page=parametrage&section=fiches_ag', {
+    fetch(INDEX_URL + '?page=parametrage&section=fiches_ag', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-TOKEN': getCsrf() },
         body: 'action=edit_mouvement_fiche_ag&mvt_id=' + mvtId + '&quantite=' + qty + '&commentaire=' + comment
@@ -1662,7 +1662,7 @@ function ouvrirEditMvtFicheAg(mvtId, quantite, commentaire) {
 
 function supprimerMvtFicheAg(mvtId, quantite) {
     if (!confirm('Supprimer ce mouvement ? Cela ajustera le stock de ' + quantite + ' fiches.')) return;
-    fetch('/index.php?page=parametrage&section=fiches_ag', {
+    fetch(INDEX_URL + '?page=parametrage&section=fiches_ag', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-TOKEN': getCsrf() },
         body: 'action=delete_mouvement_fiche_ag&mvt_id=' + mvtId
@@ -1724,15 +1724,15 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // ── Submit via addEventListener (fallback pour formulaires sans onclick) ──
     const formBindings = [
-        ['formStockCarnetsSoins', '/index.php?page=parametrage&section=carnets'],
-        ['formStockCarnetsSante', '/index.php?page=parametrage&section=carnets'],
-        ['formStockFichesAg',     '/index.php?page=parametrage&section=fiches_ag'],
-        ['formActe',              '/index.php?page=parametrage&section=actes'],
-        ['formExamen',            '/index.php?page=parametrage&section=examens'],
-        ['formProduit',           '/index.php?page=parametrage&section=pharmacie'],
-        ['formAppro',             '/index.php?page=parametrage&section=pharmacie'],
-        ['formDiminuer',          '/index.php?page=parametrage&section=pharmacie'],
-        ['formConfig',            '/index.php?page=parametrage&section=config'],
+        ['formStockCarnetsSoins', INDEX_URL + '?page=parametrage&section=carnets'],
+        ['formStockCarnetsSante', INDEX_URL + '?page=parametrage&section=carnets'],
+        ['formStockFichesAg',     INDEX_URL + '?page=parametrage&section=fiches_ag'],
+        ['formActe',              INDEX_URL + '?page=parametrage&section=actes'],
+        ['formExamen',            INDEX_URL + '?page=parametrage&section=examens'],
+        ['formProduit',           INDEX_URL + '?page=parametrage&section=pharmacie'],
+        ['formAppro',             INDEX_URL + '?page=parametrage&section=pharmacie'],
+        ['formDiminuer',          INDEX_URL + '?page=parametrage&section=pharmacie'],
+        ['formConfig',            INDEX_URL + '?page=parametrage&section=config'],
     ];
     formBindings.forEach(function([id, url]) {
         const el = document.getElementById(id);
