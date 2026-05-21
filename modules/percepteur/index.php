@@ -1374,10 +1374,14 @@ const STOCK_CARNETS           = <?= (int)$stockCarnets ?>;  // stock actuel côt
 let currentTypeRecu = 'normal';
 let currentTypeConsult = 'standard';   // ✅ standard | observation
 
-window.addEventListener('load', function () {
+// ═══════════════════════════════════════════════════════════════════════
+// ✅ Fonctions globales – définies immédiatement (accessibles depuis onclick)
+// ═══════════════════════════════════════════════════════════════════════
 
-    // ── setTypeRecu ──
-    window.setTypeRecu = function(type) {
+document.addEventListener('DOMContentLoaded', function () {
+
+// ── setTypeRecu ──
+window.setTypeRecu = function(type) {
         currentTypeRecu = type;
         const header = document.getElementById('modalPatientHeader');
         const title = document.getElementById('modalPatientTitle');
@@ -1641,7 +1645,7 @@ window.selectPrestation = function(typeConsult, avecCarnet) {
         data.type_consultation = currentTypeConsult || 'standard';
 
         if (!data.nom || data.age === '' || data.age === undefined) {
-            showToast('warning', 'Veuillez renseigner le nom et l'âge du patient.');
+            showToast('warning', "Veuillez renseigner le nom et l'âge du patient.");
             return;
         }
 
@@ -1773,7 +1777,7 @@ window.saveActeGratuit = function() {
     data.telephone = nettoyerTelephone(data.telephone);
 
     if (!data.nom || data.age === '' || data.age === undefined || !data.acte_id) {
-        showToast('warning', 'Veuillez renseigner le nom, l'âge et l'acte gratuit.');
+        showToast('warning', "Veuillez renseigner le nom, l'âge et l'acte gratuit.");
         return;
     }
 

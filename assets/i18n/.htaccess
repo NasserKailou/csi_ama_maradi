@@ -1,0 +1,5 @@
+# Autoriser l'accès aux fichiers JSON de traduction (DataTables i18n)
+<FilesMatch "\.json$">
+    Order Allow,Deny
+    Allow from all
+</FilesMatch>

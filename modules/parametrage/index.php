@@ -25,7 +25,13 @@ if (!in_array($section, $allowed)) $section = 'actes';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     verifyCsrf();
     header('Content-Type: application/json');
-    $action = $_POST['action'] ?? '';
+    // Supporte JSON body (Content-Type: application/json) ET form-data classique
+    $jsonInput = [];
+    $ct = $_SERVER['CONTENT_TYPE'] ?? '';
+    if (str_contains($ct, 'application/json')) {
+        $jsonInput = json_decode(file_get_contents('php://input'), true) ?? [];
+    }
+    $action = $_POST['action'] ?? $jsonInput['action'] ?? '';
 
     try {
         switch ($action) {
@@ -149,7 +155,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 break;
 
             case 'get_historique_stock':
-                $pid = (int)($_POST['produit_id'] ?? 0);
+                // Supporte JSON body ET form-data
+                $pid = (int)($_POST['produit_id'] ?? $jsonInput['produit_id'] ?? 0);
                 if (!$pid) jsonError('Produit invalide.');
                 try {
                     $rows = $pdo->prepare("

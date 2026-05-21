@@ -72,8 +72,9 @@ function hideLoader() {
 // ─── DataTables initialisation globale ────────────────────────────────────────
 $(document).ready(function () {
     // URL locale pour éviter le blocage CORS du CDN DataTables
-    const dtLangUrl = (typeof APP_BASE_URL !== 'undefined' ? APP_BASE_URL : '')
-                      + '/assets/i18n/fr-FR.json';
+    // APP_BASE_URL peut se terminer par "/" : on normalise pour éviter les doubles slashes
+    const _base = (typeof APP_BASE_URL !== 'undefined' ? APP_BASE_URL.replace(/\/+$/, '') : '');
+    const dtLangUrl = _base + '/assets/i18n/fr-FR.json';
     $('[data-datatable]').each(function () {
         $(this).DataTable({
             language: { url: dtLangUrl },

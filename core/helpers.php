@@ -42,7 +42,8 @@ function url(string $path = ''): string
 {
     $sub  = defined('APP_SUBDIR') ? APP_SUBDIR : '';
     $path = ltrim($path, '/');
-    return $sub . '/' . $path;
+    // Eviter le double slash quand path est vide
+    return $path === '' ? ($sub ?: '/') : $sub . '/' . $path;
 }
 
 /**
