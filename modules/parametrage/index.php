@@ -1366,383 +1366,384 @@ include ROOT_PATH . '/templates/layouts/header.php';
 </div> <!-- Fin container principal -->
 
 <!-- JavaScript commun -->
-<script>// Encapsuler tout le code dans DOMContentLoaded pour éviter les problèmes d'éléments non chargés
-document.addEventListener('DOMContentLoaded', function() {
-    // Fonction générique pour sauvegarder un formulaire via AJAX
-    function saveParam(formId, url) {
-        const form = document.getElementById(formId);
-        if (!form) {
-            console.error('Formulaire non trouvé :', formId);
-            alert('Erreur : Le formulaire n\'a pas été trouvé.');
-            return;
-        }
-        
-        if (!form.checkValidity()) {
-            form.reportValidity();
-            return;
-        }
-        
-        const formData = new FormData(form);
-        
-        fetch(url, {
-            method: 'POST',
-            headers: { 'X-CSRF-TOKEN': CSRF_TOKEN },
-            body: formData
-        })
-        .then(response => {
-            if (!response.ok) {
-                throw new Error('Erreur réseau : ' + response.status);
-            }
-            return response.text(); // Récupérer le texte brut d'abord
-        })
-        .then(text => {
-            try {
-                const data = JSON.parse(text);
-                if (data.success) {
-                    location.reload();
-                } else {
-                    alert('Erreur : ' + data.message);
-                }
-            } catch (e) {
-                console.error('Erreur de parsing JSON :', e, 'Réponse :', text);
-                alert('Erreur : La réponse du serveur n\'est pas valide.');
-            }
-        })
-        .catch(error => {
-            console.error('Error:', error);
-            alert('Erreur réseau. Vérifiez votre connexion.');
-        });
-    }
+<script>
+// ─── Helper CSRF — lit directement le meta-tag, sans dépendre de app.js ───────
+function getCsrf() {
+    return document.querySelector('meta[name="csrf-token"]')?.content || '';
+}
 
-    // Modal Acte
-    function openActeModal(acte = null) {
-        const modal = new bootstrap.Modal(document.getElementById('modalActe'));
-        const form = document.getElementById('formActe');
-        form.reset();
-        if (acte) {
-            document.getElementById('acteId').value = acte.id;
-            document.getElementById('acteLibelle').value = acte.libelle;
-            document.getElementById('acteTarif').value = acte.tarif;
-            document.getElementById('acteGratuit').checked = acte.est_gratuit ? true : false;
-        }
-        modal.show();
-    }
+// ─── Helper encode HTML (sécurité XSS) ────────────────────────────────────────
+function h(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
 
-    // Modal Examen
-    function openExamenModal(examen = null) {
-        const modal = new bootstrap.Modal(document.getElementById('modalExamen'));
-        const form = document.getElementById('formExamen');
-        form.reset();
-        document.getElementById('montLaboCalc').textContent = '0 F';
-        if (examen) {
-            document.getElementById('examId').value = examen.id;
-            document.getElementById('examLibelle').value = examen.libelle;
-            document.getElementById('examCout').value = examen.cout_total;
-            document.getElementById('examPct').value = examen.pourcentage_labo;
-            const cout = parseFloat(examen.cout_total) || 0;
-            const pct = parseFloat(examen.pourcentage_labo) || 0;
-            const mont = Math.round(cout * pct / 100);
-            document.getElementById('montLaboCalc').textContent = mont + ' F';
-        }
-        modal.show();
-    }
+// ─── Formater date MySQL → format français ─────────────────────────────────────
+function formatDate(dateString) {
+    const date = new Date(dateString);
+    return date.toLocaleDateString('fr-FR', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+    });
+}
 
-    // Modal Produit
-    function openProduitModal(produit = null) {
-        const modal = new bootstrap.Modal(document.getElementById('modalProduit'));
-        const form = document.getElementById('formProduit');
-        form.reset();
-        if (produit) {
-            document.getElementById('prodId').value = produit.id;
-            document.getElementById('prodNom').value = produit.nom;
-            document.getElementById('prodForme').value = produit.forme;
-            document.getElementById('prodPrix').value = produit.prix_unitaire;
-            document.getElementById('prodStock').value = produit.stock_initial;
-            document.getElementById('prodSeuil').value = produit.seuil_alerte;
-            if (produit.date_peremption) {
-                document.getElementById('prodPeremption').value = produit.date_peremption;
-            }
-        }
-        modal.show();
+// ─── Sauvegarde générique d'un formulaire via AJAX (GLOBAL) ───────────────────
+function saveParam(formId, url) {
+    const form = document.getElementById(formId);
+    if (!form) {
+        console.error('Formulaire non trouvé :', formId);
+        alert('Erreur : Le formulaire n\'a pas été trouvé.');
+        return;
     }
-
-    // Modal Approvisionnement
-    function openApproModal(produitId, produitNom) {
-        const modal = new bootstrap.Modal(document.getElementById('modalAppro'));
-        document.getElementById('approProduitId').value = produitId;
-        document.getElementById('approProduitNom').textContent = produitNom;
-        modal.show();
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
     }
-
-    // Modal Diminuer Stock
-    function openDiminuerModal(produitId, produitNom, stockActuel) {
-        const modal = new bootstrap.Modal(document.getElementById('modalDiminuer'));
-        document.getElementById('dimProduitId').value = produitId;
-        document.getElementById('dimProduitNom').textContent = produitNom;
-        document.getElementById('dimStockActuel').textContent = stockActuel + ' unités';
-        modal.show();
-    }
-
-    // Modal Historique Stock
-    function voirHistoriqueStock(produitId, produitNom) {
-        const modal = new bootstrap.Modal(document.getElementById('modalHistoriqueStock'));
-        document.getElementById('histProduitNom').textContent = produitNom;
-        const loading = document.getElementById('histLoading');
-        const content = document.getElementById('histContent');
-        loading.style.display = 'block';
-        content.style.display = 'none';
-        content.innerHTML = '';
-        
-        fetch('/index.php?page=parametrage&section=pharmacie', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({action: 'get_historique_stock', produit_id: produitId})
-        })
-        .then(response => response.json())
-        .then(data => {
-            loading.style.display = 'none';
-            if (data.success && data.data) {
-                let html = '<table class="table table-hover align-middle mb-0 small"><thead class="table-light"><tr><th>Date</th><th>Type</th><th>Qté</th><th>Avant</th><th>Après</th><th>Commentaire</th><th>Par</th></tr></thead><tbody>';
-                data.data.forEach(row => {
-                    const type = row.type_mvt === 'entree' ? '<span class="badge bg-success">Entr</span>' : '<span class="badge bg-danger">Sort</span>';
-                    html += `<tr><td>${formatDate(row.whendone)}</td><td>${type}</td><td class="fw-bold">${row.quantite}</td><td class="text-muted">${row.stock_avant}</td><td class="fw-bold">${row.stock_apres}</td><td>${h(row.commentaire)}</td><td>${h(row.user_nom)} ${h(row.user_prenom)}</td></tr>`;
-                });
-                html += '</tbody></table>';
-                content.innerHTML = html;
-                content.style.display = 'block';
+    const formData = new FormData(form);
+    fetch(url, {
+        method: 'POST',
+        headers: { 'X-CSRF-TOKEN': getCsrf() },
+        body: formData
+    })
+    .then(response => {
+        if (!response.ok) throw new Error('Erreur réseau : ' + response.status);
+        return response.text();
+    })
+    .then(text => {
+        try {
+            const data = JSON.parse(text);
+            if (data.success) {
+                location.reload();
             } else {
-                content.innerHTML = '<div class="alert alert-warning">Aucun historique trouvé.</div>';
-                content.style.display = 'block';
+                alert('Erreur : ' + data.message);
             }
-        })
-        .catch(() => {
-            loading.style.display = 'none';
+        } catch (e) {
+            console.error('Réponse non-JSON :', text);
+            alert('Erreur : La réponse du serveur n\'est pas valide.\n\n' + text.substring(0, 200));
+        }
+    })
+    .catch(error => {
+        console.error('Fetch error:', error);
+        alert('Erreur réseau. Vérifiez votre connexion.');
+    });
+}
+
+// ─── deleteItem générique (soft-delete via AJAX) — GLOBAL ─────────────────────
+function deleteItem(type, id, libelle) {
+    if (!confirm('Supprimer « ' + libelle + ' » ?')) return;
+    const sectionMap = { acte: 'actes', examen: 'examens', produit: 'pharmacie' };
+    const section = sectionMap[type] || type;
+    const fd = new FormData();
+    fd.append('action', 'delete_' + type);
+    fd.append('id', id);
+    fetch('/index.php?page=parametrage&section=' + section, {
+        method: 'POST',
+        headers: { 'X-CSRF-TOKEN': getCsrf() },
+        body: fd
+    })
+    .then(r => r.text())
+    .then(text => {
+        try {
+            const data = JSON.parse(text);
+            if (data.success) location.reload();
+            else alert('Erreur : ' + data.message);
+        } catch(e) {
+            console.error('Réponse non-JSON :', text);
+            alert('Erreur serveur inattendue.');
+        }
+    })
+    .catch(() => alert('Erreur réseau.'));
+}
+
+// ─── Modal Acte (GLOBAL) ───────────────────────────────────────────────────────
+function openActeModal(acte) {
+    acte = acte || null;
+    const modalEl = document.getElementById('modalActe');
+    if (!modalEl) return;
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    const form = document.getElementById('formActe');
+    form.reset();
+    document.getElementById('acteId').value = '';
+    if (acte) {
+        document.getElementById('acteId').value = acte.id;
+        document.getElementById('acteLibelle').value = acte.libelle;
+        document.getElementById('acteTarif').value = acte.tarif;
+        document.getElementById('acteGratuit').checked = acte.est_gratuit == 1;
+    }
+    modal.show();
+}
+
+// ─── Modal Examen (GLOBAL) ─────────────────────────────────────────────────────
+function openExamenModal(examen) {
+    examen = examen || null;
+    const modalEl = document.getElementById('modalExamen');
+    if (!modalEl) return;
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    const form = document.getElementById('formExamen');
+    form.reset();
+    document.getElementById('examId').value = '';
+    const montEl = document.getElementById('montLaboCalc');
+    if (montEl) montEl.textContent = '0 F';
+    if (examen) {
+        document.getElementById('examId').value = examen.id;
+        document.getElementById('examLibelle').value = examen.libelle;
+        document.getElementById('examCout').value = examen.cout_total;
+        document.getElementById('examPct').value = examen.pourcentage_labo;
+        const cout = parseFloat(examen.cout_total) || 0;
+        const pct  = parseFloat(examen.pourcentage_labo) || 0;
+        if (montEl) montEl.textContent = Math.round(cout * pct / 100) + ' F';
+    }
+    modal.show();
+}
+
+// ─── Modal Produit (GLOBAL) ────────────────────────────────────────────────────
+function openProduitModal(produit) {
+    produit = produit || null;
+    const modalEl = document.getElementById('modalProduit');
+    if (!modalEl) return;
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    const form = document.getElementById('formProduit');
+    form.reset();
+    document.getElementById('prodId').value = '';
+    if (produit) {
+        document.getElementById('prodId').value = produit.id;
+        document.getElementById('prodNom').value = produit.nom;
+        document.getElementById('prodForme').value = produit.forme;
+        document.getElementById('prodPrix').value = produit.prix_unitaire;
+        document.getElementById('prodStock').value = produit.stock_initial;
+        document.getElementById('prodSeuil').value = produit.seuil_alerte;
+        const peremEl = document.getElementById('prodPeremption');
+        if (peremEl && produit.date_peremption) peremEl.value = produit.date_peremption;
+    }
+    modal.show();
+}
+
+// ─── Modal Approvisionnement (GLOBAL) ─────────────────────────────────────────
+function openApproModal(produitId, produitNom) {
+    const modalEl = document.getElementById('modalAppro');
+    if (!modalEl) return;
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    document.getElementById('approProduitId').value = produitId;
+    const nomEl = document.getElementById('approProduitNom');
+    if (nomEl) nomEl.textContent = produitNom;
+    modal.show();
+}
+
+// ─── Modal Diminuer Stock (GLOBAL) ────────────────────────────────────────────
+function openDiminuerModal(produitId, produitNom, stockActuel) {
+    const modalEl = document.getElementById('modalDiminuer');
+    if (!modalEl) return;
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    document.getElementById('dimProduitId').value = produitId;
+    const nomEl = document.getElementById('dimProduitNom');
+    if (nomEl) nomEl.textContent = produitNom;
+    const stockEl = document.getElementById('dimStockActuel');
+    if (stockEl) stockEl.textContent = stockActuel + ' unités';
+    modal.show();
+}
+
+// ─── Modal Historique Stock (GLOBAL) ──────────────────────────────────────────
+function voirHistoriqueStock(produitId, produitNom) {
+    const modalEl = document.getElementById('modalHistoriqueStock');
+    if (!modalEl) return;
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    const nomEl  = document.getElementById('histProduitNom');
+    if (nomEl) nomEl.textContent = produitNom;
+    const loading = document.getElementById('histLoading');
+    const content = document.getElementById('histContent');
+    if (loading) { loading.style.display = 'block'; }
+    if (content) { content.style.display = 'none'; content.innerHTML = ''; }
+    modal.show();
+    fetch('/index.php?page=parametrage&section=pharmacie', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-TOKEN': getCsrf() },
+        body: JSON.stringify({ action: 'get_historique_stock', produit_id: produitId })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (loading) loading.style.display = 'none';
+        if (!content) return;
+        if (data.success && data.data && data.data.length > 0) {
+            let rows = '';
+            data.data.forEach(row => {
+                const badge = row.type_mvt === 'entree'
+                    ? '<span class="badge bg-success">Entr</span>'
+                    : '<span class="badge bg-danger">Sort</span>';
+                rows += `<tr>
+                    <td>${formatDate(row.whendone)}</td>
+                    <td>${badge}</td>
+                    <td class="fw-bold">${row.quantite}</td>
+                    <td class="text-muted">${row.stock_avant}</td>
+                    <td class="fw-bold">${row.stock_apres}</td>
+                    <td>${h(row.commentaire)}</td>
+                    <td>${h(row.user_nom)} ${h(row.user_prenom)}</td>
+                </tr>`;
+            });
+            content.innerHTML = `<table class="table table-hover align-middle mb-0 small">
+                <thead class="table-light"><tr>
+                    <th>Date</th><th>Type</th><th>Qté</th>
+                    <th>Avant</th><th>Après</th><th>Commentaire</th><th>Par</th>
+                </tr></thead><tbody>${rows}</tbody></table>`;
+        } else {
+            content.innerHTML = '<div class="alert alert-warning">Aucun historique trouvé.</div>';
+        }
+        content.style.display = 'block';
+    })
+    .catch(() => {
+        if (loading) loading.style.display = 'none';
+        if (content) {
             content.innerHTML = '<div class="alert alert-danger">Erreur réseau.</div>';
             content.style.display = 'block';
-        });
-        modal.show();
-    }
-
-    // Fonction pour formater une date MySQL en format français
-    function formatDate(dateString) {
-        const date = new Date(dateString);
-        return date.toLocaleDateString('fr-FR', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-        });
-    }
-
-    // Modal Fiche AG
-    function openFicheAgModal() {
-        const modal = new bootstrap.Modal(document.getElementById('modalFicheAg'));
-        document.getElementById('formStockFichesAg').reset();
-        modal.show();
-    }
-
-    // Fonctions pour éditer/supprimer mouvements carnets
-    function ouvrirEditMvtCarnet(mvtId, quantite, commentaire) {
-        const newQty = prompt('Nouvelle quantité (actuelle : ' + quantite + ') :', quantite);
-        if (newQty !== null) {
-            const qty = parseInt(newQty);
-            if (isNaN(qty) || qty <= 0) {
-                alert('Quantité invalide.');
-                return;
-            }
-            const newComment = prompt('Commentaire (optionnel) :', commentaire);
-            const comment = newComment ? encodeURIComponent(newComment) : '';
-            fetch('/index.php?page=parametrage&section=carnets', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-TOKEN': CSRF_TOKEN},
-                body: 'action=edit_mouvement_carnet&mvt_id=' + mvtId + '&quantite=' + qty + '&commentaire=' + comment
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) location.reload();
-                else alert('Erreur : ' + data.message);
-            });
         }
-    }
+    });
+}
 
-    function supprimerMvtCarnet(mvtId, quantite) {
-        if (confirm('Supprimer ce mouvement ? Cela ajustera le stock de ' + quantite + ' unités.')) {
-            fetch('/index.php?page=parametrage&section=carnets', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-TOKEN': CSRF_TOKEN},
-                body: 'action=delete_mouvement_carnet&mvt_id=' + mvtId
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) location.reload();
-                else alert('Erreur : ' + data.message);
-            });
+// ─── Modal Fiche AG (GLOBAL) ──────────────────────────────────────────────────
+function openFicheAgModal() {
+    const modalEl = document.getElementById('modalFicheAg');
+    if (!modalEl) return;
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    const form = document.getElementById('formStockFichesAg');
+    if (form) form.reset();
+    modal.show();
+}
+
+// ─── Éditer/Supprimer mouvement carnet (GLOBAL) ────────────────────────────────
+function ouvrirEditMvtCarnet(mvtId, quantite, commentaire) {
+    const newQty = prompt('Nouvelle quantité (actuelle : ' + quantite + ') :', quantite);
+    if (newQty === null) return;
+    const qty = parseInt(newQty, 10);
+    if (isNaN(qty) || qty <= 0) { alert('Quantité invalide.'); return; }
+    const newComment = prompt('Commentaire (optionnel) :', commentaire);
+    if (newComment === null) return;
+    const comment = encodeURIComponent(newComment);
+    fetch('/index.php?page=parametrage&section=carnets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-TOKEN': getCsrf() },
+        body: 'action=edit_mouvement_carnet&mvt_id=' + mvtId + '&quantite=' + qty + '&commentaire=' + comment
+    })
+    .then(r => r.json())
+    .then(data => { if (data.success) location.reload(); else alert('Erreur : ' + data.message); })
+    .catch(() => alert('Erreur réseau.'));
+}
+
+function supprimerMvtCarnet(mvtId, quantite) {
+    if (!confirm('Supprimer ce mouvement ? Cela ajustera le stock de ' + quantite + ' unités.')) return;
+    fetch('/index.php?page=parametrage&section=carnets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-TOKEN': getCsrf() },
+        body: 'action=delete_mouvement_carnet&mvt_id=' + mvtId
+    })
+    .then(r => r.json())
+    .then(data => { if (data.success) location.reload(); else alert('Erreur : ' + data.message); })
+    .catch(() => alert('Erreur réseau.'));
+}
+
+// ─── Éditer/Supprimer mouvement fiche AG (GLOBAL) ─────────────────────────────
+function ouvrirEditMvtFicheAg(mvtId, quantite, commentaire) {
+    const newQty = prompt('Nouvelle quantité (actuelle : ' + quantite + ') :', quantite);
+    if (newQty === null) return;
+    const qty = parseInt(newQty, 10);
+    if (isNaN(qty) || qty <= 0) { alert('Quantité invalide.'); return; }
+    const newComment = prompt('Commentaire (optionnel) :', commentaire);
+    if (newComment === null) return;
+    const comment = encodeURIComponent(newComment);
+    fetch('/index.php?page=parametrage&section=fiches_ag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-TOKEN': getCsrf() },
+        body: 'action=edit_mouvement_fiche_ag&mvt_id=' + mvtId + '&quantite=' + qty + '&commentaire=' + comment
+    })
+    .then(r => r.json())
+    .then(data => { if (data.success) location.reload(); else alert('Erreur : ' + data.message); })
+    .catch(() => alert('Erreur réseau.'));
+}
+
+function supprimerMvtFicheAg(mvtId, quantite) {
+    if (!confirm('Supprimer ce mouvement ? Cela ajustera le stock de ' + quantite + ' fiches.')) return;
+    fetch('/index.php?page=parametrage&section=fiches_ag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-TOKEN': getCsrf() },
+        body: 'action=delete_mouvement_fiche_ag&mvt_id=' + mvtId
+    })
+    .then(r => r.json())
+    .then(data => { if (data.success) location.reload(); else alert('Erreur : ' + data.message); })
+    .catch(() => alert('Erreur réseau.'));
+}
+
+// ─── DOMContentLoaded : uniquement bindings addEventListener + previews ─────────
+document.addEventListener('DOMContentLoaded', function() {
+
+    // ── Calcul montant labo (modal examen) ────────────────────────────────────
+    const examCout = document.getElementById('examCout');
+    const examPct  = document.getElementById('examPct');
+    if (examCout && examPct) {
+        function _updateMontLabo() {
+            const cout = parseFloat(examCout.value) || 0;
+            const pct  = parseFloat(examPct.value)  || 0;
+            const el   = document.getElementById('montLaboCalc');
+            if (el) el.textContent = Math.round(cout * pct / 100) + ' F';
         }
+        examCout.addEventListener('input', _updateMontLabo);
+        examPct.addEventListener('input', _updateMontLabo);
     }
 
-    function ouvrirEditMvtFicheAg(mvtId, quantite, commentaire) {
-        const newQty = prompt('Nouvelle quantité (actuelle : ' + quantite + ') :', quantite);
-        if (newQty !== null) {
-            const qty = parseInt(newQty);
-            if (isNaN(qty) || qty <= 0) {
-                alert('Quantité invalide.');
-                return;
-            }
-            const newComment = prompt('Commentaire (optionnel) :', commentaire);
-            const comment = newComment ? encodeURIComponent(newComment) : '';
-            fetch('/index.php?page=parametrage&section=fiches_ag', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                body: 'action=edit_mouvement_fiche_ag&mvt_id=' + mvtId + '&quantite=' + qty + '&commentaire=' + comment
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) location.reload();
-                else alert('Erreur : ' + data.message);
-            });
-        }
-    }
-
-    function supprimerMvtFicheAg(mvtId, quantite) {
-        if (confirm('Supprimer ce mouvement ? Cela ajustera le stock de ' + quantite + ' fiches.')) {
-            fetch('/index.php?page=parametrage&section=fiches_ag', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-                body: 'action=delete_mouvement_fiche_ag&mvt_id=' + mvtId
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) location.reload();
-                else alert('Erreur : ' + data.message);
-            });
-        }
-    }
-
-    // Gestion du stock de carnets (mise à jour du stock prévisionnel)
+    // ── Stock prévisionnel : carnets soins ────────────────────────────────────
     const qtyCarnetSoins = document.getElementById('qtyCarnetSoins');
     if (qtyCarnetSoins) {
         qtyCarnetSoins.addEventListener('input', function() {
-            const stockActuel = <?= $stockCarnetsSoins ?>;
-            const ajout = parseInt(this.value) || 0;
-            const prevStockSoins = document.getElementById('prevStockSoins');
-            if (prevStockSoins) {
-                prevStockSoins.textContent = stockActuel + ajout;
-            }
+            const stockActuel = <?= (int)($stockCarnetsSoins ?? 0) ?>;
+            const ajout = parseInt(this.value, 10) || 0;
+            const el = document.getElementById('prevStockSoins');
+            if (el) el.textContent = stockActuel + ajout;
         });
     }
 
+    // ── Stock prévisionnel : carnets santé ────────────────────────────────────
     const qtyCarnetSante = document.getElementById('qtyCarnetSante');
     if (qtyCarnetSante) {
         qtyCarnetSante.addEventListener('input', function() {
-            const stockActuel = <?= $stockCarnetsSante ?>;
-            const ajout = parseInt(this.value) || 0;
-            const prevStockSante = document.getElementById('prevStockSante');
-            if (prevStockSante) {
-                prevStockSante.textContent = stockActuel + ajout;
-            }
+            const stockActuel = <?= (int)($stockCarnetsSante ?? 0) ?>;
+            const ajout = parseInt(this.value, 10) || 0;
+            const el = document.getElementById('prevStockSante');
+            if (el) el.textContent = stockActuel + ajout;
         });
     }
 
+    // ── Stock prévisionnel : fiches AG ────────────────────────────────────────
     const qtyFicheAg = document.getElementById('qtyFicheAg');
     if (qtyFicheAg) {
         qtyFicheAg.addEventListener('input', function() {
-            const stockActuel = <?= $stockFichesAg ?>;
-            const ajout = parseInt(this.value) || 0;
-            const prevStockFichesAg = document.getElementById('prevStockFichesAg');
-            if (prevStockFichesAg) {
-                prevStockFichesAg.textContent = stockActuel + ajout;
-            }
+            const stockActuel = <?= (int)($stockFichesAg ?? 0) ?>;
+            const ajout = parseInt(this.value, 10) || 0;
+            const el = document.getElementById('prevStockFichesAg');
+            if (el) el.textContent = stockActuel + ajout;
         });
     }
 
-    // Calcul montant labo dans modal examen
-    const examCout = document.getElementById('examCout');
-    const examPct = document.getElementById('examPct');
-    if (examCout && examPct) {
-        function updateMontLabo() {
-            const cout = parseFloat(examCout.value) || 0;
-            const pct = parseFloat(examPct.value) || 0;
-            document.getElementById('montLaboCalc').textContent = Math.round(cout * pct / 100) + ' F';
+    // ── Submit via addEventListener (fallback pour formulaires sans onclick) ──
+    const formBindings = [
+        ['formStockCarnetsSoins', '/index.php?page=parametrage&section=carnets'],
+        ['formStockCarnetsSante', '/index.php?page=parametrage&section=carnets'],
+        ['formStockFichesAg',     '/index.php?page=parametrage&section=fiches_ag'],
+        ['formActe',              '/index.php?page=parametrage&section=actes'],
+        ['formExamen',            '/index.php?page=parametrage&section=examens'],
+        ['formProduit',           '/index.php?page=parametrage&section=pharmacie'],
+        ['formAppro',             '/index.php?page=parametrage&section=pharmacie'],
+        ['formDiminuer',          '/index.php?page=parametrage&section=pharmacie'],
+        ['formConfig',            '/index.php?page=parametrage&section=config'],
+    ];
+    formBindings.forEach(function([id, url]) {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('submit', function(e) {
+                e.preventDefault();
+                saveParam(id, url);
+            });
         }
-        examCout.addEventListener('input', updateMontLabo);
-        examPct.addEventListener('input', updateMontLabo);
-    }
-
-    // Initialisation des événements pour les formulaires
-    const formStockCarnetsSoins = document.getElementById('formStockCarnetsSoins');
-    if (formStockCarnetsSoins) {
-        formStockCarnetsSoins.addEventListener('submit', function(e) {
-            e.preventDefault();
-            saveParam('formStockCarnetsSoins', '/index.php?page=parametrage&section=carnets');
-        });
-    }
-
-    const formStockCarnetsSante = document.getElementById('formStockCarnetsSante');
-    if (formStockCarnetsSante) {
-        formStockCarnetsSante.addEventListener('submit', function(e) {
-            e.preventDefault();
-            saveParam('formStockCarnetsSante', '/index.php?page=parametrage&section=carnets');
-        });
-    }
-
-    const formStockFichesAg = document.getElementById('formStockFichesAg');
-    if (formStockFichesAg) {
-        formStockFichesAg.addEventListener('submit', function(e) {
-            e.preventDefault();
-            saveParam('formStockFichesAg', '/index.php?page=parametrage&section=fiches_ag');
-        });
-    }
-
-    const formActe = document.getElementById('formActe');
-    if (formActe) {
-        formActe.addEventListener('submit', function(e) {
-            e.preventDefault();
-            saveParam('formActe', '/index.php?page=parametrage&section=actes');
-        });
-    }
-
-    const formExamen = document.getElementById('formExamen');
-    if (formExamen) {
-        formExamen.addEventListener('submit', function(e) {
-            e.preventDefault();
-            saveParam('formExamen', '/index.php?page=parametrage&section=examens');
-        });
-    }
-
-    const formProduit = document.getElementById('formProduit');
-    if (formProduit) {
-        formProduit.addEventListener('submit', function(e) {
-            e.preventDefault();
-            saveParam('formProduit', '/index.php?page=parametrage&section=pharmacie');
-        });
-    }
-
-    const formAppro = document.getElementById('formAppro');
-    if (formAppro) {
-        formAppro.addEventListener('submit', function(e) {
-            e.preventDefault();
-            saveParam('formAppro', '/index.php?page=parametrage&section=pharmacie');
-        });
-    }
-
-    const formDiminuer = document.getElementById('formDiminuer');
-    if (formDiminuer) {
-        formDiminuer.addEventListener('submit', function(e) {
-            e.preventDefault();
-            saveParam('formDiminuer', '/index.php?page=parametrage&section=pharmacie');
-        });
-    }
-
-    const formConfig = document.getElementById('formConfig');
-    if (formConfig) {
-        formConfig.addEventListener('submit', function(e) {
-            e.preventDefault();
-            saveParam('formConfig', '/index.php?page=parametrage&section=config');
-        });
-    }
+    });
 });
-
 </script>
 
 <?php

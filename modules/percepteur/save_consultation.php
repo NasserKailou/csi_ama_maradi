@@ -28,7 +28,6 @@ require_once ROOT_PATH . '/core/autoload.php';
 require_once ROOT_PATH . '/core/helpers.php';
 
 require_once ROOT_PATH . '/core/CarnetsHelper.php';
-CarnetsHelper::ensureConfig($pdo, $userId);
 
 Session::start();
 requireRole('percepteur', 'admin', 'comptable', 'major');
@@ -52,6 +51,7 @@ const TELEPHONE_PAR_DEFAUT_CONSULT = '99999999';
 
 $pdo         = Database::getInstance();
 $userId      = Session::getUserId();
+CarnetsHelper::ensureConfig($pdo, $userId);
 
 $typePatient = in_array($_POST['type_patient'] ?? '', ['normal','orphelin','acte_gratuit'], true)
                ? $_POST['type_patient'] : 'normal';

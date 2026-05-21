@@ -24,9 +24,8 @@ require_once ROOT_PATH . '/config/config.php';
 require_once ROOT_PATH . '/core/autoload.php';
 require_once ROOT_PATH . '/core/helpers.php';
 
-   require_once ROOT_PATH . '/core/CarnetsHelper.php';
-    CarnetsHelper::ensureConfig($pdo, $userId);
-    
+require_once ROOT_PATH . '/core/CarnetsHelper.php';
+
 Session::start();
 requireRole('percepteur', 'admin', 'comptable', 'major');
 verifyCsrf();
@@ -40,6 +39,7 @@ const TELEPHONE_PAR_DEFAUT  = '99999999';
 
 $pdo        = Database::getInstance();
 $userId     = Session::getUserId();
+CarnetsHelper::ensureConfig($pdo, $userId);
 
 // ─── Téléphone facultatif : vide → 99999999 ──────────────────────────────
 $telephone  = preg_replace('/\D/', '', trim($_POST['telephone'] ?? ''));
