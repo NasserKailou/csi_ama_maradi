@@ -687,9 +687,8 @@ function imprimerInstancePdf(PDO $pdo) {
 
     <!-- Signatures -->
     <div class="signatures">
-        <div class="sig-box"><div class="sig-line">Le Comptable</div></div>
-        <div class="sig-box"><div class="sig-line">Le Representant DirectAid AMA</div></div>
-        <div class="sig-box"><div class="sig-line">Le Directeur du CSI</div></div>
+        
+        <div class="sig-box"><div class="sig-line">Le Major</div></div>
     </div>
 
     <?php endif; ?>
