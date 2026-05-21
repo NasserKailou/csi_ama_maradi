@@ -695,28 +695,33 @@ $stmtCsanteRecus = $pdo->prepare("
 ");
 try { $stmtCsanteRecus->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbRecusCarnetSante = (int)$stmtCsanteRecus->fetchColumn(); } catch (Exception $e) { $nbRecusCarnetSante = 0; }
 
-// Carnet AG (acte gratuit avec carnet) : avec_carnet IN (1,2) sur reçus acte_gratuit
-// Note: option_gratuite est stocké dans la colonne avec_carnet (0=aucun,1=carnet,2=carnet+fiche,3=fiche)
+// Carnet AG (acte gratuit avec carnet) :
+// type_patient='acte_gratuit' + type_recu='consultation' + JOIN lignes_consultation.avec_carnet IN (1,2)
+// avec_carnet: 0=aucun, 1=carnet seul, 2=carnet+fiche, 3=fiche seule
 $stmtCagRecus = $pdo->prepare("
-    SELECT COUNT(DISTINCT id) AS nb
-    FROM recus
-    WHERE isDeleted = 0 AND type_recu = 'acte_gratuit'
-      AND avec_carnet IN (1, 2)
-      AND DATE(whendone) BETWEEN :d AND :f
+    SELECT COUNT(DISTINCT r.id) AS nb
+    FROM recus r
+    JOIN lignes_consultation lc ON lc.recu_id = r.id AND lc.isDeleted = 0
+    WHERE r.isDeleted = 0 AND r.type_patient = 'acte_gratuit'
+      AND r.type_recu = 'consultation'
+      AND lc.avec_carnet IN (1, 2)
+      AND DATE(r.whendone) BETWEEN :d AND :f
 ");
 try { $stmtCagRecus->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbRecusCarnetAg = (int)$stmtCagRecus->fetchColumn(); } catch (Exception $e) { $nbRecusCarnetAg = 0; }
 
-// Fiche AG : avec_carnet IN (2,3) sur reçus acte_gratuit
+// Fiche AG : type_patient='acte_gratuit' + type_recu='consultation' + lignes_consultation.avec_carnet IN (2,3)
 $stmtFagRecus = $pdo->prepare("
-    SELECT COUNT(DISTINCT id) AS nb
-    FROM recus
-    WHERE isDeleted = 0 AND type_recu = 'acte_gratuit'
-      AND avec_carnet IN (2, 3)
-      AND DATE(whendone) BETWEEN :d AND :f
+    SELECT COUNT(DISTINCT r.id) AS nb
+    FROM recus r
+    JOIN lignes_consultation lc ON lc.recu_id = r.id AND lc.isDeleted = 0
+    WHERE r.isDeleted = 0 AND r.type_patient = 'acte_gratuit'
+      AND r.type_recu = 'consultation'
+      AND lc.avec_carnet IN (2, 3)
+      AND DATE(r.whendone) BETWEEN :d AND :f
 ");
 try { $stmtFagRecus->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbRecusFicheAg = (int)$stmtFagRecus->fetchColumn(); } catch (Exception $e) { $nbRecusFicheAg = 0; }
 
-// Total reçus consultation période (tous types confondus, pour % utilisation carnet soins)
+// Total reçus consultation période (tous types patients, pour % utilisation carnet soins)
 $stmtTotalConsult = $pdo->prepare("
     SELECT COUNT(DISTINCT id) AS nb
     FROM recus
@@ -725,11 +730,12 @@ $stmtTotalConsult = $pdo->prepare("
 ");
 try { $stmtTotalConsult->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbTotalConsult = (int)$stmtTotalConsult->fetchColumn(); } catch (Exception $e) { $nbTotalConsult = 0; }
 
-// Total reçus acte_gratuit période
+// Total reçus acte_gratuit période : type_patient='acte_gratuit' + type_recu='consultation'
 $stmtTotalAg = $pdo->prepare("
     SELECT COUNT(DISTINCT id) AS nb
     FROM recus
-    WHERE isDeleted = 0 AND type_recu = 'acte_gratuit'
+    WHERE isDeleted = 0 AND type_patient = 'acte_gratuit'
+      AND type_recu = 'consultation'
       AND DATE(whendone) BETWEEN :d AND :f
 ");
 try { $stmtTotalAg->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbTotalAg = (int)$stmtTotalAg->fetchColumn(); } catch (Exception $e) { $nbTotalAg = 0; }
