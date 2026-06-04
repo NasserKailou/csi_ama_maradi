@@ -1,37 +1,86 @@
 <?php
 /**
  * Tableau de Bord Analytique Avancé – Réservé Administrateur
+ * 
+ * Vision 360° : Finance | Opérationnel | RH | Stock | Qualité | Démographie
+ * 100% aligné sur le schéma réel directaid (vérifié dump SQL).
  */
-requireRole('admin');
+requireRole('admin', 'comptable', 'major');
 $pdo       = Database::getInstance();
 $pageTitle = 'Analytique Avancée';
 
-// ── Période de filtre (défaut : mois en cours) ─────────────────────────────
+if (!defined('TARIF_SUPPLEMENT_ADULTE')) {
+    define('TARIF_SUPPLEMENT_ADULTE', 100);
+}
+if (!defined('AGE_LIMITE_SUPPLEMENT')) {
+    define('AGE_LIMITE_SUPPLEMENT', 5);
+}
+if (!defined('TARIF_OBSERVATION')) {
+    define('TARIF_OBSERVATION', 1000);
+}
+
+/**
+ * Formate un nombre en sécurité (gère NULL, chaînes vides, etc.)
+ */
+function fmt($val, $decimales = 0) {
+    return number_format((float)($val ?? 0), $decimales, ',', ' ');
+}
+
+// ── Période de filtre ─────────────────────────────────────────────────────
 $filtreDebut = $_GET['filtre_debut'] ?? date('Y-m-01');
 $filtreFin   = $_GET['filtre_fin']   ?? date('Y-m-d');
 
-// ════════════════════════════════════════════════════════════════════════════
-// 1. KPIs globaux sur la période
-// ════════════════════════════════════════════════════════════════════════════
-$stmt = $pdo->prepare("
-    SELECT
-        COUNT(DISTINCT patient_id)           AS nb_patients,
-        COUNT(*)                              AS nb_recus,
-        COALESCE(SUM(montant_encaisse),0)     AS total_encaisse,
-        COALESCE(SUM(montant_total),0)        AS total_theorique,
-        SUM(CASE WHEN type_patient IN ('orphelin','acte_gratuit') THEN 1 ELSE 0 END) AS nb_gratuits
-    FROM recus
-    WHERE isDeleted=0 AND DATE(whendone) BETWEEN :d AND :f
-");
-$stmt->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
-$kpi = $stmt->fetch();
+$nbJours        = (strtotime($filtreFin) - strtotime($filtreDebut)) / 86400 + 1;
+$periodePrecDeb = date('Y-m-d', strtotime($filtreDebut.' -'.$nbJours.' days'));
+$periodePrecFin = date('Y-m-d', strtotime($filtreDebut.' -1 day'));
 
 // ════════════════════════════════════════════════════════════════════════════
-// 2. Actes médicaux les plus utilisés (Top 10)
+// 1. KPIs globaux + comparaison période précédente
+// ════════════════════════════════════════════════════════════════════════════
+$sqlKpi = "
+    SELECT
+        COUNT(DISTINCT patient_id)                AS nb_patients,
+        COUNT(*)                                  AS nb_recus,
+        COALESCE(SUM(montant_encaisse),0)         AS total_encaisse,
+        COALESCE(SUM(montant_total),0)            AS total_theorique,
+        COALESCE(SUM(montant_total - montant_encaisse),0) AS total_subventionne,
+        COALESCE(SUM(CASE WHEN type_patient IN ('orphelin','acte_gratuit') THEN 1 ELSE 0 END),0) AS nb_gratuits,
+        COALESCE(AVG(NULLIF(montant_encaisse,0)),0) AS panier_moyen
+    FROM recus
+    WHERE isDeleted=0 AND DATE(whendone) BETWEEN :d AND :f
+";
+$stmt = $pdo->prepare($sqlKpi);
+$stmt->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
+$kpi = $stmt->fetch() ?: ['nb_patients'=>0,'nb_recus'=>0,'total_encaisse'=>0,'total_theorique'=>0,'total_subventionne'=>0,'nb_gratuits'=>0,'panier_moyen'=>0];
+
+$stmt = $pdo->prepare($sqlKpi);
+$stmt->execute([':d'=>$periodePrecDeb, ':f'=>$periodePrecFin]);
+$kpiPrec = $stmt->fetch() ?: ['nb_patients'=>0,'nb_recus'=>0,'total_encaisse'=>0,'total_theorique'=>0,'total_subventionne'=>0,'nb_gratuits'=>0,'panier_moyen'=>0];
+
+function variation($a, $p) {
+    $a = (float)($a ?? 0);
+    $p = (float)($p ?? 0);
+    if ($p == 0) return $a > 0 ? 100 : 0;
+    return round((($a - $p) / $p) * 100, 1);
+}
+$varPatients = variation($kpi['nb_patients'],    $kpiPrec['nb_patients']);
+$varRecus    = variation($kpi['nb_recus'],       $kpiPrec['nb_recus']);
+$varEncaisse = variation($kpi['total_encaisse'], $kpiPrec['total_encaisse']);
+$varGratuits = variation($kpi['nb_gratuits'],    $kpiPrec['nb_gratuits']);
+
+$tauxSubvention = $kpi['total_theorique'] > 0
+    ? round(($kpi['total_subventionne'] / $kpi['total_theorique']) * 100, 1) : 0;
+
+// ════════════════════════════════════════════════════════════════════════════
+// 2. Top Actes médicaux
 // ════════════════════════════════════════════════════════════════════════════
 $topActes = $pdo->prepare("
-    SELECT a.libelle, COUNT(lc.id) AS nb_utilisations, a.tarif,
-           SUM(CASE WHEN r.type_patient IN ('orphelin','acte_gratuit') THEN 1 ELSE 0 END) AS nb_orphelins
+    SELECT a.libelle, a.tarif,
+           COUNT(lc.id) AS nb_utilisations,
+           COALESCE(SUM(CASE WHEN lc.est_gratuit=1 THEN 0 ELSE (lc.tarif + lc.tarif_carnet) END),0) AS revenu_genere,
+           COALESCE(SUM(CASE WHEN lc.est_gratuit=1 THEN 1 ELSE 0 END),0) AS nb_gratuits_acte,
+           COALESCE(SUM(CASE WHEN r.type_patient IN ('orphelin','acte_gratuit') THEN 1 ELSE 0 END),0) AS nb_orphelins,
+           COALESCE(SUM(lc.avec_carnet),0) AS nb_avec_carnet
     FROM lignes_consultation lc
     JOIN actes_medicaux a ON a.id = lc.acte_id
     JOIN recus r ON r.id = lc.recu_id AND r.isDeleted=0
@@ -44,12 +93,13 @@ $topActes->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
 $topActes = $topActes->fetchAll();
 
 // ════════════════════════════════════════════════════════════════════════════
-// 3. Produits pharmacie les plus consommés (Top 10)
+// 3. Top Produits pharmacie
 // ════════════════════════════════════════════════════════════════════════════
 $topProduits = $pdo->prepare("
     SELECT lp.nom, lp.forme,
-           SUM(lp.quantite)     AS total_qte,
-           SUM(lp.total_ligne)  AS total_revenu
+           COALESCE(SUM(lp.quantite),0)     AS total_qte,
+           COALESCE(SUM(lp.total_ligne),0)  AS total_revenu,
+           COALESCE(AVG(lp.prix_unitaire),0) AS prix_moyen
     FROM lignes_pharmacie lp
     JOIN recus r ON r.id = lp.recu_id AND r.isDeleted=0
     WHERE lp.isDeleted=0 AND DATE(r.whendone) BETWEEN :d AND :f
@@ -61,11 +111,12 @@ $topProduits->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
 $topProduits = $topProduits->fetchAll();
 
 // ════════════════════════════════════════════════════════════════════════════
-// 4. Types de patients (répartition)
+// 4. Répartition par type de patient
 // ════════════════════════════════════════════════════════════════════════════
 $typePatients = $pdo->prepare("
     SELECT type_patient, COUNT(*) AS nb,
-           COALESCE(SUM(montant_encaisse),0) AS montant
+           COALESCE(SUM(montant_encaisse),0) AS montant,
+           COALESCE(SUM(montant_total),0)    AS theorique
     FROM recus
     WHERE isDeleted=0 AND DATE(whendone) BETWEEN :d AND :f
     GROUP BY type_patient
@@ -75,12 +126,14 @@ $typePatients->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
 $typePatients = $typePatients->fetchAll();
 
 // ════════════════════════════════════════════════════════════════════════════
-// 5. Évolution journalière sur la période (recettes + nb patients)
+// 5. Évolution journalière + cumul
 // ════════════════════════════════════════════════════════════════════════════
 $evolution = $pdo->prepare("
     SELECT DATE(whendone) AS jour,
            COUNT(DISTINCT patient_id) AS nb_patients,
-           COALESCE(SUM(montant_encaisse),0) AS recettes
+           COUNT(*) AS nb_recus,
+           COALESCE(SUM(montant_encaisse),0) AS recettes,
+           COALESCE(SUM(montant_total - montant_encaisse),0) AS subventionne
     FROM recus
     WHERE isDeleted=0 AND DATE(whendone) BETWEEN :d AND :f
     GROUP BY DATE(whendone)
@@ -89,13 +142,18 @@ $evolution = $pdo->prepare("
 $evolution->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
 $evolution = $evolution->fetchAll();
 
+$cumul = 0;
+foreach ($evolution as &$e) { $cumul += (float)$e['recettes']; $e['cumul'] = $cumul; }
+unset($e);
+
 // ════════════════════════════════════════════════════════════════════════════
-// 6. Examens les plus prescrits (Top 10)
+// 6. Top Examens prescrits
 // ════════════════════════════════════════════════════════════════════════════
 $topExamens = $pdo->prepare("
     SELECT e.libelle, COUNT(le.id) AS nb,
-           COALESCE(SUM(le.cout_total),0) AS total_revenu,
-           e.pourcentage_labo
+           COALESCE(SUM(le.cout_total),0)  AS total_revenu,
+           e.pourcentage_labo,
+           COALESCE(SUM(le.montant_labo),0) AS part_labo
     FROM lignes_examen le
     JOIN examens e ON e.id = le.examen_id
     JOIN recus r ON r.id = le.recu_id AND r.isDeleted=0
@@ -107,14 +165,22 @@ $topExamens = $pdo->prepare("
 $topExamens->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
 $topExamens = $topExamens->fetchAll();
 
+$totalLabo = 0;
+foreach ($topExamens as $ex) $totalLabo += (float)($ex['part_labo'] ?? 0);
+
 // ════════════════════════════════════════════════════════════════════════════
-// 7. Performance percepteurs sur la période
+// 7. Performance percepteurs
 // ════════════════════════════════════════════════════════════════════════════
 $perfPercep = $pdo->prepare("
-    SELECT u.nom, u.prenom,
-           COUNT(r.id)                        AS nb_recus,
+    SELECT u.id, u.nom, u.prenom, u.est_actif,
+           COUNT(r.id)                         AS nb_recus,
            COUNT(DISTINCT r.patient_id)        AS nb_patients,
-           COALESCE(SUM(r.montant_encaisse),0) AS total_encaisse
+           COALESCE(SUM(r.montant_encaisse),0) AS total_encaisse,
+           COALESCE(AVG(NULLIF(r.montant_encaisse,0)),0) AS panier_moyen,
+           COALESCE(SUM(CASE WHEN r.type_patient IN ('orphelin','acte_gratuit') THEN 1 ELSE 0 END),0) AS nb_gratuits,
+           COALESCE(SUM(CASE WHEN r.type_recu='consultation' THEN 1 ELSE 0 END),0) AS nb_consult,
+           COALESCE(SUM(CASE WHEN r.type_recu='examen'       THEN 1 ELSE 0 END),0) AS nb_exam,
+           COALESCE(SUM(CASE WHEN r.type_recu='pharmacie'    THEN 1 ELSE 0 END),0) AS nb_pharma
     FROM utilisateurs u
     LEFT JOIN recus r ON r.whodone=u.id AND r.isDeleted=0
         AND DATE(r.whendone) BETWEEN :d AND :f
@@ -126,10 +192,11 @@ $perfPercep->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
 $perfPercep = $perfPercep->fetchAll();
 
 // ════════════════════════════════════════════════════════════════════════════
-// 8. Répartition revenus par pôle sur la période
+// 8. Répartition revenus par pôle
 // ════════════════════════════════════════════════════════════════════════════
 $repartition = $pdo->prepare("
-    SELECT type_recu, COALESCE(SUM(montant_encaisse),0) AS total
+    SELECT type_recu, COUNT(*) AS nb,
+           COALESCE(SUM(montant_encaisse),0) AS total
     FROM recus
     WHERE isDeleted=0 AND DATE(whendone) BETWEEN :d AND :f
     GROUP BY type_recu
@@ -137,29 +204,541 @@ $repartition = $pdo->prepare("
 $repartition->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
 $repartition = $repartition->fetchAll();
 
-// ── Préparer les données JSON pour les graphiques ─────────────────────────
-$labelsEvo    = array_map(fn($r) => date('d/m', strtotime($r['jour'])), $evolution);
+// ════════════════════════════════════════════════════════════════════════════
+// 9. ⚠ ALERTES STOCK PHARMACIE
+// ════════════════════════════════════════════════════════════════════════════
+$stockAlertes = $pdo->query("
+    SELECT id, nom, forme, stock_actuel, seuil_alerte, prix_unitaire, date_peremption,
+           CASE
+               WHEN stock_actuel <= 0 THEN 'RUPTURE'
+               WHEN date_peremption IS NOT NULL AND date_peremption <= CURDATE() THEN 'PERIME'
+               WHEN date_peremption IS NOT NULL AND date_peremption <= DATE_ADD(CURDATE(), INTERVAL 60 DAY) THEN 'PEREMPTION'
+               WHEN stock_actuel <= seuil_alerte THEN 'FAIBLE'
+               ELSE 'OK'
+           END AS statut
+    FROM produits_pharmacie
+    WHERE isDeleted=0
+      AND (
+            stock_actuel <= seuil_alerte
+            OR (date_peremption IS NOT NULL AND date_peremption <= DATE_ADD(CURDATE(), INTERVAL 60 DAY))
+          )
+    ORDER BY 
+        CASE 
+            WHEN stock_actuel <= 0 THEN 1
+            WHEN date_peremption IS NOT NULL AND date_peremption <= CURDATE() THEN 2
+            WHEN date_peremption IS NOT NULL AND date_peremption <= DATE_ADD(CURDATE(), INTERVAL 60 DAY) THEN 3
+            WHEN stock_actuel <= seuil_alerte THEN 4
+            ELSE 5
+        END,
+        nom
+    LIMIT 30
+")->fetchAll();
+
+$nbRupture=0; $nbFaible=0; $nbPeremption=0; $nbPerime=0;
+foreach ($stockAlertes as $s) {
+    if      ($s['statut']==='RUPTURE')    $nbRupture++;
+    elseif  ($s['statut']==='PERIME')     $nbPerime++;
+    elseif  ($s['statut']==='PEREMPTION') $nbPeremption++;
+    elseif  ($s['statut']==='FAIBLE')     $nbFaible++;
+}
+
+$valeurStock = (float)$pdo->query("
+    SELECT COALESCE(SUM(stock_actuel * prix_unitaire),0)
+    FROM produits_pharmacie WHERE isDeleted=0
+")->fetchColumn();
+
+$stmtRot = $pdo->prepare("
+    SELECT COALESCE(SUM(lp.quantite),0)
+    FROM lignes_pharmacie lp
+    JOIN recus r ON r.id=lp.recu_id AND r.isDeleted=0
+    WHERE lp.isDeleted=0 AND DATE(r.whendone) BETWEEN ? AND ?
+");
+$stmtRot->execute([$filtreDebut, $filtreFin]);
+$qteVenduePeriode = (int)$stmtRot->fetchColumn();
+
+$stockTotalActuel = (int)$pdo->query("
+    SELECT COALESCE(SUM(stock_actuel),0) FROM produits_pharmacie WHERE isDeleted=0
+")->fetchColumn();
+
+// ════════════════════════════════════════════════════════════════════════════
+// 10. Heures de pic d'activité
+// ════════════════════════════════════════════════════════════════════════════
+$piesHeures = $pdo->prepare("
+    SELECT HOUR(whendone) AS heure, COUNT(*) AS nb
+    FROM recus
+    WHERE isDeleted=0 AND DATE(whendone) BETWEEN :d AND :f
+    GROUP BY HOUR(whendone)
+    ORDER BY heure
+");
+$piesHeures->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
+$heuresFull = array_fill(0, 24, 0);
+foreach ($piesHeures->fetchAll() as $h) $heuresFull[(int)$h['heure']] = (int)$h['nb'];
+
+// ════════════════════════════════════════════════════════════════════════════
+// 11. Activité par jour de la semaine
+// ════════════════════════════════════════════════════════════════════════════
+$jrSemaine = $pdo->prepare("
+    SELECT DAYOFWEEK(whendone) AS jr, COUNT(*) AS nb,
+           COALESCE(SUM(montant_encaisse),0) AS recette
+    FROM recus
+    WHERE isDeleted=0 AND DATE(whendone) BETWEEN :d AND :f
+    GROUP BY DAYOFWEEK(whendone)
+    ORDER BY jr
+");
+$jrSemaine->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
+$mapJrSem = [1=>'Dim',2=>'Lun',3=>'Mar',4=>'Mer',5=>'Jeu',6=>'Ven',7=>'Sam'];
+$jrSemFull = array_fill_keys(array_values($mapJrSem), ['nb'=>0,'recette'=>0]);
+foreach ($jrSemaine->fetchAll() as $j) {
+    $jrSemFull[$mapJrSem[(int)$j['jr']]] = ['nb'=>(int)$j['nb'], 'recette'=>(float)$j['recette']];
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// 12. Démographie patients
+// ════════════════════════════════════════════════════════════════════════════
+$demoSexe = $pdo->prepare("
+    SELECT p.sexe, COUNT(DISTINCT r.patient_id) AS nb
+    FROM recus r
+    JOIN patients p ON p.id = r.patient_id
+    WHERE r.isDeleted=0 AND DATE(r.whendone) BETWEEN :d AND :f
+    GROUP BY p.sexe
+");
+$demoSexe->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
+$demoSexe = $demoSexe->fetchAll();
+
+$demoAge = $pdo->prepare("
+    SELECT 
+        CASE
+            WHEN p.age < 1 THEN '0-1 an'
+            WHEN p.age BETWEEN 1 AND 5 THEN '1-5 ans'
+            WHEN p.age BETWEEN 6 AND 17 THEN '6-17 ans'
+            WHEN p.age BETWEEN 18 AND 35 THEN '18-35 ans'
+            WHEN p.age BETWEEN 36 AND 60 THEN '36-60 ans'
+            ELSE '60+ ans'
+        END AS tranche,
+        COUNT(DISTINCT r.patient_id) AS nb
+    FROM recus r
+    JOIN patients p ON p.id = r.patient_id
+    WHERE r.isDeleted=0 AND DATE(r.whendone) BETWEEN :d AND :f
+    GROUP BY tranche
+    ORDER BY FIELD(tranche, '0-1 an','1-5 ans','6-17 ans','18-35 ans','36-60 ans','60+ ans')
+");
+$demoAge->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
+$demoAge = $demoAge->fetchAll();
+
+$stmtOrph = $pdo->prepare("
+    SELECT COUNT(DISTINCT p.id)
+    FROM patients p
+    JOIN recus r ON r.patient_id = p.id AND r.isDeleted=0
+    WHERE p.est_orphelin=1 AND DATE(r.whendone) BETWEEN ? AND ?
+");
+$stmtOrph->execute([$filtreDebut, $filtreFin]);
+$nbOrphelinsAma = (int)$stmtOrph->fetchColumn();
+
+// ════════════════════════════════════════════════════════════════════════════
+// 13. Top 10 provenances
+// ════════════════════════════════════════════════════════════════════════════
+$topProvenances = $pdo->prepare("
+    SELECT COALESCE(NULLIF(TRIM(p.provenance),''), 'Non renseignée') AS provenance,
+           COUNT(DISTINCT r.patient_id) AS nb_patients,
+           COUNT(r.id) AS nb_recus,
+           COALESCE(SUM(r.montant_encaisse),0) AS total
+    FROM recus r
+    JOIN patients p ON p.id = r.patient_id
+    WHERE r.isDeleted=0 AND DATE(r.whendone) BETWEEN :d AND :f
+    GROUP BY provenance
+    ORDER BY nb_patients DESC
+    LIMIT 10
+");
+$topProvenances->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
+$topProvenances = $topProvenances->fetchAll();
+
+// ════════════════════════════════════════════════════════════════════════════
+// 14. Audit qualité : modifications
+// ════════════════════════════════════════════════════════════════════════════
+$auditModifs = $pdo->prepare("
+    SELECT COUNT(*) AS nb_modifs,
+           COUNT(DISTINCT recu_id) AS nb_recus_modifies,
+           COUNT(DISTINCT user_id) AS nb_users_modificateurs
+    FROM modifications_recus
+    WHERE DATE(whendone) BETWEEN :d AND :f
+");
+$auditModifs->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
+$auditModifs = $auditModifs->fetch() ?: ['nb_modifs'=>0,'nb_recus_modifies'=>0,'nb_users_modificateurs'=>0];
+
+$tauxModif = $kpi['nb_recus'] > 0
+    ? round(($auditModifs['nb_recus_modifies'] / $kpi['nb_recus']) * 100, 2) : 0;
+
+$topMotifs = $pdo->prepare("
+    SELECT motif, COUNT(*) AS nb
+    FROM modifications_recus
+    WHERE DATE(whendone) BETWEEN :d AND :f AND motif <> ''
+    GROUP BY motif
+    ORDER BY nb DESC
+    LIMIT 5
+");
+$topMotifs->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
+$topMotifs = $topMotifs->fetchAll();
+
+$modifsParType = $pdo->prepare("
+    SELECT type_recu, COUNT(*) AS nb
+    FROM modifications_recus
+    WHERE DATE(whendone) BETWEEN :d AND :f
+    GROUP BY type_recu
+");
+$modifsParType->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
+$modifsParType = $modifsParType->fetchAll();
+
+$topModificateurs = $pdo->prepare("
+    SELECT u.nom, u.prenom, u.role, COUNT(m.id) AS nb_modifs
+    FROM modifications_recus m
+    JOIN utilisateurs u ON u.id = m.user_id
+    WHERE DATE(m.whendone) BETWEEN :d AND :f
+    GROUP BY u.id
+    ORDER BY nb_modifs DESC
+    LIMIT 5
+");
+$topModificateurs->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
+$topModificateurs = $topModificateurs->fetchAll();
+
+// Détail complet des modifications (pour le modal aperçu)
+$detailModifsStmt = $pdo->prepare("
+    SELECT
+        m.id,
+        m.recu_id,
+        m.type_recu,
+        m.motif,
+        m.whendone      AS date_modif,
+        r.numero_recu,
+        r.type_patient,
+        r.montant_total,
+        r.montant_encaisse,
+        p.nom           AS patient_nom,
+        u.nom           AS modif_nom,
+        u.prenom        AS modif_prenom,
+        u.role          AS modif_role
+    FROM modifications_recus m
+    JOIN recus r    ON r.id  = m.recu_id
+    JOIN patients p ON p.id  = r.patient_id
+    LEFT JOIN utilisateurs u ON u.id = m.user_id
+    WHERE DATE(m.whendone) BETWEEN :d AND :f
+    ORDER BY m.whendone DESC
+");
+$detailModifsStmt->execute([':d' => $filtreDebut, ':f' => $filtreFin]);
+$detailModifs = $detailModifsStmt->fetchAll();
+
+// ════════════════════════════════════════════════════════════════════════════
+// 14b. Audit qualité : reçus annulés
+// ════════════════════════════════════════════════════════════════════════════
+$recusAnnulesStmt = $pdo->prepare("
+    SELECT
+        ar.id            AS annul_id,
+        ar.recu_id,
+        ar.type_recu,
+        ar.motif,
+        ar.montant_annule,
+        ar.whendone      AS date_annulation,
+        r.numero_recu,
+        r.type_patient,
+        r.montant_total,
+        r.whendone       AS date_recu,
+        p.nom            AS patient_nom,
+        u_p.nom          AS percep_nom,
+        u_p.prenom       AS percep_prenom,
+        u_a.nom          AS annuleur_nom,
+        u_a.prenom       AS annuleur_prenom
+    FROM annulations_recus ar
+    JOIN recus r       ON r.id  = ar.recu_id
+    JOIN patients p    ON p.id  = r.patient_id
+    LEFT JOIN utilisateurs u_p ON u_p.id = r.whodone
+    LEFT JOIN utilisateurs u_a ON u_a.id = ar.whodone
+    WHERE DATE(ar.whendone) BETWEEN :d AND :f
+    ORDER BY ar.whendone DESC
+");
+$recusAnnulesStmt->execute([':d' => $filtreDebut, ':f' => $filtreFin]);
+$recusAnnules = $recusAnnulesStmt->fetchAll();
+$nbAnnules    = count($recusAnnules);
+
+// Agrégats
+$totalMontantAnnule = array_sum(array_column($recusAnnules, 'montant_annule'));
+$annulesParType = [];
+foreach ($recusAnnules as $ra) {
+    $t = $ra['type_recu'];
+    $annulesParType[$t] = ($annulesParType[$t] ?? 0) + 1;
+}
+// Nb annuleurs distincts
+$annuleursDistincts = count(array_unique(array_filter(
+    array_map(fn($ra) => ($ra['annuleur_nom'] ?? '') . ' ' . ($ra['annuleur_prenom'] ?? ''),
+    $recusAnnules)
+)));
+
+// ════════════════════════════════════════════════════════════════════════════
+// 15. Patients fidèles
+// ════════════════════════════════════════════════════════════════════════════
+$patientsFideles = $pdo->prepare("
+    SELECT p.id, p.nom, p.telephone, p.age, p.sexe, p.est_orphelin,
+           COUNT(r.id) AS nb_visites,
+           COALESCE(SUM(r.montant_encaisse),0) AS total_paye,
+           MAX(r.whendone) AS derniere_visite
+    FROM patients p
+    JOIN recus r ON r.patient_id = p.id AND r.isDeleted=0
+    WHERE DATE(r.whendone) BETWEEN :d AND :f
+    GROUP BY p.id
+    HAVING nb_visites >= 2
+    ORDER BY nb_visites DESC, total_paye DESC
+    LIMIT 15
+");
+$patientsFideles->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
+$patientsFideles = $patientsFideles->fetchAll();
+
+// ════════════════════════════════════════════════════════════════════════════
+// 16. Approvisionnements pharmacie
+// ════════════════════════════════════════════════════════════════════════════
+$approvis = $pdo->prepare("
+    SELECT COUNT(ap.id)                              AS nb_approvis,
+           COALESCE(SUM(ap.quantite),0)              AS total_qte_entree,
+           COALESCE(SUM(ap.quantite * pp.prix_unitaire),0) AS valeur_totale
+    FROM approvisionnements_pharmacie ap
+    JOIN produits_pharmacie pp ON pp.id = ap.produit_id
+    WHERE ap.isDeleted=0 AND ap.date_appro BETWEEN :d AND :f
+");
+$approvis->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
+$approvis = $approvis->fetch() ?: ['nb_approvis'=>0,'total_qte_entree'=>0,'valeur_totale'=>0];
+
+// ════════════════════════════════════════════════════════════════════════════
+// 17. Taux d'utilisation des carnets
+// ════════════════════════════════════════════════════════════════════════════
+$statsCarnets = $pdo->prepare("
+    SELECT
+        COALESCE(SUM(lc.avec_carnet),0) AS nb_avec_carnet,
+        COUNT(*)                         AS nb_total,
+        COALESCE(SUM(lc.tarif_carnet),0) AS revenu_carnets
+    FROM lignes_consultation lc
+    JOIN recus r ON r.id = lc.recu_id AND r.isDeleted=0
+    WHERE lc.isDeleted=0 AND DATE(r.whendone) BETWEEN :d AND :f
+");
+$statsCarnets->execute([':d'=>$filtreDebut, ':f'=>$filtreFin]);
+$statsCarnets = $statsCarnets->fetch() ?: ['nb_avec_carnet'=>0,'nb_total'=>0,'revenu_carnets'=>0];
+$tauxCarnet = $statsCarnets['nb_total'] > 0
+    ? round(($statsCarnets['nb_avec_carnet'] / $statsCarnets['nb_total']) * 100, 1) : 0;
+
+// ════════════════════════════════════════════════════════════════════════════
+// 18. Records de la période
+// ════════════════════════════════════════════════════════════════════════════
+$record = ['jour'=>null,'patients'=>0,'recettes'=>0];
+foreach ($evolution as $e) {
+    if ((float)$e['recettes'] > $record['recettes']) {
+        $record = ['jour'=>$e['jour'], 'patients'=>(int)$e['nb_patients'], 'recettes'=>(float)$e['recettes']];
+    }
+}
+// ════════════════════════════════════════════════════════════════════════════
+// 19. ✅ Redevances Ministère de la Santé (supplément âge > 5 ans)
+// ════════════════════════════════════════════════════════════════════════════
+$redevances = $pdo->prepare("
+    SELECT 
+        COUNT(lc.id) AS nb_redevances,
+        COALESCE(SUM(lc.tarif), 0) AS total_redevances,
+        COUNT(DISTINCT DATE(r.whendone)) AS nb_jours_actifs
+    FROM lignes_consultation lc
+    JOIN recus r ON r.id = lc.recu_id
+    WHERE lc.type_ligne = 'redevance'
+      AND lc.isDeleted = 0
+      AND r.isDeleted = 0
+      AND r.type_patient = 'normal'
+      AND DATE(r.whendone) BETWEEN :d AND :f
+");
+$redevances->execute([':d' => $filtreDebut, ':f' => $filtreFin]);
+$redevances = $redevances->fetch() ?: ['nb_redevances'=>0,'total_redevances'=>0,'nb_jours_actifs'=>0];
+
+// Détail jour par jour des redevances
+$redevancesJour = $pdo->prepare("
+    SELECT 
+        DATE(r.whendone) AS jour,
+        COUNT(lc.id) AS nb,
+        SUM(lc.tarif) AS total,
+        u.nom AS percepteur,
+        u.prenom AS percepteur_prenom
+    FROM lignes_consultation lc
+    JOIN recus r ON r.id = lc.recu_id
+    LEFT JOIN utilisateurs u ON u.id = lc.whodone
+    WHERE lc.type_ligne = 'redevance'
+      AND lc.isDeleted = 0
+      AND r.isDeleted = 0
+      AND r.type_patient = 'normal'
+      AND DATE(r.whendone) BETWEEN :d AND :f
+    GROUP BY DATE(r.whendone), u.id
+    ORDER BY jour DESC, percepteur
+");
+$redevancesJour->execute([':d' => $filtreDebut, ':f' => $filtreFin]);
+$redevancesJour = $redevancesJour->fetchAll();
+
+// ── Sorties pharmacie (produits vendus sur la période) ─────────────────────
+$sortiesPharmaStmt = $pdo->prepare("
+    SELECT
+        pp.nom,
+        pp.forme,
+        SUM(lp.quantite)    AS total_qte,
+        AVG(lp.prix_unitaire) AS prix_unit,
+        SUM(lp.total_ligne) AS total_montant
+    FROM lignes_pharmacie lp
+    JOIN produits_pharmacie pp ON pp.id = lp.produit_id
+    JOIN recus r ON r.id = lp.recu_id
+    WHERE lp.isDeleted = 0
+      AND r.isDeleted  = 0
+      AND DATE(r.whendone) BETWEEN :d AND :f
+    GROUP BY pp.id, pp.nom, pp.forme
+    ORDER BY total_qte DESC
+");
+$sortiesPharmaStmt->execute([':d' => $filtreDebut, ':f' => $filtreFin]);
+$sortiesPharma = $sortiesPharmaStmt->fetchAll();
+$totalQtePharma     = array_sum(array_column($sortiesPharma, 'total_qte'));
+$totalMontantPharma = array_sum(array_column($sortiesPharma, 'total_montant'));
+$labelsEvo       = array_map(fn($r) => date('d/m', strtotime($r['jour'])), $evolution);
 $dataPatientsEvo = array_column($evolution, 'nb_patients');
 $dataRecettesEvo = array_column($evolution, 'recettes');
+$dataCumulEvo    = array_column($evolution, 'cumul');
 
-$labelsActes  = array_column($topActes,   'libelle');
-$dataActes    = array_column($topActes,   'nb_utilisations');
+$labelsActes  = array_column($topActes, 'libelle');
+$dataActes    = array_column($topActes, 'nb_utilisations');
 
 $labelsProd   = array_map(fn($p) => $p['nom'].($p['forme'] ? ' ('.$p['forme'].')' : ''), $topProduits);
 $dataProdQte  = array_column($topProduits, 'total_qte');
-$dataProdRev  = array_column($topProduits, 'total_revenu');
 
-$labelsType   = array_map(fn($t) => [
-    'normal'=>'Normal payant','orphelin'=>'Orphelin','acte_gratuit'=>'Acte gratuit',
-    'nourrisson'=>'Nourrisson','cpn'=>'CPN'
-][$t['type_patient']] ?? ucfirst($t['type_patient']), $typePatients);
-$dataType     = array_column($typePatients, 'nb');
+$mapType = [
+    'normal'       => 'Normal payant',
+    'orphelin'     => 'Orphelin DirectAid',
+    'acte_gratuit' => 'Acte gratuit'
+];
+$labelsType = array_map(fn($t) => $mapType[$t['type_patient']] ?? ucfirst($t['type_patient']), $typePatients);
+$dataType   = array_column($typePatients, 'nb');
 
-$labelsExam   = array_column($topExamens, 'libelle');
-$dataExam     = array_column($topExamens, 'nb');
+$labelsExam = array_column($topExamens, 'libelle');
+$dataExam   = array_column($topExamens, 'nb');
 
-$labelsRep    = array_map(fn($r) => ucfirst($r['type_recu']), $repartition);
-$dataRep      = array_column($repartition, 'total');
+$mapPole = ['consultation'=>'Consultations','examen'=>'Examens','pharmacie'=>'Pharmacie'];
+$labelsRep = array_map(fn($r) => $mapPole[$r['type_recu']] ?? ucfirst($r['type_recu']), $repartition);
+$dataRep   = array_column($repartition, 'total');
+
+$labelsHeures = array_map(fn($h) => sprintf('%02dh', $h), range(0,23));
+$dataHeures   = array_values($heuresFull);
+
+$labelsJrSem = array_keys($jrSemFull);
+$dataJrSem   = array_map(fn($j) => $j['nb'], array_values($jrSemFull));
+
+$labelsSexe = array_map(fn($s) => $s['sexe']==='M' ? 'Hommes' : 'Femmes', $demoSexe);
+$dataSexe   = array_column($demoSexe, 'nb');
+
+$labelsAge = array_column($demoAge, 'tranche');
+$dataAge   = array_column($demoAge, 'nb');
+
+// ════════════════════════════════════════════════════════════════════════════
+// 20. Stocks carnets & fiches (situation en temps réel)
+// ════════════════════════════════════════════════════════════════════════════
+require_once ROOT_PATH . '/core/CarnetsHelper.php';
+CarnetsHelper::ensureConfig($pdo, 0);
+$infoCarnetSoins = CarnetsHelper::getStock($pdo, CarnetsHelper::TYPE_SOINS);
+$infoCarnetSante = CarnetsHelper::getStock($pdo, CarnetsHelper::TYPE_SANTE);
+$cfgFag20 = $pdo->query(
+    "SELECT cle, valeur FROM config_systeme WHERE cle IN ('stock_fiches_ag','seuil_alerte_fiches_ag') AND isDeleted=0"
+)->fetchAll(PDO::FETCH_KEY_PAIR);
+$stockFichesAg20  = (int)($cfgFag20['stock_fiches_ag']        ?? 0);
+$seuilFichesAg20  = (int)($cfgFag20['seuil_alerte_fiches_ag'] ?? 10);
+
+// Sorties carnets soins sur la période
+$sortiesSoinsStmt = $pdo->prepare("
+    SELECT COALESCE(ABS(SUM(quantite)), 0) AS sorties
+    FROM mouvements_carnets
+    WHERE type_carnet = 'soins' AND type_mvt = 'sortie'
+      AND DATE(whendone) BETWEEN :d AND :f
+");
+try { $sortiesSoinsStmt->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $sortiesSoinsPeriode = (int)$sortiesSoinsStmt->fetchColumn(); } catch (Exception $e) { $sortiesSoinsPeriode = 0; }
+
+// Sorties carnets sante sur la période
+$sortiesSanteStmt = $pdo->prepare("
+    SELECT COALESCE(ABS(SUM(quantite)), 0) AS sorties
+    FROM mouvements_carnets
+    WHERE type_carnet = 'sante' AND type_mvt = 'sortie'
+      AND DATE(whendone) BETWEEN :d AND :f
+");
+try { $sortiesSanteStmt->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $sortiesSantePeriode = (int)$sortiesSanteStmt->fetchColumn(); } catch (Exception $e) { $sortiesSantePeriode = 0; }
+
+// Sorties fiches AG sur la période
+$sortiesFagStmt = $pdo->prepare("
+    SELECT COALESCE(ABS(SUM(quantite)), 0) AS sorties
+    FROM mouvements_fiches_ag
+    WHERE type_mvt = 'sortie'
+      AND DATE(whendone) BETWEEN :d AND :f
+");
+try { $sortiesFagStmt->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $sortiesFagPeriode = (int)$sortiesFagStmt->fetchColumn(); } catch (Exception $e) { $sortiesFagPeriode = 0; }
+
+// ════════════════════════════════════════════════════════════════════════════
+// 20b. Stats carnets & fiches depuis les reçus émis (période)
+// ════════════════════════════════════════════════════════════════════════════
+// Carnet de soins : reçus normaux dont au moins une ligne a avec_carnet=1
+$stmtCsoinsRecus = $pdo->prepare("
+    SELECT COUNT(DISTINCT r.id) AS nb
+    FROM recus r
+    JOIN lignes_consultation lc ON lc.recu_id = r.id AND lc.isDeleted = 0
+    WHERE r.isDeleted = 0 AND r.type_recu = 'consultation'
+      AND lc.avec_carnet = 1
+      AND DATE(r.whendone) BETWEEN :d AND :f
+");
+try { $stmtCsoinsRecus->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbRecusCarnetSoins = (int)$stmtCsoinsRecus->fetchColumn(); } catch (Exception $e) { $nbRecusCarnetSoins = 0; }
+
+// Carnet santé : reçus normaux dont au moins une ligne a avec_carnet=2
+$stmtCsanteRecus = $pdo->prepare("
+    SELECT COUNT(DISTINCT r.id) AS nb
+    FROM recus r
+    JOIN lignes_consultation lc ON lc.recu_id = r.id AND lc.isDeleted = 0
+    WHERE r.isDeleted = 0 AND r.type_recu = 'consultation'
+      AND lc.avec_carnet = 2
+      AND DATE(r.whendone) BETWEEN :d AND :f
+");
+try { $stmtCsanteRecus->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbRecusCarnetSante = (int)$stmtCsanteRecus->fetchColumn(); } catch (Exception $e) { $nbRecusCarnetSante = 0; }
+
+// Carnet AG (acte gratuit avec carnet) :
+// type_patient='acte_gratuit' + type_recu='consultation' + JOIN lignes_consultation.avec_carnet IN (1,2)
+// avec_carnet: 0=aucun, 1=carnet seul, 2=carnet+fiche, 3=fiche seule
+$stmtCagRecus = $pdo->prepare("
+    SELECT COUNT(DISTINCT r.id) AS nb
+    FROM recus r
+    JOIN lignes_consultation lc ON lc.recu_id = r.id AND lc.isDeleted = 0
+    WHERE r.isDeleted = 0 AND r.type_patient = 'acte_gratuit'
+      AND r.type_recu = 'consultation'
+      AND lc.avec_carnet IN (1, 2)
+      AND DATE(r.whendone) BETWEEN :d AND :f
+");
+try { $stmtCagRecus->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbRecusCarnetAg = (int)$stmtCagRecus->fetchColumn(); } catch (Exception $e) { $nbRecusCarnetAg = 0; }
+
+// Fiche AG : type_patient='acte_gratuit' + type_recu='consultation' + lignes_consultation.avec_carnet IN (2,3)
+$stmtFagRecus = $pdo->prepare("
+    SELECT COUNT(DISTINCT r.id) AS nb
+    FROM recus r
+    JOIN lignes_consultation lc ON lc.recu_id = r.id AND lc.isDeleted = 0
+    WHERE r.isDeleted = 0 AND r.type_patient = 'acte_gratuit'
+      AND r.type_recu = 'consultation'
+      AND lc.avec_carnet IN (2, 3)
+      AND DATE(r.whendone) BETWEEN :d AND :f
+");
+try { $stmtFagRecus->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbRecusFicheAg = (int)$stmtFagRecus->fetchColumn(); } catch (Exception $e) { $nbRecusFicheAg = 0; }
+
+// Total reçus consultation période (tous types patients, pour % utilisation carnet soins)
+$stmtTotalConsult = $pdo->prepare("
+    SELECT COUNT(DISTINCT id) AS nb
+    FROM recus
+    WHERE isDeleted = 0 AND type_recu = 'consultation'
+      AND DATE(whendone) BETWEEN :d AND :f
+");
+try { $stmtTotalConsult->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbTotalConsult = (int)$stmtTotalConsult->fetchColumn(); } catch (Exception $e) { $nbTotalConsult = 0; }
+
+// Total reçus acte_gratuit période : type_patient='acte_gratuit' + type_recu='consultation'
+$stmtTotalAg = $pdo->prepare("
+    SELECT COUNT(DISTINCT id) AS nb
+    FROM recus
+    WHERE isDeleted = 0 AND type_patient = 'acte_gratuit'
+      AND type_recu = 'consultation'
+      AND DATE(whendone) BETWEEN :d AND :f
+");
+try { $stmtTotalAg->execute([':d' => $filtreDebut, ':f' => $filtreFin]); $nbTotalAg = (int)$stmtTotalAg->fetchColumn(); } catch (Exception $e) { $nbTotalAg = 0; }
 
 include ROOT_PATH . '/templates/layouts/header.php';
 ?>
@@ -174,23 +753,57 @@ include ROOT_PATH . '/templates/layouts/header.php';
                 <i class="bi bi-graph-up-arrow text-white fs-4"></i>
             </div>
             <div>
-                <h4 class="mb-0 fw-bold" style="color:#1565c0;">Analytique Avancée</h4>
-                <small class="text-muted">Analyse détaillée de l'activité CSI AMA Maradi</small>
+                <h4 class="mb-0 fw-bold" style="color:#1565c0;">Analytique Avancée 360°</h4>
+                <small class="text-muted">
+                    Vision complète – Du <strong><?= date('d/m/Y', strtotime($filtreDebut)) ?></strong>
+                    au <strong><?= date('d/m/Y', strtotime($filtreFin)) ?></strong>
+                    (<?= $nbJours ?> jour<?= $nbJours>1?'s':'' ?>)
+                </small>
             </div>
         </div>
-        <a href="<?= url('index.php?page=dashboard') ?>" class="btn btn-outline-secondary btn-sm">
-            <i class="bi bi-arrow-left me-1"></i>Tableau de bord principal
-        </a>
+        <div class="d-flex gap-2">
+            <button type="button" class="btn btn-outline-success btn-sm" onclick="window.print()">
+                <i class="bi bi-printer me-1"></i>Imprimer
+            </button>
+            <a href="<?= url('index.php?page=dashboard') ?>" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-arrow-left me-1"></i>Tableau de bord
+            </a>
+        </div>
     </div>
 
-    <!-- ── Filtre Période ──────────────────────────────────────────────────── -->
+    <!-- ⚠ BANDEAU ALERTES CRITIQUES -->
+    <?php if ($nbRupture>0 || $nbPerime>0 || $nbPeremption>0 || $nbFaible>0): ?>
+    <div class="card border-0 shadow-sm mb-3" style="border-left:4px solid #d32f2f !important;">
+        <div class="card-body py-2 d-flex align-items-center flex-wrap gap-2" style="background:#fff5f5;">
+            <i class="bi bi-exclamation-triangle-fill fs-4" style="color:#d32f2f;"></i>
+            <div class="flex-grow-1">
+                <strong class="text-danger">Alertes Pharmacie :</strong>
+                <?php if ($nbRupture>0): ?>
+                    <span class="badge bg-danger ms-1"><?= $nbRupture ?> rupture<?= $nbRupture>1?'s':'' ?></span>
+                <?php endif; ?>
+                <?php if ($nbPerime>0): ?>
+                    <span class="badge ms-1" style="background:#880e4f;color:#fff;"><?= $nbPerime ?> périmé<?= $nbPerime>1?'s':'' ?></span>
+                <?php endif; ?>
+                <?php if ($nbPeremption>0): ?>
+                    <span class="badge ms-1" style="background:#e65100;color:#fff;"><?= $nbPeremption ?> péremption ≤ 60j</span>
+                <?php endif; ?>
+                <?php if ($nbFaible>0): ?>
+                    <span class="badge bg-warning text-dark ms-1"><?= $nbFaible ?> stock faible</span>
+                <?php endif; ?>
+            </div>
+            <a href="#section-stock" class="btn btn-sm btn-outline-danger">Voir détails</a>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <!-- Filtre Période -->
     <div class="card mb-4 border-0 shadow-sm">
         <div class="card-body py-2" style="background:linear-gradient(90deg,#e3f2fd,#f8f9fa);">
             <form method="GET" class="row g-2 align-items-end flex-wrap">
                 <input type="hidden" name="page" value="analytics">
                 <div class="col-auto">
                     <label class="form-label mb-0 fw-semibold text-primary">
-                        <i class="bi bi-calendar-range me-1"></i>Période d'analyse :
+                        <i class="bi bi-calendar-range me-1"></i>Période :
                     </label>
                 </div>
                 <div class="col-auto">
@@ -205,34 +818,40 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         <i class="bi bi-search me-1"></i>Analyser
                     </button>
                 </div>
-                <!-- Raccourcis rapides -->
-                <div class="col-auto d-flex gap-1">
+                <div class="col-auto d-flex gap-1 flex-wrap">
                     <?php
                     $shortcuts = [
-                        ['7j', date('Y-m-d', strtotime('-7 days')), date('Y-m-d'), 'light'],
-                        ['30j', date('Y-m-d', strtotime('-30 days')), date('Y-m-d'), 'light'],
-                        ['Ce mois', date('Y-m-01'), date('Y-m-d'), 'light'],
+                        ["Auj.",       date('Y-m-d'), date('Y-m-d')],
+                        ['7j',         date('Y-m-d', strtotime('-7 days')),  date('Y-m-d')],
+                        ['30j',        date('Y-m-d', strtotime('-30 days')), date('Y-m-d')],
+                        ['Ce mois',    date('Y-m-01'), date('Y-m-d')],
+                        ['Mois préc.', date('Y-m-01', strtotime('first day of last month')),
+                                       date('Y-m-t', strtotime('last day of last month'))],
+                        ['Trim.',      date('Y-m-d', strtotime('-3 months')), date('Y-m-d')],
+                        ['Année',      date('Y-01-01'), date('Y-m-d')],
                     ];
-                    foreach ($shortcuts as [$label, $deb, $fin, $cls]):
+                    foreach ($shortcuts as [$label, $deb, $fin]):
                     ?>
                     <a href="?page=analytics&filtre_debut=<?= $deb ?>&filtre_fin=<?= $fin ?>"
-                       class="btn btn-<?= $cls ?> btn-sm border"><?= $label ?></a>
+                       class="btn btn-light btn-sm border"><?= $label ?></a>
                     <?php endforeach; ?>
                 </div>
             </form>
         </div>
     </div>
 
-    <!-- ── KPI Cards ─────────────────────────────────────────────────────── -->
-    <div class="row g-3 mb-4">
+    <!-- KPI principaux avec variations -->
+    <div class="row g-3 mb-3">
         <?php
         $kpiCards = [
-            ['bi-people-fill',        '#1565c0', '#dbeafe', number_format($kpi['nb_patients'],0,',',' '),        'Patients uniques',        null],
-            ['bi-receipt',            '#2e7d32', '#dcfce7', number_format($kpi['nb_recus'],0,',',' '),            'Reçus émis',              null],
-            ['bi-cash-stack',         '#e65100', '#fef3e2', number_format($kpi['total_encaisse'],0,',',' ').' F', 'Total encaissé',          null],
-            ['bi-heart-pulse-fill',   '#7b1fa2', '#f3e8ff', number_format($kpi['nb_gratuits'],0,',',' '),         'Actes gratuits/orphelins',null],
+            ['bi-people-fill',      '#1565c0', '#dbeafe', fmt($kpi['nb_patients']),         'Patients uniques',  $varPatients],
+            ['bi-receipt',          '#2e7d32', '#dcfce7', fmt($kpi['nb_recus']),             'Reçus émis',        $varRecus],
+            ['bi-cash-stack',       '#e65100', '#fef3e2', fmt($kpi['total_encaisse']).' F', 'Total encaissé',     $varEncaisse],
+            ['bi-heart-pulse-fill', '#7b1fa2', '#f3e8ff', fmt($kpi['nb_gratuits']),          'Gratuits/Orphelins', $varGratuits],
         ];
-        foreach ($kpiCards as [$icon, $color, $bg, $val, $label, $sub]):
+        foreach ($kpiCards as [$icon, $color, $bg, $val, $label, $var]):
+            $vc = $var > 0 ? '#2e7d32' : ($var < 0 ? '#d32f2f' : '#757575');
+            $vi = $var > 0 ? 'arrow-up-short' : ($var < 0 ? 'arrow-down-short' : 'dash');
         ?>
         <div class="col-md-3 col-sm-6">
             <div class="card border-0 shadow-sm h-100" style="border-left:4px solid <?= $color ?> !important;">
@@ -241,10 +860,13 @@ include ROOT_PATH . '/templates/layouts/header.php';
                          style="width:48px;height:48px;background:<?= $bg ?>;color:<?= $color ?>;min-width:48px;">
                         <i class="bi <?= $icon ?> fs-5"></i>
                     </div>
-                    <div>
+                    <div class="flex-grow-1">
                         <div class="fw-bold fs-5" style="color:<?= $color ?>"><?= $val ?></div>
                         <div class="text-muted small"><?= $label ?></div>
-                        <?php if ($sub): ?><small class="text-muted"><?= $sub ?></small><?php endif; ?>
+                        <small style="color:<?= $vc ?>;font-weight:600;">
+                            <i class="bi bi-<?= $vi ?>"></i><?= abs($var) ?>%
+                            <span class="text-muted fw-normal">vs préc.</span>
+                        </small>
                     </div>
                 </div>
             </div>
@@ -252,16 +874,120 @@ include ROOT_PATH . '/templates/layouts/header.php';
         <?php endforeach; ?>
     </div>
 
-    <!-- ── Ligne 1 : Évolution + Répartition pôles ──────────────────────── -->
+    <!-- KPI secondaires -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3 col-sm-6">
+            <div class="card border-0 shadow-sm h-100" style="border-left:4px solid #00695c !important;">
+                <div class="card-body">
+                    <div class="text-muted small text-uppercase">Panier moyen</div>
+                    <div class="fw-bold fs-5" style="color:#00695c;"><?= fmt($kpi['panier_moyen']) ?> F</div>
+                    <small class="text-muted">par reçu payant</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6">
+            <div class="card border-0 shadow-sm h-100" style="border-left:4px solid #f57f17 !important;">
+                <div class="card-body">
+                    <div class="text-muted small text-uppercase">Taux subvention sociale</div>
+                    <div class="fw-bold fs-5" style="color:#f57f17;"><?= $tauxSubvention ?>%</div>
+                    <small class="text-muted"><?= fmt($kpi['total_subventionne']) ?> F offerts</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6">
+            <div class="card border-0 shadow-sm h-100" style="border-left:4px solid #d32f2f !important;">
+                <div class="card-body">
+                    <div class="text-muted small text-uppercase">Taux modifications</div>
+                    <div class="fw-bold fs-5" style="color:#d32f2f;"><?= $tauxModif ?>%</div>
+                    <small class="text-muted"><?= (int)$auditModifs['nb_recus_modifies'] ?> reçus modifiés</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3 col-sm-6">
+            <div class="card border-0 shadow-sm h-100" style="border-left:4px solid #6a1b9a !important;">
+                <div class="card-body">
+                    <div class="text-muted small text-uppercase">Valeur stock pharmacie</div>
+                    <div class="fw-bold fs-5" style="color:#6a1b9a;"><?= fmt($valeurStock) ?> F</div>
+                    <small class="text-muted"><?= $stockTotalActuel ?> unités · <?= $qteVenduePeriode ?> vendues</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- KPI tertiaires -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm h-100" style="border-left:4px solid #1976d2 !important;">
+                <div class="card-body">
+                    <div class="text-muted small text-uppercase">Taux d'utilisation des carnets</div>
+                    <div class="fw-bold fs-5" style="color:#1976d2;"><?= $tauxCarnet ?>%</div>
+                    <small class="text-muted">
+                        <?= (int)$statsCarnets['nb_avec_carnet'] ?> consultations avec carnet ·
+                        <?= fmt($statsCarnets['revenu_carnets']) ?> F générés
+                    </small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm h-100" style="border-left:4px solid #006064 !important;">
+                <div class="card-body">
+                    <div class="text-muted small text-uppercase">Part Laboratoire (examens)</div>
+                    <div class="fw-bold fs-5" style="color:#006064;"><?= fmt($totalLabo) ?> F</div>
+                    <small class="text-muted">à reverser au labo sur la période</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm h-100" style="border-left:4px solid #7b1fa2 !important;">
+                <div class="card-body">
+                    <div class="text-muted small text-uppercase">Orphelins DirectAid AMA</div>
+                    <div class="fw-bold fs-5" style="color:#7b1fa2;"><?= $nbOrphelinsAma ?></div>
+                    <small class="text-muted">enfants pris en charge sur la période</small>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm h-100" style="border-left:4px solid #f57f17 !important;">
+                <div class="card-body">
+                    <div class="text-muted small text-uppercase">Redevance Ministère</div>
+                    <div class="fw-bold fs-5" style="color:#f57f17;">
+                        <?= fmt($redevances['total_redevances']) ?> F
+                    </div>
+                    <small class="text-muted">
+                        <?= (int)$redevances['nb_redevances'] ?> patients · 
+                        <a href="#section-redevances" class="text-decoration-none">voir détail</a>
+                    </small>
+                </div>
+            </div>
+        </div>
+
+
+    </div>
+
+    <!-- Record de la période -->
+    <?php if ($record['jour']): ?>
+    <div class="card border-0 shadow-sm mb-4" style="background:linear-gradient(135deg,#fff8e1,#fff3e0);">
+        <div class="card-body d-flex align-items-center gap-3 flex-wrap">
+            <i class="bi bi-trophy-fill fs-2" style="color:#f57f17;"></i>
+            <div class="flex-grow-1">
+                <strong style="color:#e65100;">🏆 Meilleure journée :</strong>
+                <span class="ms-2"><?= date('l d F Y', strtotime($record['jour'])) ?></span>
+                <span class="badge bg-success ms-2"><?= $record['patients'] ?> patients</span>
+                <span class="badge bg-warning text-dark ms-1"><?= fmt($record['recettes']) ?> F</span>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
+
+    <!-- Ligne 1 : Évolution + Pôles -->
     <div class="row g-3 mb-4">
         <div class="col-md-8">
             <div class="card border-0 shadow-sm h-100">
                 <div class="card-header border-0" style="background:linear-gradient(90deg,#1565c0,#1976d2);color:#fff;">
-                    <h6 class="mb-0"><i class="bi bi-graph-up me-2"></i>Évolution journalière – Patients &amp; Recettes</h6>
+                    <h6 class="mb-0"><i class="bi bi-graph-up me-2"></i>Évolution journalière – Patients, Recettes &amp; Cumul</h6>
                 </div>
-                <div class="card-body">
-                    <canvas id="chartEvolution" height="160"></canvas>
-                </div>
+                <div class="card-body"><canvas id="chartEvolution" height="160"></canvas></div>
             </div>
         </div>
         <div class="col-md-4">
@@ -276,16 +1002,66 @@ include ROOT_PATH . '/templates/layouts/header.php';
         </div>
     </div>
 
-    <!-- ── Ligne 2 : Top Actes + Top Examens ──────────────────────────────── -->
+    <!-- Ligne 2 : Heures + Jours -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-7">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header border-0" style="background:linear-gradient(90deg,#0277bd,#039be5);color:#fff;">
+                    <h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Heures de pic d'activité (24h)</h6>
+                </div>
+                <div class="card-body"><canvas id="chartHeures" height="160"></canvas></div>
+            </div>
+        </div>
+        <div class="col-md-5">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header border-0" style="background:linear-gradient(90deg,#558b2f,#7cb342);color:#fff;">
+                    <h6 class="mb-0"><i class="bi bi-calendar-week me-2"></i>Activité par jour de la semaine</h6>
+                </div>
+                <div class="card-body"><canvas id="chartJrSem" height="160"></canvas></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Ligne 3 : Démographie -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header border-0" style="background:linear-gradient(90deg,#c2185b,#e91e63);color:#fff;">
+                    <h6 class="mb-0"><i class="bi bi-gender-ambiguous me-2"></i>Répartition par sexe</h6>
+                </div>
+                <div class="card-body d-flex align-items-center justify-content-center">
+                    <canvas id="chartSexe" height="200"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header border-0" style="background:linear-gradient(90deg,#5d4037,#795548);color:#fff;">
+                    <h6 class="mb-0"><i class="bi bi-bar-chart-steps me-2"></i>Tranches d'âge</h6>
+                </div>
+                <div class="card-body"><canvas id="chartAge" height="200"></canvas></div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header border-0" style="background:linear-gradient(90deg,#d32f2f,#e53935);color:#fff;">
+                    <h6 class="mb-0"><i class="bi bi-person-lines-fill me-2"></i>Types de patients</h6>
+                </div>
+                <div class="card-body d-flex align-items-center justify-content-center">
+                    <canvas id="chartTypePatients" height="200"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Ligne 4 : Top Actes + Top Examens -->
     <div class="row g-3 mb-4">
         <div class="col-md-6">
             <div class="card border-0 shadow-sm h-100">
                 <div class="card-header border-0" style="background:linear-gradient(90deg,#e65100,#f4511e);color:#fff;">
-                    <h6 class="mb-0"><i class="bi bi-stethoscope me-2"></i>Top 10 Actes Médicaux les plus utilisés</h6>
+                    <h6 class="mb-0"><i class="bi bi-stethoscope me-2"></i>Top 10 Actes Médicaux</h6>
                 </div>
-                <div class="card-body">
-                    <canvas id="chartActes" height="220"></canvas>
-                </div>
+                <div class="card-body"><canvas id="chartActes" height="220"></canvas></div>
             </div>
         </div>
         <div class="col-md-6">
@@ -293,40 +1069,175 @@ include ROOT_PATH . '/templates/layouts/header.php';
                 <div class="card-header border-0" style="background:linear-gradient(90deg,#006064,#00838f);color:#fff;">
                     <h6 class="mb-0"><i class="bi bi-clipboard2-pulse me-2"></i>Top 10 Examens prescrits</h6>
                 </div>
-                <div class="card-body">
-                    <canvas id="chartExamens" height="220"></canvas>
-                </div>
+                <div class="card-body"><canvas id="chartExamens" height="220"></canvas></div>
             </div>
         </div>
     </div>
 
-    <!-- ── Ligne 3 : Top Produits + Types Patients ────────────────────────── -->
+    <!-- Ligne 5 : Top Produits -->
     <div class="row g-3 mb-4">
-        <div class="col-md-7">
-            <div class="card border-0 shadow-sm h-100">
+        <div class="col-md-12">
+            <div class="card border-0 shadow-sm">
                 <div class="card-header border-0" style="background:linear-gradient(90deg,#6a1b9a,#8e24aa);color:#fff;">
-                    <h6 class="mb-0"><i class="bi bi-capsule me-2"></i>Top 10 Produits Pharmacie les plus consommés</h6>
+                    <h6 class="mb-0"><i class="bi bi-capsule me-2"></i>Top 10 Produits Pharmacie consommés</h6>
                 </div>
-                <div class="card-body">
-                    <canvas id="chartProduits" height="180"></canvas>
-                </div>
+                <div class="card-body"><canvas id="chartProduits" height="120"></canvas></div>
             </div>
         </div>
+    </div>
+
+    <!-- Ligne 5b : Situation Carnets & Fiches AG -->
+    <div class="row g-3 mb-4">
+        <!-- Graphique secteur -->
         <div class="col-md-5">
             <div class="card border-0 shadow-sm h-100">
-                <div class="card-header border-0" style="background:linear-gradient(90deg,#d32f2f,#e53935);color:#fff;">
-                    <h6 class="mb-0"><i class="bi bi-person-lines-fill me-2"></i>Répartition types de patients</h6>
+                <div class="card-header border-0" style="background:linear-gradient(90deg,#1565c0,#2e7d32);color:#fff;">
+                    <h6 class="mb-0">
+                        <i class="bi bi-pie-chart-fill me-2"></i>Situation Carnets &amp; Fiches
+                        <small class="ms-2 opacity-75">(stocks actuels)</small>
+                    </h6>
                 </div>
                 <div class="card-body d-flex align-items-center justify-content-center">
-                    <canvas id="chartTypePatients" height="220"></canvas>
+                    <?php
+                    $totalStocks = $infoCarnetSoins['stock'] + $infoCarnetSante['stock'] + $stockFichesAg20;
+                    ?>
+                    <?php if ($totalStocks === 0): ?>
+                        <p class="text-muted text-center py-4">Tous les stocks sont à zéro.</p>
+                    <?php else: ?>
+                        <canvas id="chartCarnetsFiches" height="220"></canvas>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+        <!-- KPIs stocks détaillés -->
+        <div class="col-md-7">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header border-0 bg-light">
+                    <h6 class="mb-0"><i class="bi bi-journal-check me-2"></i>Détail stocks &amp; consommation (période)</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <!-- Carnet de soins -->
+                        <?php
+                        $clsSoins = $infoCarnetSoins['stock'] === 0 ? 'danger' :
+                                   ($infoCarnetSoins['stock'] <= $infoCarnetSoins['seuil'] ? 'warning' : 'success');
+                        $pctSoins = $nbTotalConsult > 0 ? round($nbRecusCarnetSoins / $nbTotalConsult * 100) : 0;
+                        ?>
+                        <div class="col-md-4 col-sm-6">
+                            <div class="card border-<?= $clsSoins ?> h-100">
+                                <div class="card-body text-center p-3">
+                                    <i class="bi bi-journal-medical fs-3 text-<?= $clsSoins ?>"></i>
+                                    <div class="fw-bold fs-4 text-<?= $clsSoins ?> mt-1"><?= $infoCarnetSoins['stock'] ?></div>
+                                    <div class="text-muted small">Carnets de soins</div>
+                                    <hr class="my-2">
+                                    <div class="small">
+                                        <span class="text-danger"><i class="bi bi-arrow-down-circle me-1"></i><?= $sortiesSoinsPeriode ?> distribués</span><br>
+                                        <span class="text-muted">Seuil : <?= $infoCarnetSoins['seuil'] ?></span>
+                                    </div>
+                                    <hr class="my-2">
+                                    <div class="small fw-semibold text-primary">
+                                        <i class="bi bi-receipt me-1"></i>Utilisés sur reçus
+                                    </div>
+                                    <div class="small">
+                                        <span class="text-primary fw-bold fs-5"><?= $nbRecusCarnetSoins ?></span>
+                                        <span class="text-muted"> reçu<?= $nbRecusCarnetSoins !== 1 ? 's' : '' ?></span>
+                                    </div>
+                                    <?php if ($nbTotalConsult > 0): ?>
+                                    <div class="progress mt-1" style="height:5px;" title="<?= $pctSoins ?>% des <?= $nbTotalConsult ?> consultations">
+                                        <div class="progress-bar bg-primary" style="width:<?= $pctSoins ?>%"></div>
+                                    </div>
+                                    <div class="text-muted" style="font-size:0.72rem;"><?= $pctSoins ?>% des <?= $nbTotalConsult ?> consultations</div>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Carnet de santé -->
+                        <?php
+                        $clsSante = $infoCarnetSante['stock'] === 0 ? 'danger' :
+                                   ($infoCarnetSante['stock'] <= $infoCarnetSante['seuil'] ? 'warning' : 'success');
+                        $pctSante = $nbTotalConsult > 0 ? round($nbRecusCarnetSante / $nbTotalConsult * 100) : 0;
+                        ?>
+                        <div class="col-md-4 col-sm-6">
+                            <div class="card border-<?= $clsSante ?> h-100">
+                                <div class="card-body text-center p-3">
+                                    <i class="bi bi-journal-plus fs-3 text-<?= $clsSante ?>"></i>
+                                    <div class="fw-bold fs-4 text-<?= $clsSante ?> mt-1"><?= $infoCarnetSante['stock'] ?></div>
+                                    <div class="text-muted small">Carnets de santé</div>
+                                    <hr class="my-2">
+                                    <div class="small">
+                                        <span class="text-danger"><i class="bi bi-arrow-down-circle me-1"></i><?= $sortiesSantePeriode ?> distribués</span><br>
+                                        <span class="text-muted">Seuil : <?= $infoCarnetSante['seuil'] ?></span>
+                                    </div>
+                                    <hr class="my-2">
+                                    <div class="small fw-semibold text-primary">
+                                        <i class="bi bi-receipt me-1"></i>Utilisés sur reçus
+                                    </div>
+                                    <div class="small">
+                                        <span class="text-primary fw-bold fs-5"><?= $nbRecusCarnetSante ?></span>
+                                        <span class="text-muted"> reçu<?= $nbRecusCarnetSante !== 1 ? 's' : '' ?></span>
+                                    </div>
+                                    <?php if ($nbTotalConsult > 0): ?>
+                                    <div class="progress mt-1" style="height:5px;" title="<?= $pctSante ?>% des <?= $nbTotalConsult ?> consultations">
+                                        <div class="progress-bar bg-primary" style="width:<?= $pctSante ?>%"></div>
+                                    </div>
+                                    <div class="text-muted" style="font-size:0.72rem;"><?= $pctSante ?>% des <?= $nbTotalConsult ?> consultations</div>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Fiches AG -->
+                        <?php
+                        $clsFag = $stockFichesAg20 === 0 ? 'danger' :
+                                 ($stockFichesAg20 <= $seuilFichesAg20 ? 'warning' : 'success');
+                        $pctFag = $nbTotalAg > 0 ? round($nbRecusFicheAg / $nbTotalAg * 100) : 0;
+                        $pctCag = $nbTotalAg > 0 ? round($nbRecusCarnetAg / $nbTotalAg * 100) : 0;
+                        ?>
+                        <div class="col-md-4 col-sm-6">
+                            <div class="card border-<?= $clsFag ?> h-100">
+                                <div class="card-body text-center p-3">
+                                    <i class="bi bi-file-medical fs-3 text-<?= $clsFag ?>"></i>
+                                    <div class="fw-bold fs-4 text-<?= $clsFag ?> mt-1"><?= $stockFichesAg20 ?></div>
+                                    <div class="text-muted small">Fiches AG</div>
+                                    <hr class="my-2">
+                                    <div class="small">
+                                        <span class="text-danger"><i class="bi bi-arrow-down-circle me-1"></i><?= $sortiesFagPeriode ?> distribuées</span><br>
+                                        <span class="text-muted">Seuil : <?= $seuilFichesAg20 ?></span>
+                                    </div>
+                                    <hr class="my-2">
+                                    <div class="small fw-semibold text-primary">
+                                        <i class="bi bi-receipt me-1"></i>Utilisées sur reçus AG
+                                    </div>
+                                    <div class="small">
+                                        <span class="text-warning fw-bold"><?= $nbRecusCarnetAg ?></span>
+                                        <span class="text-muted"> carnet AG</span>
+                                        &nbsp;·&nbsp;
+                                        <span class="text-primary fw-bold"><?= $nbRecusFicheAg ?></span>
+                                        <span class="text-muted"> fiche AG</span>
+                                    </div>
+                                    <?php if ($nbTotalAg > 0): ?>
+                                    <div class="progress mt-1" style="height:5px;" title="<?= $pctFag ?>% des <?= $nbTotalAg ?> actes gratuits">
+                                        <div class="progress-bar bg-warning" style="width:<?= $pctCag ?>%"></div>
+                                        <div class="progress-bar bg-primary" style="width:<?= $pctFag ?>%"></div>
+                                    </div>
+                                    <div class="text-muted" style="font-size:0.72rem;">Sur <?= $nbTotalAg ?> acte<?= $nbTotalAg !== 1 ? 's' : '' ?> gratuit<?= $nbTotalAg !== 1 ? 's' : '' ?></div>
+                                    <?php endif; ?>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Lien paramétrage -->
+                    <div class="mt-3 text-end">
+                        <a href="<?= url('index.php?page=parametrage&section=carnets') ?>" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-gear me-1"></i>Gérer les stocks
+                        </a>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- ── Ligne 4 : Tables détaillées ───────────────────────────────────── -->
+    <!-- Ligne 6 : Tables Actes & Produits -->
     <div class="row g-3 mb-4">
-        <!-- Top Actes Table -->
         <div class="col-md-6">
             <div class="card border-0 shadow-sm">
                 <div class="card-header bg-light">
@@ -337,9 +1248,11 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         <thead class="table-light">
                             <tr>
                                 <th>#</th><th>Acte</th>
-                                <th class="text-center">Utilisations</th>
-                                <th class="text-center">Orphelins</th>
+                                <th class="text-center">Util.</th>
+                                <th class="text-center">Carnet</th>
+                                <th class="text-center">Orph.</th>
                                 <th class="text-end">Tarif</th>
+                                <th class="text-end">Revenu</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -351,16 +1264,22 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                     <span class="badge bg-success"><?= $a['nb_utilisations'] ?></span>
                                 </td>
                                 <td class="text-center">
-                                    <?php if ($a['nb_orphelins'] > 0): ?>
-                                    <span class="badge bg-purple" style="background:#7b1fa2 !important;">
-                                        <?= $a['nb_orphelins'] ?>
-                                    </span>
+                                    <?php if ($a['nb_avec_carnet']>0): ?>
+                                    <span class="badge bg-info text-dark"><?= $a['nb_avec_carnet'] ?></span>
                                     <?php else: ?><span class="text-muted">-</span><?php endif; ?>
                                 </td>
-                                <td class="text-end text-muted small"><?= number_format($a['tarif'],0,',',' ') ?> F</td>
+                                <td class="text-center">
+                                    <?php if ($a['nb_orphelins'] > 0): ?>
+                                    <span class="badge" style="background:#7b1fa2;"><?= $a['nb_orphelins'] ?></span>
+                                    <?php else: ?><span class="text-muted">-</span><?php endif; ?>
+                                </td>
+                                <td class="text-end text-muted small"><?= fmt($a['tarif']) ?> F</td>
+                                <td class="text-end fw-bold" style="color:#2e7d32;">
+                                    <?= fmt($a['revenu_genere']) ?> F
+                                </td>
                             </tr>
                         <?php endforeach; else: ?>
-                            <tr><td colspan="5" class="text-center text-muted py-3">Aucune donnée</td></tr>
+                            <tr><td colspan="7" class="text-center text-muted py-3">Aucune donnée</td></tr>
                         <?php endif; ?>
                         </tbody>
                     </table>
@@ -368,7 +1287,6 @@ include ROOT_PATH . '/templates/layouts/header.php';
             </div>
         </div>
 
-        <!-- Top Produits Table -->
         <div class="col-md-6">
             <div class="card border-0 shadow-sm">
                 <div class="card-header bg-light">
@@ -379,21 +1297,206 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         <thead class="table-light">
                             <tr>
                                 <th>#</th><th>Produit</th><th>Forme</th>
-                                <th class="text-center">Qté vendue</th>
+                                <th class="text-center">Qté</th>
+                                <th class="text-end">Prix moy.</th>
                                 <th class="text-end">Revenu</th>
                             </tr>
                         </thead>
                         <tbody>
-                        <?php if ($topProduits): foreach ($topProduits as $i => $p): ?>
+                        <?php if ($topProduits): foreach ($topProduits as $i => $prod): ?>
                             <tr>
                                 <td><span class="badge bg-secondary"><?= $i+1 ?></span></td>
-                                <td class="fw-semibold"><?= h($p['nom']) ?></td>
-                                <td><small class="text-muted"><?= h($p['forme']) ?></small></td>
+                                <td class="fw-semibold"><?= h($prod['nom']) ?></td>
+                                <td><small class="text-muted"><?= h($prod['forme']) ?></small></td>
                                 <td class="text-center">
-                                    <span class="badge" style="background:#6a1b9a;"><?= $p['total_qte'] ?></span>
+                                    <span class="badge" style="background:#6a1b9a;"><?= $prod['total_qte'] ?></span>
+                                </td>
+                                <td class="text-end text-muted small"><?= fmt($prod['prix_moyen']) ?> F</td>
+                                <td class="text-end fw-bold" style="color:#2e7d32;">
+                                    <?= fmt($prod['total_revenu']) ?> F
+                                </td>
+                            </tr>
+                        <?php endforeach; else: ?>
+                            <tr><td colspan="6" class="text-center text-muted py-3">Aucune donnée</td></tr>
+                        <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Performance Percepteurs -->
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header border-0" style="background:linear-gradient(90deg,#37474f,#546e7a);color:#fff;">
+            <h6 class="mb-0"><i class="bi bi-people-fill me-2"></i>Performance Percepteurs</h6>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Percepteur</th>
+                        <th class="text-center">Reçus</th>
+                        <th class="text-center">Patients</th>
+                        <th class="text-center">Cons.</th>
+                        <th class="text-center">Exam.</th>
+                        <th class="text-center">Pharm.</th>
+                        <th class="text-center">Gratuits</th>
+                        <th class="text-end">Panier moy.</th>
+                        <th class="text-end">Encaissé</th>
+                        <th>Performance</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php
+                $encaisses = array_map(fn($x) => (float)($x['total_encaisse'] ?? 0), $perfPercep);
+                $maxEncaisse = !empty($encaisses) ? max(1, max($encaisses)) : 1;
+                foreach ($perfPercep as $idx => $p):
+                    $totalEnc = (float)($p['total_encaisse'] ?? 0);
+                    $pct = round(($totalEnc / $maxEncaisse) * 100);
+                    $medal = $idx===0 && $totalEnc>0 ? '🥇' :
+                             ($idx===1 && $totalEnc>0 ? '🥈' :
+                             ($idx===2 && $totalEnc>0 ? '🥉' : ''));
+                ?>
+                    <tr>
+                        <td>
+                            <span class="me-1"><?= $medal ?></span>
+                            <i class="bi bi-person-badge me-1" style="color:#1565c0;"></i>
+                            <strong><?= h($p['nom'].' '.$p['prenom']) ?></strong>
+                            <?php if (!$p['est_actif']): ?>
+                                <span class="badge bg-secondary ms-1">Inactif</span>
+                            <?php endif; ?>
+                        </td>
+                        <td class="text-center">
+                            <span class="badge bg-<?= $p['nb_recus']>0?'primary':'secondary' ?>"><?= $p['nb_recus'] ?></span>
+                        </td>
+                        <td class="text-center">
+                            <span class="badge bg-info text-dark"><?= $p['nb_patients'] ?></span>
+                        </td>
+                        <td class="text-center"><small><?= $p['nb_consult'] ?></small></td>
+                        <td class="text-center"><small><?= $p['nb_exam'] ?></small></td>
+                        <td class="text-center"><small><?= $p['nb_pharma'] ?></small></td>
+                        <td class="text-center">
+                            <?php if ($p['nb_gratuits']>0): ?>
+                            <span class="badge" style="background:#7b1fa2;"><?= $p['nb_gratuits'] ?></span>
+                            <?php else: ?><span class="text-muted">-</span><?php endif; ?>
+                        </td>
+                        <td class="text-end text-muted small"><?= fmt($p['panier_moyen']) ?> F</td>
+                        <td class="text-end fw-bold" style="color:#2e7d32;">
+                            <?= fmt($p['total_encaisse']) ?> F
+                        </td>
+                        <td style="min-width:150px;">
+                            <div class="progress" style="height:10px;">
+                                <div class="progress-bar" role="progressbar"
+                                     style="width:<?= $pct ?>%;background:linear-gradient(90deg,#1565c0,#42a5f5);"></div>
+                            </div>
+                            <small class="text-muted"><?= $pct ?>%</small>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ⚠ Alertes Stock détaillées -->
+    <div id="section-stock" class="card border-0 shadow-sm mb-4">
+        <div class="card-header border-0 d-flex justify-content-between align-items-center"
+             style="background:linear-gradient(90deg,#c62828,#e53935);color:#fff;">
+            <h6 class="mb-0"><i class="bi bi-exclamation-triangle-fill me-2"></i>Alertes Stock Pharmacie</h6>
+            <span class="badge bg-light text-danger"><?= count($stockAlertes) ?> alertes</span>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0 table-sm">
+                <thead class="table-light">
+                    <tr>
+                        <th>Produit</th><th>Forme</th>
+                        <th class="text-center">Stock</th>
+                        <th class="text-center">Seuil</th>
+                        <th class="text-end">Valeur</th>
+                        <th>Péremption</th>
+                        <th class="text-center">Statut</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php if ($stockAlertes): foreach ($stockAlertes as $s):
+                    $statusBadge = match($s['statut']) {
+                        'RUPTURE'    => '<span class="badge bg-danger">RUPTURE</span>',
+                        'PERIME'     => '<span class="badge" style="background:#880e4f;color:#fff;">PÉRIMÉ</span>',
+                        'PEREMPTION' => '<span class="badge" style="background:#e65100;color:#fff;">PÉREMPTION ≤ 60j</span>',
+                        'FAIBLE'     => '<span class="badge bg-warning text-dark">STOCK FAIBLE</span>',
+                        default      => '<span class="badge bg-secondary">'.h($s['statut']).'</span>'
+                    };
+                    $valLigne = (float)$s['stock_actuel'] * (float)$s['prix_unitaire'];
+                ?>
+                    <tr>
+                        <td class="fw-semibold"><?= h($s['nom']) ?></td>
+                        <td><small class="text-muted"><?= h($s['forme']) ?></small></td>
+                        <td class="text-center">
+                            <strong class="<?= $s['stock_actuel']<=0?'text-danger':'' ?>"><?= $s['stock_actuel'] ?></strong>
+                        </td>
+                        <td class="text-center text-muted"><?= $s['seuil_alerte'] ?></td>
+                        <td class="text-end text-muted small"><?= fmt($valLigne) ?> F</td>
+                        <td>
+                            <?php if ($s['date_peremption']): ?>
+                                <?= date('d/m/Y', strtotime($s['date_peremption'])) ?>
+                                <?php
+                                $jrs = ceil((strtotime($s['date_peremption']) - time())/86400);
+                                if ($jrs<=0): ?>
+                                    <small class="text-danger fw-bold">(périmé)</small>
+                                <?php elseif ($jrs<=60): ?>
+                                    <small class="text-warning fw-bold">(<?= $jrs ?>j)</small>
+                                <?php endif; ?>
+                            <?php else: ?>
+                                <span class="text-muted">-</span>
+                            <?php endif; ?>
+                        </td>
+                        <td class="text-center"><?= $statusBadge ?></td>
+                    </tr>
+                <?php endforeach; else: ?>
+                    <tr><td colspan="7" class="text-center text-success py-3">
+                        <i class="bi bi-check-circle me-1"></i>Aucune alerte – Stock sain
+                    </td></tr>
+                <?php endif; ?>
+                </tbody>
+            </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Provenances + Patients fidèles -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-6">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header border-0" style="background:linear-gradient(90deg,#00695c,#00897b);color:#fff;">
+                    <h6 class="mb-0"><i class="bi bi-geo-alt-fill me-2"></i>Top 10 Provenances</h6>
+                </div>
+                <div class="card-body p-0">
+                    <table class="table table-hover align-middle mb-0 table-sm">
+                        <thead class="table-light">
+                            <tr>
+                                <th>#</th><th>Provenance</th>
+                                <th class="text-center">Patients</th>
+                                <th class="text-center">Reçus</th>
+                                <th class="text-end">Recettes</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php if ($topProvenances): foreach ($topProvenances as $i => $pv): ?>
+                            <tr>
+                                <td><span class="badge bg-secondary"><?= $i+1 ?></span></td>
+                                <td class="fw-semibold"><?= h($pv['provenance']) ?></td>
+                                <td class="text-center">
+                                    <span class="badge bg-info text-dark"><?= $pv['nb_patients'] ?></span>
+                                </td>
+                                <td class="text-center">
+                                    <span class="badge bg-primary"><?= $pv['nb_recus'] ?></span>
                                 </td>
                                 <td class="text-end fw-bold" style="color:#2e7d32;">
-                                    <?= number_format($p['total_revenu'],0,',',' ') ?> F
+                                    <?= fmt($pv['total']) ?> F
                                 </td>
                             </tr>
                         <?php endforeach; else: ?>
@@ -404,228 +1507,1053 @@ include ROOT_PATH . '/templates/layouts/header.php';
                 </div>
             </div>
         </div>
+
+        <div class="col-md-6">
+            <div class="card border-0 shadow-sm">
+                <div class="card-header border-0" style="background:linear-gradient(90deg,#1565c0,#1e88e5);color:#fff;">
+                    <h6 class="mb-0"><i class="bi bi-star-fill me-2"></i>Patients fidèles (≥ 2 visites)</h6>
+                </div>
+                <div class="card-body p-0">
+                    <table class="table table-hover align-middle mb-0 table-sm">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Patient</th>
+                                <th class="text-center">Visites</th>
+                                <th class="text-end">Total payé</th>
+                                <th>Dernière visite</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php if ($patientsFideles): foreach ($patientsFideles as $f): ?>
+                            <tr>
+                                <td>
+                                    <strong><?= h($f['nom']) ?></strong>
+                                    <?php if ($f['est_orphelin']): ?>
+                                        <span class="badge ms-1" style="background:#7b1fa2;font-size:0.65em;">Orphelin AMA</span>
+                                    <?php endif; ?>
+                                    <small class="text-muted d-block">
+                                        <?= h($f['telephone']) ?>
+                                        · <?= (int)$f['age'] ?> ans · <?= h($f['sexe']) ?>
+                                    </small>
+                                </td>
+                                <td class="text-center">
+                                    <span class="badge bg-warning text-dark"><?= $f['nb_visites'] ?></span>
+                                </td>
+                                <td class="text-end fw-bold" style="color:#2e7d32;">
+                                    <?= fmt($f['total_paye']) ?> F
+                                </td>
+                                <td><small><?= date('d/m/Y', strtotime($f['derniere_visite'])) ?></small></td>
+                            </tr>
+                        <?php endforeach; else: ?>
+                            <tr><td colspan="4" class="text-center text-muted py-3">Aucun patient récurrent</td></tr>
+                        <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <!-- ── Performance Percepteurs ────────────────────────────────────────── -->
-    <div class="card border-0 shadow-sm mb-4">
-        <div class="card-header border-0" style="background:linear-gradient(90deg,#37474f,#546e7a);color:#fff;">
-            <h6 class="mb-0"><i class="bi bi-people-fill me-2"></i>Performance Percepteurs sur la période</h6>
+    <!-- Audit Qualité + Reçus Annulés + Approvisionnements -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header border-0 d-flex justify-content-between align-items-center"
+                     style="background:linear-gradient(90deg,#bf360c,#d84315);color:#fff;">
+                    <h6 class="mb-0"><i class="bi bi-shield-exclamation me-2"></i>Audit qualité – Modifications</h6>
+                    <?php if ((int)$auditModifs['nb_modifs'] > 0): ?>
+                    <button type="button"
+                            class="btn btn-sm btn-light fw-semibold py-0 px-2"
+                            onclick="ouvrirModalModifs()"
+                            title="Voir le détail des modifications">
+                        <i class="bi bi-eye me-1"></i>Aperçu
+                    </button>
+                    <?php endif; ?>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3 text-center mb-3">
+                        <div class="col-4">
+                            <div class="fs-4 fw-bold text-danger"><?= (int)$auditModifs['nb_modifs'] ?></div>
+                            <small class="text-muted">Total modifs</small>
+                        </div>
+                        <div class="col-4">
+                            <div class="fs-4 fw-bold" style="color:#e65100;"><?= (int)$auditModifs['nb_recus_modifies'] ?></div>
+                            <small class="text-muted">Reçus impactés</small>
+                        </div>
+                        <div class="col-4">
+                            <div class="fs-4 fw-bold" style="color:#1565c0;"><?= (int)$auditModifs['nb_users_modificateurs'] ?></div>
+                            <small class="text-muted">Utilisateurs</small>
+                        </div>
+                    </div>
+
+                    <?php if ($modifsParType): ?>
+                    <h6 class="text-muted small text-uppercase mb-2">Par type de reçu</h6>
+                    <div class="d-flex gap-2 flex-wrap mb-3">
+                        <?php foreach ($modifsParType as $mt): ?>
+                        <span class="badge bg-light text-dark border">
+                            <?= ucfirst($mt['type_recu']) ?> : <strong><?= $mt['nb'] ?></strong>
+                        </span>
+                        <?php endforeach; ?>
+                    </div>
+                    <?php endif; ?>
+
+                    <?php if ($topMotifs): ?>
+                    <h6 class="text-muted small text-uppercase mb-2">Top motifs</h6>
+                    <ul class="list-group list-group-flush mb-3">
+                        <?php foreach ($topMotifs as $m): ?>
+                        <li class="list-group-item d-flex justify-content-between align-items-center px-0 py-1">
+                            <small><?= h(mb_strimwidth($m['motif'], 0, 60, '…')) ?></small>
+                            <span class="badge bg-warning text-dark rounded-pill"><?= $m['nb'] ?></span>
+                        </li>
+                        <?php endforeach; ?>
+                    </ul>
+                    <?php endif; ?>
+
+                    <?php if ($topModificateurs): ?>
+                    <h6 class="text-muted small text-uppercase mb-2">Top modificateurs</h6>
+                    <ul class="list-group list-group-flush">
+                        <?php foreach ($topModificateurs as $u): ?>
+                        <li class="list-group-item d-flex justify-content-between align-items-center px-0 py-1">
+                            <small>
+                                <i class="bi bi-person me-1"></i>
+                                <?= h($u['nom'].' '.$u['prenom']) ?>
+                                <span class="text-muted">(<?= h($u['role']) ?>)</span>
+                            </small>
+                            <span class="badge bg-danger rounded-pill"><?= $u['nb_modifs'] ?></span>
+                        </li>
+                        <?php endforeach; ?>
+                    </ul>
+                    <?php endif; ?>
+
+                    <?php if ((int)$auditModifs['nb_modifs'] > 0): ?>
+                    <div class="text-center mt-3">
+                        <button class="btn btn-outline-danger btn-sm" onclick="ouvrirModalModifs()">
+                            <i class="bi bi-list-ul me-1"></i>Voir les <?= (int)$auditModifs['nb_modifs'] ?> modification<?= $auditModifs['nb_modifs'] > 1 ? 's' : '' ?> en détail
+                        </button>
+                    </div>
+                    <?php endif; ?>
+
+                    <?php if (!$auditModifs['nb_modifs']): ?>
+                        <p class="text-muted text-center mb-0">Aucune modification sur la période</p>
+                    <?php endif; ?>
+                </div>
+            </div>
         </div>
-        <div class="card-body p-0">
-            <table class="table table-hover align-middle mb-0">
-                <thead class="table-light">
-                    <tr>
-                        <th>Percepteur</th>
-                        <th class="text-center">Reçus émis</th>
-                        <th class="text-center">Patients uniques</th>
-                        <th class="text-end">Encaissé</th>
-                        <th>Barre de progression</th>
-                    </tr>
-                </thead>
-                <tbody>
-                <?php
-                $maxEncaisse = max(1, ...array_column($perfPercep, 'total_encaisse'));
-                foreach ($perfPercep as $p):
-                    $pct = round(($p['total_encaisse'] / $maxEncaisse) * 100);
-                ?>
-                    <tr>
-                        <td>
-                            <i class="bi bi-person-badge me-1" style="color:#1565c0;"></i>
-                            <strong><?= h($p['nom'].' '.$p['prenom']) ?></strong>
-                        </td>
-                        <td class="text-center">
-                            <span class="badge bg-<?= $p['nb_recus'] > 0 ? 'primary' : 'secondary' ?>">
-                                <?= $p['nb_recus'] ?>
-                            </span>
-                        </td>
-                        <td class="text-center">
-                            <span class="badge bg-<?= $p['nb_patients'] > 0 ? 'info' : 'secondary' ?> text-dark">
-                                <?= $p['nb_patients'] ?>
-                            </span>
-                        </td>
-                        <td class="text-end fw-bold" style="color:#2e7d32;">
-                            <?= number_format($p['total_encaisse'],0,',',' ') ?> F
-                        </td>
-                        <td style="min-width:140px;">
-                            <div class="progress" style="height:10px;">
-                                <div class="progress-bar" role="progressbar"
-                                     style="width:<?= $pct ?>%;background:linear-gradient(90deg,#1565c0,#42a5f5);"
-                                     aria-valuenow="<?= $pct ?>" aria-valuemin="0" aria-valuemax="100"></div>
+
+        <!-- ── Audit : Reçus annulés ──────────────────────────────────── -->
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header border-0 d-flex justify-content-between align-items-center"
+                     style="background:linear-gradient(90deg,#4a148c,#6a1b9a);color:#fff;">
+                    <h6 class="mb-0">
+                        <i class="bi bi-trash3 me-2"></i>Audit – Reçus annulés
+                    </h6>
+                    <?php if ($nbAnnules > 0): ?>
+                    <button type="button"
+                            class="btn btn-sm btn-light fw-semibold py-0 px-2"
+                            onclick="ouvrirModalAnnules()"
+                            title="Voir le détail des reçus annulés">
+                        <i class="bi bi-eye me-1"></i>Aperçu
+                    </button>
+                    <?php endif; ?>
+                </div>
+                <div class="card-body">
+                    <!-- KPIs annulations -->
+                    <div class="row g-3 text-center mb-3">
+                        <div class="col-4">
+                            <div class="fs-4 fw-bold" style="color:#4a148c;"><?= $nbAnnules ?></div>
+                            <small class="text-muted">Annulations</small>
+                        </div>
+                        <div class="col-4">
+                            <div class="fs-4 fw-bold" style="color:#6a1b9a;"><?= fmt($totalMontantAnnule) ?></div>
+                            <small class="text-muted">F annulés</small>
+                        </div>
+                        <div class="col-4">
+                            <div class="fs-4 fw-bold" style="color:#7b1fa2;"><?= $annuleursDistincts ?></div>
+                            <small class="text-muted">Annuleur(s)</small>
+                        </div>
+                    </div>
+
+                    <?php if ($annulesParType): ?>
+                    <h6 class="text-muted small text-uppercase mb-2">Par type de reçu</h6>
+                    <div class="d-flex gap-2 flex-wrap mb-3">
+                        <?php
+                        $badgeMap = [
+                            'consultation' => 'bg-primary',
+                            'examen'       => 'bg-info text-dark',
+                            'pharmacie'    => 'bg-success',
+                        ];
+                        foreach ($annulesParType as $type => $nb):
+                            $bc = $badgeMap[$type] ?? 'bg-secondary';
+                        ?>
+                        <span class="badge <?= $bc ?>">
+                            <?= ucfirst($type) ?> : <strong><?= $nb ?></strong>
+                        </span>
+                        <?php endforeach; ?>
+                    </div>
+                    <?php endif; ?>
+
+                    <?php if ($nbAnnules > 0):
+                        // Afficher les 3 plus récents en aperçu rapide
+                        $apercu = array_slice($recusAnnules, 0, 3);
+                    ?>
+                    <h6 class="text-muted small text-uppercase mb-2">Dernières annulations</h6>
+                    <ul class="list-group list-group-flush">
+                        <?php foreach ($apercu as $ra): ?>
+                        <li class="list-group-item px-0 py-1">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div>
+                                    <small class="fw-semibold" style="color:#4a148c;">
+                                        #<?= str_pad($ra['numero_recu'], 5, '0', STR_PAD_LEFT) ?>
+                                    </small>
+                                    <span class="badge bg-light text-dark border ms-1" style="font-size:0.7em;">
+                                        <?= ucfirst($ra['type_recu']) ?>
+                                    </span>
+                                    <br>
+                                    <small class="text-muted"><?= h(mb_strimwidth($ra['patient_nom'], 0, 28, '…')) ?></small>
+                                </div>
+                                <div class="text-end">
+                                    <small class="fw-bold" style="color:#6a1b9a;"><?= fmt($ra['montant_annule']) ?> F</small><br>
+                                    <small class="text-muted"><?= date('d/m', strtotime($ra['date_annulation'])) ?></small>
+                                </div>
                             </div>
-                            <small class="text-muted"><?= $pct ?>%</small>
-                        </td>
-                    </tr>
-                <?php endforeach; ?>
-                </tbody>
-            </table>
+                        </li>
+                        <?php endforeach; ?>
+                    </ul>
+                    <?php if ($nbAnnules > 3): ?>
+                    <div class="text-center mt-2">
+                        <button class="btn btn-link btn-sm p-0" style="color:#6a1b9a;" onclick="ouvrirModalAnnules()">
+                            Voir les <?= $nbAnnules - 3 ?> autres…
+                        </button>
+                    </div>
+                    <?php endif; ?>
+                    <?php else: ?>
+                        <p class="text-muted text-center mb-0 mt-2">
+                            <i class="bi bi-check-circle text-success me-1"></i>
+                            Aucune annulation sur la période
+                        </p>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header border-0" style="background:linear-gradient(90deg,#1b5e20,#388e3c);color:#fff;">
+                    <h6 class="mb-0"><i class="bi bi-box-seam me-2"></i>Approvisionnements pharmacie</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3 text-center mb-3">
+                        <div class="col-4">
+                            <div class="fs-4 fw-bold" style="color:#1b5e20;"><?= (int)$approvis['nb_approvis'] ?></div>
+                            <small class="text-muted">Entrées</small>
+                        </div>
+                        <div class="col-4">
+                            <div class="fs-4 fw-bold" style="color:#1b5e20;"><?= fmt($approvis['total_qte_entree']) ?></div>
+                            <small class="text-muted">Quantité</small>
+                        </div>
+                        <div class="col-4">
+                            <div class="fs-4 fw-bold" style="color:#1b5e20;">
+                                <?= fmt($approvis['valeur_totale']) ?> F
+                            </div>
+                            <small class="text-muted">Valeur</small>
+                        </div>
+                    </div>
+
+                    <h6 class="text-muted small text-uppercase mt-3 mb-2">Synthèse stock pharmacie</h6>
+                    <ul class="list-group list-group-flush">
+                        <li class="list-group-item d-flex justify-content-between px-0 py-2">
+                            <span><i class="bi bi-archive me-2"></i>Stock total actuel</span>
+                            <strong><?= fmt($stockTotalActuel) ?> unités</strong>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between px-0 py-2">
+                            <span><i class="bi bi-cart-check me-2"></i>Quantité vendue (période)</span>
+                            <strong><?= fmt($qteVenduePeriode) ?> unités</strong>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between px-0 py-2">
+                            <span><i class="bi bi-cash-coin me-2"></i>Valeur immobilisée</span>
+                            <strong style="color:#6a1b9a;"><?= fmt($valeurStock) ?> F</strong>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ✅ Redevances Ministère de la Santé -->
+    <div class="card border-0 shadow-sm mb-4" id="section-redevances">
+        <div class="card-header border-0 d-flex justify-content-between align-items-center"
+             style="background:linear-gradient(90deg,#f57f17,#ff8f00);color:#fff;">
+            <h6 class="mb-0">
+                <i class="bi bi-bank me-2"></i>
+                Redevances à reverser au Ministère de la Santé
+                <small class="ms-2 opacity-75">(supplément 100 F · âge &gt; <?= AGE_LIMITE_SUPPLEMENT ?> ans · patients normaux)</small>
+            </h6>
+            <button type="button"
+                    class="btn btn-sm btn-light fw-bold"
+                    onclick="ouvrirModalRedevances()">
+                <i class="bi bi-printer-fill me-1"></i>Imprimer la situation
+            </button>
+        </div>
+        <div class="card-body">
+            <!-- Synthèse globale -->
+            <div class="row g-3 text-center mb-4">
+                <div class="col-md-4">
+                    <div class="p-3 rounded" style="background:#fff8e1;border-left:4px solid #f57f17;">
+                        <div class="text-muted small text-uppercase">Total à reverser</div>
+                        <div class="fs-3 fw-bold" style="color:#e65100;">
+                            <?= fmt($redevances['total_redevances']) ?> F
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="p-3 rounded" style="background:#e3f2fd;border-left:4px solid #1565c0;">
+                        <div class="text-muted small text-uppercase">Nombre de patients concernés</div>
+                        <div class="fs-3 fw-bold" style="color:#1565c0;">
+                            <?= fmt($redevances['nb_redevances']) ?>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="p-3 rounded" style="background:#e8f5e9;border-left:4px solid #2e7d32;">
+                        <div class="text-muted small text-uppercase">Jours actifs</div>
+                        <div class="fs-3 fw-bold" style="color:#2e7d32;">
+                            <?= (int)$redevances['nb_jours_actifs'] ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Détail jour par jour -->
+            <h6 class="text-muted small text-uppercase mb-2">
+                <i class="bi bi-calendar-date me-1"></i>Détail journalier par percepteur
+            </h6>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle table-sm mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Date</th>
+                            <th>Percepteur</th>
+                            <th class="text-center">Nb redevances</th>
+                            <th class="text-end">Montant</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    <?php if ($redevancesJour): foreach ($redevancesJour as $rj): ?>
+                        <tr>
+                            <td><?= date('d/m/Y', strtotime($rj['jour'])) ?></td>
+                            <td>
+                                <i class="bi bi-person-badge me-1" style="color:#1565c0;"></i>
+                                <?= h(($rj['percepteur'] ?? '—') . ' ' . ($rj['percepteur_prenom'] ?? '')) ?>
+                            </td>
+                            <td class="text-center">
+                                <span class="badge" style="background:#f57f17;"><?= $rj['nb'] ?></span>
+                            </td>
+                            <td class="text-end fw-bold" style="color:#e65100;">
+                                <?= fmt($rj['total']) ?> F
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                        <tr style="background:#fff8e1;">
+                            <td colspan="2" class="text-end fw-bold">TOTAL DE LA PÉRIODE :</td>
+                            <td class="text-center fw-bold"><?= (int)$redevances['nb_redevances'] ?></td>
+                            <td class="text-end fw-bold fs-5" style="color:#e65100;">
+                                <?= fmt($redevances['total_redevances']) ?> F
+                            </td>
+                        </tr>
+                    <?php else: ?>
+                        <tr>
+                            <td colspan="4" class="text-center text-muted py-3">
+                                <i class="bi bi-info-circle me-1"></i>
+                                Aucune redevance sur cette période 
+                                (aucun patient normal de plus de <?= AGE_LIMITE_SUPPLEMENT ?> ans).
+                            </td>
+                        </tr>
+                    <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="alert alert-info mt-3 mb-0" style="font-size:0.85rem;">
+                <i class="bi bi-info-circle-fill me-1"></i>
+                Le supplément de <strong><?= TARIF_SUPPLEMENT_ADULTE ?> F</strong> est collecté pour chaque patient normal de plus de <?= AGE_LIMITE_SUPPLEMENT ?> ans 
+                et doit être reversé au Ministère de la Santé selon la périodicité fixée par votre direction.
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════
+         SECTION : Situation Sorties Pharmacie
+         ══════════════════════════════════════════════════════════ -->
+    <div class="card border-0 shadow-sm mb-4" id="section-pharmacie">
+        <div class="card-header d-flex justify-content-between align-items-center"
+             style="background:linear-gradient(135deg,#006064,#00838f);color:#fff;">
+            <h6 class="mb-0 fw-bold">
+                <i class="bi bi-capsule me-2"></i>Situation Sorties Pharmacie
+            </h6>
+            <button class="btn btn-sm btn-light fw-semibold" onclick="ouvrirModalPharmacie()">
+                <i class="bi bi-printer me-1"></i>Imprimer rapport
+            </button>
+        </div>
+        <div class="card-body">
+            <!-- KPIs -->
+            <div class="row g-3 mb-3">
+                <div class="col-md-4">
+                    <div class="p-3 rounded" style="background:#e0f7fa;border-left:4px solid #00838f;">
+                        <div class="text-muted small text-uppercase">Produits distincts</div>
+                        <div class="fs-3 fw-bold" style="color:#006064;"><?= count($sortiesPharma) ?></div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="p-3 rounded" style="background:#e0f7fa;border-left:4px solid #00838f;">
+                        <div class="text-muted small text-uppercase">Unités sorties</div>
+                        <div class="fs-3 fw-bold" style="color:#006064;"><?= fmt($totalQtePharma) ?></div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="p-3 rounded" style="background:#e0f7fa;border-left:4px solid #00838f;">
+                        <div class="text-muted small text-uppercase">Chiffre d'affaires</div>
+                        <div class="fs-3 fw-bold" style="color:#006064;"><?= fmt($totalMontantPharma) ?> F</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tableau détail -->
+            <div class="table-responsive">
+                <table class="table table-hover align-middle table-sm mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>#</th>
+                            <th>Produit</th>
+                            <th>Forme</th>
+                            <th class="text-center">Qté sortie</th>
+                            <th class="text-end">Prix unit. moy.</th>
+                            <th class="text-end">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    <?php if ($sortiesPharma): $cpt = 0; foreach ($sortiesPharma as $sp): $cpt++; ?>
+                        <tr>
+                            <td class="text-muted small"><?= $cpt ?></td>
+                            <td class="fw-semibold"><?= h($sp['nom']) ?></td>
+                            <td><span class="badge bg-light text-dark"><?= h($sp['forme'] ?? '—') ?></span></td>
+                            <td class="text-center fw-bold" style="color:#006064;"><?= (int)$sp['total_qte'] ?></td>
+                            <td class="text-end text-muted small"><?= fmt($sp['prix_unit']) ?> F</td>
+                            <td class="text-end fw-bold"><?= fmt($sp['total_montant']) ?> F</td>
+                        </tr>
+                    <?php endforeach; else: ?>
+                        <tr>
+                            <td colspan="6" class="text-center text-muted py-3">
+                                <i class="bi bi-info-circle me-1"></i>
+                                Aucune sortie pharmacie sur cette période.
+                            </td>
+                        </tr>
+                    <?php endif; ?>
+                    </tbody>
+                    <?php if ($sortiesPharma): ?>
+                    <tfoot class="table-light fw-bold">
+                        <tr>
+                            <td colspan="3" class="text-end">TOTAL</td>
+                            <td class="text-center" style="color:#006064;"><?= fmt($totalQtePharma) ?></td>
+                            <td></td>
+                            <td class="text-end" style="color:#006064;"><?= fmt($totalMontantPharma) ?> F</td>
+                        </tr>
+                    </tfoot>
+                    <?php endif; ?>
+                </table>
+            </div>
         </div>
     </div>
 
 </div><!-- /.mt-4 -->
 
+<!-- ══════════════════════════════════════════════════════════════
+     MODAL : Sélection période avant impression des redevances
+     ══════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modalImprimerRedevances" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-sm modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header text-white" style="background:#f57f17;">
+                <h6 class="modal-title fw-bold">
+                    <i class="bi bi-printer-fill me-2"></i>Imprimer les Redevances
+                </h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-3">
+                    Sélectionnez la période pour laquelle vous souhaitez imprimer la situation des redevances à reverser au Ministère.
+                </p>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold small">Date de début</label>
+                    <input type="date" id="redevDateDebut" class="form-control form-control-sm"
+                           value="<?= h($filtreDebut) ?>">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold small">Date de fin</label>
+                    <input type="date" id="redevDateFin" class="form-control form-control-sm"
+                           value="<?= h($filtreFin) ?>">
+                </div>
+            </div>
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-sm fw-bold text-white"
+                        style="background:#f57f17;"
+                        onclick="lancerImpressionRedevances()">
+                    <i class="bi bi-printer-fill me-1"></i>Générer le PDF
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     MODAL : Impression rapport sorties pharmacie
+     ══════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modalImprimerPharmacie" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-sm modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header text-white" style="background:#006064;">
+                <h6 class="modal-title fw-bold">
+                    <i class="bi bi-printer-fill me-2"></i>Rapport Sorties Pharmacie
+                </h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-3">
+                    Sélectionnez la période pour le rapport des sorties pharmacie.
+                </p>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold small">Date de début</label>
+                    <input type="date" id="pharmaDateDebut" class="form-control form-control-sm"
+                           value="<?= h($filtreDebut) ?>">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold small">Date de fin</label>
+                    <input type="date" id="pharmaDateFin" class="form-control form-control-sm"
+                           value="<?= h($filtreFin) ?>">
+                </div>
+            </div>
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Annuler</button>
+                <button type="button" class="btn btn-sm fw-bold text-white"
+                        style="background:#006064;"
+                        onclick="lancerImpressionPharmacie()">
+                    <i class="bi bi-printer-fill me-1"></i>Générer le PDF
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     MODAL : Détail modifications de reçus
+     ══════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modalModifs" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header text-white"
+                 style="background:linear-gradient(90deg,#bf360c,#d84315);">
+                <h6 class="modal-title fw-bold">
+                    <i class="bi bi-shield-exclamation me-2"></i>
+                    Modifications de reçus —
+                    <?= date('d/m/Y', strtotime($filtreDebut)) ?> au <?= date('d/m/Y', strtotime($filtreFin)) ?>
+                    <span class="badge bg-white text-dark ms-2"><?= (int)$auditModifs['nb_modifs'] ?></span>
+                </h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0">
+                <?php if ($detailModifs): ?>
+                <!-- Barre récap -->
+                <div class="px-3 py-2 border-bottom d-flex gap-3 flex-wrap align-items-center"
+                     style="background:#fbe9e7;">
+                    <span class="fw-semibold text-danger">
+                        <i class="bi bi-pencil-square me-1"></i><?= (int)$auditModifs['nb_modifs'] ?> modification<?= $auditModifs['nb_modifs'] > 1 ? 's' : '' ?>
+                    </span>
+                    <span class="text-muted">|</span>
+                    <span style="color:#e65100;">
+                        <?= (int)$auditModifs['nb_recus_modifies'] ?> reçu<?= $auditModifs['nb_recus_modifies'] > 1 ? 's' : '' ?> impacté<?= $auditModifs['nb_recus_modifies'] > 1 ? 's' : '' ?>
+                    </span>
+                    <span class="text-muted">|</span>
+                    <span style="color:#1565c0;">
+                        <?= (int)$auditModifs['nb_users_modificateurs'] ?> utilisateur<?= $auditModifs['nb_users_modificateurs'] > 1 ? 's' : '' ?>
+                    </span>
+                    <?php foreach ($modifsParType as $mt): ?>
+                    <span class="badge bg-light text-dark border">
+                        <?= ucfirst($mt['type_recu']) ?> : <?= $mt['nb'] ?>
+                    </span>
+                    <?php endforeach; ?>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle table-sm mb-0">
+                        <thead style="position:sticky;top:0;background:#fff;z-index:1;">
+                            <tr class="table-light">
+                                <th class="ps-3">N° Reçu</th>
+                                <th>Type</th>
+                                <th>Patient</th>
+                                <th>Modifié par</th>
+                                <th>Date modification</th>
+                                <th>Motif</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php
+                        $typeColorsM = [
+                            'consultation' => '#1565c0',
+                            'examen'       => '#006064',
+                            'pharmacie'    => '#2e7d32',
+                        ];
+                        foreach ($detailModifs as $dm):
+                            $tcM = $typeColorsM[$dm['type_recu']] ?? '#555';
+                        ?>
+                        <tr>
+                            <td class="ps-3">
+                                <span class="fw-bold" style="color:#bf360c;">
+                                    #<?= str_pad($dm['numero_recu'], 5, '0', STR_PAD_LEFT) ?>
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge" style="background:<?= $tcM ?>;">
+                                    <?= ucfirst($dm['type_recu']) ?>
+                                </span>
+                            </td>
+                            <td>
+                                <small class="fw-semibold"><?= h($dm['patient_nom']) ?></small>
+                                <?php if ($dm['type_patient'] !== 'normal'): ?>
+                                <br><span class="badge bg-light text-muted border" style="font-size:0.65em;">
+                                    <?= $dm['type_patient'] === 'orphelin' ? 'Orphelin' : 'Acte gratuit' ?>
+                                </span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <small class="fw-semibold">
+                                    <i class="bi bi-person-badge me-1" style="color:#bf360c;"></i>
+                                    <?= h(trim(($dm['modif_nom'] ?? '') . ' ' . ($dm['modif_prenom'] ?? ''))) ?: '<span class="text-muted">—</span>' ?>
+                                </small>
+                                <?php if (!empty($dm['modif_role'])): ?>
+                                <br><span class="text-muted" style="font-size:0.7em;"><?= h($dm['modif_role']) ?></span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <small class="fw-semibold" style="color:#e65100;">
+                                    <?= date('d/m/Y H:i', strtotime($dm['date_modif'])) ?>
+                                </small>
+                            </td>
+                            <td style="max-width:220px;">
+                                <small class="text-muted fst-italic">
+                                    <?= h($dm['motif'] ?: '—') ?>
+                                </small>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                        <tfoot>
+                            <tr class="table-light fw-bold">
+                                <td colspan="6" class="ps-3">
+                                    Total : <?= count($detailModifs) ?> modification<?= count($detailModifs) > 1 ? 's' : '' ?>
+                                    sur <?= (int)$auditModifs['nb_recus_modifies'] ?> reçu<?= $auditModifs['nb_recus_modifies'] > 1 ? 's' : '' ?>
+                                </td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+                <?php else: ?>
+                <div class="text-center py-5 text-muted">
+                    <i class="bi bi-check-circle fs-1 text-success"></i>
+                    <p class="mt-2">Aucune modification enregistrée sur cette période.</p>
+                </div>
+                <?php endif; ?>
+            </div>
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fermer</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     MODAL : Détail reçus annulés
+     ══════════════════════════════════════════════════════════════ -->
+<div class="modal fade" id="modalAnnules" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header text-white" style="background:linear-gradient(90deg,#4a148c,#6a1b9a);">
+                <h6 class="modal-title fw-bold">
+                    <i class="bi bi-trash3-fill me-2"></i>
+                    Reçus annulés —
+                    <?= date('d/m/Y', strtotime($filtreDebut)) ?> au <?= date('d/m/Y', strtotime($filtreFin)) ?>
+                    <span class="badge bg-white text-dark ms-2"><?= $nbAnnules ?></span>
+                </h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body p-0">
+                <?php if ($recusAnnules): ?>
+                <!-- Barre de récap -->
+                <div class="px-3 py-2 border-bottom d-flex gap-3 flex-wrap align-items-center"
+                     style="background:#f3e5f5;">
+                    <span class="fw-semibold" style="color:#4a148c;">
+                        <i class="bi bi-x-circle me-1"></i><?= $nbAnnules ?> annulation<?= $nbAnnules > 1 ? 's' : '' ?>
+                    </span>
+                    <span class="text-muted">|</span>
+                    <span style="color:#6a1b9a;">
+                        Montant total annulé : <strong><?= fmt($totalMontantAnnule) ?> F</strong>
+                    </span>
+                    <?php foreach ($annulesParType as $type => $nb): ?>
+                    <span class="badge bg-light text-dark border">
+                        <?= ucfirst($type) ?> : <?= $nb ?>
+                    </span>
+                    <?php endforeach; ?>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle table-sm mb-0">
+                        <thead style="position:sticky;top:0;background:#fff;z-index:1;">
+                            <tr class="table-light">
+                                <th class="ps-3">N° Reçu</th>
+                                <th>Type</th>
+                                <th>Patient</th>
+                                <th>Percepteur</th>
+                                <th>Date reçu</th>
+                                <th class="text-end">Montant encaissé</th>
+                                <th>Date annulation</th>
+                                <th>Annulé par</th>
+                                <th>Motif</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php
+                        $typeColors = [
+                            'consultation' => '#1565c0',
+                            'examen'       => '#006064',
+                            'pharmacie'    => '#2e7d32',
+                        ];
+                        foreach ($recusAnnules as $ra):
+                            $tc = $typeColors[$ra['type_recu']] ?? '#555';
+                        ?>
+                        <tr>
+                            <td class="ps-3">
+                                <span class="fw-bold" style="color:#4a148c;">
+                                    #<?= str_pad($ra['numero_recu'], 5, '0', STR_PAD_LEFT) ?>
+                                </span>
+                            </td>
+                            <td>
+                                <span class="badge" style="background:<?= $tc ?>;">
+                                    <?= ucfirst($ra['type_recu']) ?>
+                                </span>
+                            </td>
+                            <td>
+                                <small class="fw-semibold"><?= h($ra['patient_nom']) ?></small>
+                                <?php if ($ra['type_patient'] !== 'normal'): ?>
+                                <br><span class="badge bg-light text-muted border" style="font-size:0.65em;">
+                                    <?= $ra['type_patient'] === 'orphelin' ? 'Orphelin' : 'Acte gratuit' ?>
+                                </span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <small><?= h(trim(($ra['percep_nom'] ?? '') . ' ' . ($ra['percep_prenom'] ?? ''))) ?: '<span class="text-muted">—</span>' ?></small>
+                            </td>
+                            <td>
+                                <small><?= date('d/m/Y', strtotime($ra['date_recu'])) ?></small>
+                            </td>
+                            <td class="text-end">
+                                <strong style="color:<?= $tc ?>;"><?= fmt($ra['montant_annule']) ?> F</strong>
+                            </td>
+                            <td>
+                                <small class="text-danger fw-semibold">
+                                    <?= date('d/m/Y H:i', strtotime($ra['date_annulation'])) ?>
+                                </small>
+                            </td>
+                            <td>
+                                <small><?= h(trim(($ra['annuleur_nom'] ?? '') . ' ' . ($ra['annuleur_prenom'] ?? ''))) ?: '<span class="text-muted">—</span>' ?></small>
+                            </td>
+                            <td style="max-width:200px;">
+                                <small class="text-muted fst-italic">
+                                    <?= h($ra['motif'] ?: '—') ?>
+                                </small>
+                            </td>
+                        </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                        <tfoot>
+                            <tr class="table-light fw-bold">
+                                <td colspan="5" class="ps-3 text-end">Total annulé :</td>
+                                <td class="text-end" style="color:#6a1b9a;"><?= fmt($totalMontantAnnule) ?> F</td>
+                                <td colspan="3"></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+                <?php else: ?>
+                <div class="text-center py-5 text-muted">
+                    <i class="bi bi-check-circle fs-1 text-success"></i>
+                    <p class="mt-2">Aucune annulation enregistrée sur cette période.</p>
+                </div>
+                <?php endif; ?>
+            </div>
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Fermer</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <?php
-// ── JSON pour Chart.js ─────────────────────────────────────────────────────
 $jsLabelsEvo       = json_encode($labelsEvo);
 $jsDataPatientsEvo = json_encode($dataPatientsEvo);
 $jsDataRecettesEvo = json_encode($dataRecettesEvo);
+$jsDataCumulEvo    = json_encode($dataCumulEvo);
 $jsLabelsActes     = json_encode($labelsActes);
 $jsDataActes       = json_encode($dataActes);
 $jsLabelsProd      = json_encode($labelsProd);
 $jsDataProdQte     = json_encode($dataProdQte);
-$jsDataProdRev     = json_encode($dataProdRev);
 $jsLabelsType      = json_encode($labelsType);
 $jsDataType        = json_encode($dataType);
 $jsLabelsExam      = json_encode($labelsExam);
 $jsDataExam        = json_encode($dataExam);
 $jsLabelsRep       = json_encode($labelsRep);
 $jsDataRep         = json_encode($dataRep);
+$jsLabelsHeures    = json_encode($labelsHeures);
+$jsDataHeures      = json_encode($dataHeures);
+$jsLabelsJrSem     = json_encode($labelsJrSem);
+$jsDataJrSem       = json_encode($dataJrSem);
+$jsLabelsSexe      = json_encode($labelsSexe);
+$jsDataSexe        = json_encode($dataSexe);
+$jsLabelsAge       = json_encode($labelsAge);
+$jsDataAge         = json_encode($dataAge);
+
+// Carnets & fiches – données pour le graphique secteur
+$jsDataCarnetsFiches = json_encode([
+    $infoCarnetSoins['stock'],
+    $infoCarnetSante['stock'],
+    $stockFichesAg20,
+]);
+
+$jsImprimerRedevancesUrl = json_encode(url('modules/dashboard/imprimer_redevances.php'));
+$jsImprimerPharmacieUrl  = json_encode(url('modules/dashboard/imprimer_pharmacie.php'));
 
 $extraJs = <<<HEREDOC
 <script>
-// Palette couleurs
 const PALETTE = ['#1565c0','#2e7d32','#e65100','#006064','#6a1b9a','#d32f2f','#f57f17','#00695c','#37474f','#880e4f'];
+const fmtFR = v => new Intl.NumberFormat('fr-FR').format(Math.round(v));
 
-// ── 1. Évolution journalière (dual axis) ──────────────────────────────────────
 new Chart(document.getElementById('chartEvolution'), {
-    type: 'bar',
     data: {
         labels: {$jsLabelsEvo},
         datasets: [
-            {
-                type: 'line',
-                label: 'Recettes (F)',
-                data: {$jsDataRecettesEvo},
-                borderColor: '#1565c0',
-                backgroundColor: 'rgba(21,101,192,0.1)',
-                fill: true,
-                tension: 0.4,
-                yAxisID: 'yRevenu',
-                pointBackgroundColor: '#1565c0',
-                pointRadius: 4
-            },
-            {
-                type: 'bar',
-                label: 'Patients',
-                data: {$jsDataPatientsEvo},
-                backgroundColor: 'rgba(46,125,50,0.7)',
-                borderColor: '#2e7d32',
-                borderRadius: 5,
-                yAxisID: 'yPatients'
-            }
+            {type:'line',label:'Cumul recettes (F)',data:{$jsDataCumulEvo},
+             borderColor:'#7b1fa2',backgroundColor:'rgba(123,31,162,0.05)',
+             borderDash:[6,3],fill:false,tension:0.3,yAxisID:'yRevenu',pointRadius:0},
+            {type:'line',label:'Recettes du jour (F)',data:{$jsDataRecettesEvo},
+             borderColor:'#1565c0',backgroundColor:'rgba(21,101,192,0.1)',
+             fill:true,tension:0.4,yAxisID:'yRevenu',pointBackgroundColor:'#1565c0',pointRadius:3},
+            {type:'bar',label:'Patients',data:{$jsDataPatientsEvo},
+             backgroundColor:'rgba(46,125,50,0.7)',borderColor:'#2e7d32',
+             borderRadius:5,yAxisID:'yPatients'}
         ]
     },
     options: {
-        responsive: true,
-        interaction: { mode: 'index' },
-        plugins: {
-            legend: { position: 'top' },
-            tooltip: {
-                callbacks: {
-                    label: ctx => {
-                        if (ctx.dataset.yAxisID === 'yRevenu')
-                            return 'Recettes : ' + new Intl.NumberFormat('fr-FR').format(ctx.raw) + ' F';
-                        return 'Patients : ' + ctx.raw;
+        responsive:true,interaction:{mode:'index'},
+        plugins:{legend:{position:'top'},
+            tooltip:{callbacks:{label:ctx=>{
+                if(ctx.dataset.yAxisID==='yRevenu')return ctx.dataset.label+' : '+fmtFR(ctx.raw)+' F';
+                return 'Patients : '+ctx.raw;
+            }}}},
+        scales:{
+            yPatients:{type:'linear',position:'left',beginAtZero:true,ticks:{stepSize:1},title:{display:true,text:'Patients'}},
+            yRevenu:{type:'linear',position:'right',beginAtZero:true,grid:{drawOnChartArea:false},
+                     ticks:{callback:v=>fmtFR(v)+' F'},title:{display:true,text:'Recettes'}}
+        }
+    }
+});
+
+(function(){
+    const labels={$jsLabelsRep},data={$jsDataRep};
+    if(!data.length){
+        document.getElementById('chartRepartition').closest('.card-body').innerHTML='<p class="text-muted text-center py-4">Aucune donnée</p>';
+        return;
+    }
+    new Chart(document.getElementById('chartRepartition'),{
+        type:'doughnut',
+        data:{labels,datasets:[{data,backgroundColor:PALETTE.slice(0,labels.length),borderWidth:2}]},
+        options:{responsive:true,plugins:{legend:{position:'bottom'},
+            tooltip:{callbacks:{label:ctx=>ctx.label+' : '+fmtFR(ctx.raw)+' F'}}}}
+    });
+})();
+
+new Chart(document.getElementById('chartHeures'),{
+    type:'line',
+    data:{labels:{$jsLabelsHeures},datasets:[{label:'Reçus',data:{$jsDataHeures},
+        borderColor:'#0277bd',backgroundColor:'rgba(2,119,189,0.2)',fill:true,tension:0.4,pointRadius:3}]},
+    options:{responsive:true,plugins:{legend:{display:false}},
+        scales:{y:{beginAtZero:true,ticks:{stepSize:1}}}}
+});
+
+new Chart(document.getElementById('chartJrSem'),{
+    type:'bar',
+    data:{labels:{$jsLabelsJrSem},datasets:[{label:'Reçus',data:{$jsDataJrSem},
+        backgroundColor:PALETTE,borderRadius:5}]},
+    options:{responsive:true,plugins:{legend:{display:false}},
+        scales:{y:{beginAtZero:true,ticks:{stepSize:1}}}}
+});
+
+(function(){
+    const labels={$jsLabelsSexe},data={$jsDataSexe};
+    if(!data.length){
+        document.getElementById('chartSexe').closest('.card-body').innerHTML='<p class="text-muted text-center py-4">Aucune donnée</p>';
+        return;
+    }
+    new Chart(document.getElementById('chartSexe'),{
+        type:'pie',
+        data:{labels,datasets:[{data,backgroundColor:['#1565c0','#e91e63'],borderWidth:2}]},
+        options:{responsive:true,plugins:{legend:{position:'bottom'}}}
+    });
+})();
+
+new Chart(document.getElementById('chartAge'),{
+    type:'bar',
+    data:{labels:{$jsLabelsAge},datasets:[{label:'Patients',data:{$jsDataAge},
+        backgroundColor:'rgba(93,64,55,0.75)',borderColor:'#5d4037',borderRadius:5}]},
+    options:{responsive:true,plugins:{legend:{display:false}},
+        scales:{y:{beginAtZero:true,ticks:{stepSize:1}}}}
+});
+
+new Chart(document.getElementById('chartActes'),{
+    type:'bar',
+    data:{labels:{$jsLabelsActes},datasets:[{label:'Utilisations',data:{$jsDataActes},
+        backgroundColor:'rgba(230,81,0,0.75)',borderColor:'#e65100',borderRadius:5}]},
+    options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false}},
+        scales:{x:{beginAtZero:true,ticks:{stepSize:1}}}}
+});
+
+new Chart(document.getElementById('chartExamens'),{
+    type:'bar',
+    data:{labels:{$jsLabelsExam},datasets:[{label:'Prescriptions',data:{$jsDataExam},
+        backgroundColor:'rgba(0,96,100,0.75)',borderColor:'#006064',borderRadius:5}]},
+    options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false}},
+        scales:{x:{beginAtZero:true,ticks:{stepSize:1}}}}
+});
+
+new Chart(document.getElementById('chartProduits'),{
+    type:'bar',
+    data:{labels:{$jsLabelsProd},datasets:[
+        {label:'Quantité',data:{$jsDataProdQte},backgroundColor:'rgba(106,27,154,0.75)',borderColor:'#6a1b9a',borderRadius:5}
+    ]},
+    options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false}},
+        scales:{x:{beginAtZero:true}}}
+});
+
+(function(){
+    const labels={$jsLabelsType},data={$jsDataType};
+    if(!data.length){
+        document.getElementById('chartTypePatients').closest('.card-body').innerHTML='<p class="text-muted text-center py-4">Aucune donnée</p>';
+        return;
+    }
+    new Chart(document.getElementById('chartTypePatients'),{
+        type:'polarArea',
+        data:{labels,datasets:[{data,backgroundColor:PALETTE.map(c=>c+'cc'),borderWidth:1}]},
+        options:{responsive:true,plugins:{legend:{position:'bottom'}}}
+    });
+})();
+
+// ─── Graphique secteur : Carnets & Fiches ───────────────────────────────────
+(function(){
+    const cfCanvas = document.getElementById('chartCarnetsFiches');
+    if (!cfCanvas) return;
+    const cfData   = {$jsDataCarnetsFiches};
+    const cfLabels = ['Carnets de soins', 'Carnets de santé', 'Fiches AG'];
+    const cfColors = ['#1565c0', '#2e7d32', '#e65100'];
+    const total    = cfData.reduce((a, b) => a + b, 0);
+    if (total === 0) {
+        cfCanvas.closest('.card-body').innerHTML =
+            '<p class="text-muted text-center py-4">Tous les stocks sont à zéro.</p>';
+        return;
+    }
+    new Chart(cfCanvas, {
+        type: 'doughnut',
+        data: {
+            labels: cfLabels,
+            datasets: [{
+                data: cfData,
+                backgroundColor: cfColors,
+                borderColor: '#fff',
+                borderWidth: 3,
+                hoverOffset: 8,
+            }]
+        },
+        options: {
+            responsive: true,
+            cutout: '55%',
+            plugins: {
+                legend: { position: 'bottom', labels: { padding: 14, font: { size: 12 } } },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => {
+                            const pct = total > 0
+                                ? Math.round((ctx.parsed / total) * 100)
+                                : 0;
+                            return ' ' + ctx.label + ' : ' + ctx.parsed + ' (' + pct + '%)';
+                        }
                     }
                 }
             }
-        },
-        scales: {
-            yPatients: { type:'linear', position:'left',  beginAtZero:true, ticks:{stepSize:1}, title:{display:true,text:'Patients'} },
-            yRevenu:   { type:'linear', position:'right', beginAtZero:true, grid:{drawOnChartArea:false},
-                         ticks:{callback:v=>new Intl.NumberFormat('fr-FR').format(v)+' F'}, title:{display:true,text:'Recettes'} }
-        }
-    }
-});
-
-// ── 2. Répartition revenus par pôle ──────────────────────────────────────────
-(function(){
-    const labels = {$jsLabelsRep};
-    const data   = {$jsDataRep};
-    if (!data.length) {
-        document.getElementById('chartRepartition').closest('.card-body').innerHTML =
-            '<p class="text-muted text-center py-4">Aucune donnée sur la période.</p>';
-        return;
-    }
-    new Chart(document.getElementById('chartRepartition'), {
-        type: 'doughnut',
-        data: { labels, datasets: [{ data, backgroundColor: PALETTE.slice(0,labels.length), borderWidth:2 }] },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: { position:'bottom' },
-                tooltip: { callbacks: { label: ctx => ctx.label+' : '+new Intl.NumberFormat('fr-FR').format(ctx.raw)+' F' } }
-            }
         }
     });
 })();
 
-// ── 3. Top Actes (horizontal bar) ─────────────────────────────────────────────
-new Chart(document.getElementById('chartActes'), {
-    type: 'bar',
-    data: {
-        labels: {$jsLabelsActes},
-        datasets: [{ label:'Utilisations', data:{$jsDataActes}, backgroundColor:'rgba(230,81,0,0.75)', borderColor:'#e65100', borderRadius:5, borderWidth:1 }]
-    },
-    options: {
-        indexAxis: 'y',
-        responsive: true,
-        plugins: { legend:{display:false} },
-        scales: { x:{ beginAtZero:true, ticks:{stepSize:1} } }
-    }
-});
+// ─── Redevances : modal + lancement impression ──────────────────────────────
+function ouvrirModalModifs() {
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalModifs'));
+    modal.show();
+}
 
-// ── 4. Top Examens (horizontal bar) ──────────────────────────────────────────
-new Chart(document.getElementById('chartExamens'), {
-    type: 'bar',
-    data: {
-        labels: {$jsLabelsExam},
-        datasets: [{ label:'Prescriptions', data:{$jsDataExam}, backgroundColor:'rgba(0,96,100,0.75)', borderColor:'#006064', borderRadius:5, borderWidth:1 }]
-    },
-    options: {
-        indexAxis: 'y',
-        responsive: true,
-        plugins: { legend:{display:false} },
-        scales: { x:{ beginAtZero:true, ticks:{stepSize:1} } }
-    }
-});
+function ouvrirModalAnnules() {
+    const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('modalAnnules'));
+    modal.show();
+}
 
-// ── 5. Top Produits (horizontal bar) ─────────────────────────────────────────
-new Chart(document.getElementById('chartProduits'), {
-    type: 'bar',
-    data: {
-        labels: {$jsLabelsProd},
-        datasets: [
-            { label:'Quantité vendue', data:{$jsDataProdQte}, backgroundColor:'rgba(106,27,154,0.75)', borderColor:'#6a1b9a', borderRadius:5, yAxisID:'y' }
-        ]
-    },
-    options: {
-        indexAxis: 'y',
-        responsive: true,
-        plugins: { legend:{display:false} },
-        scales: { y:{ beginAtZero:true } }
-    }
-});
+function ouvrirModalRedevances() {
+    const modal = new bootstrap.Modal(document.getElementById('modalImprimerRedevances'));
+    modal.show();
+}
 
-// ── 6. Types de patients (polar area) ────────────────────────────────────────
-(function(){
-    const labels = {$jsLabelsType};
-    const data   = {$jsDataType};
-    if (!data.length) {
-        document.getElementById('chartTypePatients').closest('.card-body').innerHTML =
-            '<p class="text-muted text-center py-4">Aucune donnée.</p>';
+function lancerImpressionRedevances() {
+    const deb = document.getElementById('redevDateDebut').value;
+    const fin = document.getElementById('redevDateFin').value;
+    if (!deb || !fin) {
+        alert('Veuillez renseigner les deux dates.');
         return;
     }
-    new Chart(document.getElementById('chartTypePatients'), {
-        type: 'polarArea',
-        data: { labels, datasets: [{ data, backgroundColor: PALETTE.map(c=>c+'cc'), borderWidth:1 }] },
-        options: {
-            responsive: true,
-            plugins: { legend: { position:'bottom' } }
-        }
-    });
-})();
+    if (deb > fin) {
+        alert('La date de début doit être antérieure ou égale à la date de fin.');
+        return;
+    }
+    // Fermer la modal puis ouvrir le PDF dans un nouvel onglet
+    bootstrap.Modal.getInstance(document.getElementById('modalImprimerRedevances')).hide();
+    const base = {$jsImprimerRedevancesUrl};
+    window.open(base + '?date_debut=' + encodeURIComponent(deb) + '&date_fin=' + encodeURIComponent(fin), '_blank');
+}
+
+function ouvrirModalPharmacie() {
+    const modal = new bootstrap.Modal(document.getElementById('modalImprimerPharmacie'));
+    modal.show();
+}
+
+function lancerImpressionPharmacie() {
+    const deb = document.getElementById('pharmaDateDebut').value;
+    const fin = document.getElementById('pharmaDateFin').value;
+    if (!deb || !fin) {
+        alert('Veuillez renseigner les deux dates.');
+        return;
+    }
+    if (deb > fin) {
+        alert('La date de début doit être antérieure ou égale à la date de fin.');
+        return;
+    }
+    bootstrap.Modal.getInstance(document.getElementById('modalImprimerPharmacie')).hide();
+    const urlPharma = {$jsImprimerPharmacieUrl};
+    window.open(urlPharma + '?date_debut=' + encodeURIComponent(deb) + '&date_fin=' + encodeURIComponent(fin), '_blank');
+}
 </script>
 HEREDOC;
 
 include ROOT_PATH . '/templates/layouts/footer.php';
 ?>
+

@@ -4,14 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <?= csrfMeta() ?>
+
+
     <title><?= h($pageTitle ?? 'Système CSI') ?> – CSI Direct Aid Maradi</title>
 
-    <!-- Bootstrap 5 -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Bootstrap Icons -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
-    <!-- DataTables -->
-    <link href="https://cdn.datatables.net/1.13.8/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+    <!-- Bootstrap 5 (local) -->
+    <link href="<?= asset('bootstrap/css/bootstrap.min.css') ?>" rel="stylesheet">
+    <!-- Bootstrap Icons (local) -->
+    <link href="<?= asset('assets/vendor/bootstrap-icons/font/bootstrap-icons.css') ?>" rel="stylesheet">
+    <!-- DataTables (local) -->
+    <link href="<?= asset('assets/vendor/datatables/css/dataTables.bootstrap5.min.css') ?>" rel="stylesheet">
     <!-- CSS personnalisé -->
     <link href="<?= asset('assets/css/main.css') ?>" rel="stylesheet">
     <?php if (isset($extraCss)) echo $extraCss; ?>
@@ -50,7 +52,7 @@
         <div class="collapse navbar-collapse" id="navMain">
             <!-- Nav gauche -->
             <ul class="navbar-nav me-auto mb-2 mb-lg-0">
-                <?php if (Session::hasRole('admin')): ?>
+                <?php if (Session::hasRole('admin', 'comptable', 'major')): ?>
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle <?= in_array($page, ['dashboard','analytics']) ? 'active' : '' ?>"
                        href="#" data-bs-toggle="dropdown">
@@ -61,18 +63,24 @@
                                href="<?= url('index.php?page=dashboard') ?>">
                             <i class="bi bi-house-door me-2"></i>Vue principale
                         </a></li>
+                        <?php if (Session::hasRole('admin', 'comptable', 'major')): ?>
                         <li><a class="dropdown-item <?= $page==='analytics' ? 'active' : '' ?>"
                                href="<?= url('index.php?page=analytics') ?>">
                             <i class="bi bi-graph-up-arrow me-2"></i>Analytique avancée
                         </a></li>
+                        <?php endif; ?>
                     </ul>
                 </li>
                 <?php endif; ?>
 
-                <?php if (Session::hasRole('percepteur')): ?>
+                <?php /* Espace Percepteur : accessible au percepteur, admin et major (supervision) */ ?>
+                <?php if (Session::hasRole('admin', 'percepteur', 'major')): ?>
                 <li class="nav-item">
                     <a class="nav-link <?= ($page === 'percepteur') ? 'active' : '' ?>" href="<?= url('index.php?page=percepteur') ?>">
                         <i class="bi bi-person-badge"></i> Espace Percepteur
+                        <?php if (Session::hasRole('admin')): ?>
+                            <span class="badge bg-light text-dark ms-1" title="Accès administrateur">admin</span>
+                        <?php endif; ?>
                     </a>
                 </li>
                 <?php endif; ?>
@@ -84,7 +92,34 @@
                     </a>
                 </li>
 
-                <?php if (Session::hasRole('admin', 'comptable')): ?>
+                <!-- ── Règlements DirectAid AMA (admin + comptable) ── -->
+                <?php if (Session::hasRole('admin', 'comptable', 'major')): ?>
+                <li class="nav-item">
+                    <a class="nav-link position-relative <?= ($page === 'reglements') ? 'active' : '' ?>"
+                       href="<?= url('index.php?page=reglements') ?>">
+                        <i class="bi bi-cash-stack"></i> Règlements Orphelins
+                        <?php
+                        // Badge avec le nombre d'orphelins en instance
+                        try {
+                            $pdoNav = Database::getInstance();
+                            $nbInstance = (int)$pdoNav->query("
+                                SELECT COUNT(DISTINCT patient_id) 
+                                FROM recus 
+                                WHERE isDeleted = 0 
+                                  AND type_patient = 'orphelin' 
+                                  AND statut_reglement = 'en_instance'
+                            ")->fetchColumn();
+                            if ($nbInstance > 0):
+                        ?>
+                            <span class="badge rounded-pill bg-warning text-dark ms-1" title="<?= $nbInstance ?> orphelin(s) en instance">
+                                <?= $nbInstance ?>
+                            </span>
+                        <?php endif; } catch (Exception $e) {} ?>
+                    </a>
+                </li>
+                <?php endif; ?>
+
+                <?php if (Session::hasRole('admin', 'comptable', 'major')): ?>
                 <li class="nav-item dropdown">
                     <a class="nav-link dropdown-toggle <?= in_array($page, ['parametrage']) ? 'active' : '' ?>" 
                        href="#" data-bs-toggle="dropdown">
@@ -98,6 +133,9 @@
                         <li><a class="dropdown-item" href="<?= url('index.php?page=parametrage&section=config') ?>"><i class="bi bi-building me-2"></i>Config. centre</a></li>
                         <li><a class="dropdown-item" href="<?= url('index.php?page=parametrage&section=inventaire') ?>"><i class="bi bi-clipboard-check me-2"></i>Inventaire</a></li>
                         <li><a class="dropdown-item" href="<?= url('index.php?page=parametrage&section=etat_labo') ?>"><i class="bi bi-file-earmark-pdf me-2"></i>État de paie labo</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item" href="<?= url('index.php?page=parametrage&section=carnets') ?>"><i class="bi bi-journal-medical me-2"></i>Carnets de soins</a></li>
+                        <li><a class="dropdown-item" href="<?= url('index.php?page=parametrage&section=fiches_ag') ?>"><i class="bi bi-file-medical me-2"></i>Fiches Actes Gratuits</a></li>
                     </ul>
                 </li>
                 <?php endif; ?>
@@ -113,10 +151,11 @@
 
             <!-- Nav droite : infos utilisateur -->
             <ul class="navbar-nav align-items-center gap-2">
+
                 <?php
                 $role = Session::getRole();
-                $badgeColor = match($role) { 'admin' => 'danger', 'comptable' => 'warning', default => 'info' };
-                $roleLabel  = match($role) { 'admin' => 'Administrateur', 'comptable' => 'Comptable', default => 'Percepteur' };
+                $badgeColor = match($role) { 'admin' => 'danger', 'comptable' => 'warning', 'major' => 'primary', default => 'info' };
+                $roleLabel  = match($role) { 'admin' => 'Administrateur', 'comptable' => 'Comptable', 'major' => 'Major', default => 'Percepteur' };
                 ?>
                 <li class="nav-item">
                     <span class="badge bg-<?= $badgeColor ?> px-3 py-2">
@@ -124,6 +163,7 @@
                         <?= h(Session::get('user_nom', 'Inconnu')) ?> · <?= $roleLabel ?>
                     </span>
                 </li>
+
                 <li class="nav-item">
                     <a class="btn btn-outline-light btn-sm" href="<?= url('index.php?page=logout') ?>">
                         <i class="bi bi-box-arrow-right"></i> Déconnexion

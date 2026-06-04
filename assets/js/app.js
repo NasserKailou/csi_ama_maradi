@@ -4,6 +4,7 @@
  */
 
 // ─── CSRF token pour toutes les requêtes AJAX ────────────────────────────────
+// Lecture différée via fonction pour éviter la valeur vide au chargement
 const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]')?.content || '';
 
 $.ajaxSetup({
@@ -72,8 +73,9 @@ function hideLoader() {
 // ─── DataTables initialisation globale ────────────────────────────────────────
 $(document).ready(function () {
     // URL locale pour éviter le blocage CORS du CDN DataTables
-    const dtLangUrl = (typeof APP_BASE_URL !== 'undefined' ? APP_BASE_URL : '')
-                      + '/assets/i18n/fr-FR.json';
+    // APP_BASE_URL peut se terminer par "/" : on normalise pour éviter les doubles slashes
+    const _base = (typeof APP_BASE_URL !== 'undefined' ? APP_BASE_URL.replace(/\/+$/, '') : '');
+    const dtLangUrl = _base + '/assets/i18n/fr-FR.json';
     $('[data-datatable]').each(function () {
         $(this).DataTable({
             language: { url: dtLangUrl },
@@ -177,37 +179,63 @@ function formatMontant(n) {
     return new Intl.NumberFormat('fr-FR').format(n) + ' F';
 }
 
+// ─── Helper : lire le token CSRF depuis la meta tag ──────────────────────────
+function getCsrfToken() {
+    return document.querySelector('meta[name="csrf-token"]')?.content || '';
+}
+
+// ─── Helper : extraire du JSON même si du HTML précède (PHP warnings) ────────
+function parseJsonSafe(text) {
+    if (!text) return null;
+    // Chercher le début du premier objet/tableau JSON
+    const start = text.indexOf('{');
+    const startArr = text.indexOf('[');
+    let pos = -1;
+    if (start !== -1 && (startArr === -1 || start < startArr)) pos = start;
+    else if (startArr !== -1) pos = startArr;
+    if (pos === -1) return null;
+    try { return JSON.parse(text.substring(pos)); } catch(e) { return null; }
+}
+
 // ─── Submit AJAX générique ────────────────────────────────────────────────────
 function ajaxPost(url, data, onSuccess) {
+    const token = getCsrfToken();
     showLoader();
     $.ajax({
         url:      url,
         type:     'POST',
-        data:     Object.assign({}, data, { csrf_token: CSRF_TOKEN }),
-        dataType: 'json',          // forcer le parsing JSON
-        headers:  { 'X-CSRF-TOKEN': CSRF_TOKEN }
+        data:     Object.assign({}, data, { csrf_token: token }),
+        dataType: 'text',           // on gère le parsing manuellement
+        headers:  { 'X-CSRF-TOKEN': token }
     })
-    .done(res => {
+    .done(function(text, status, xhr) {
         hideLoader();
-        if (res && res.success) {
+        // Tenter le parsing JSON même si du HTML PHP précède la réponse
+        const res = parseJsonSafe(text);
+        if (!res) {
+            showToast('danger', 'Réponse serveur invalide. Vérifiez les logs PHP.');
+            console.error('Réponse brute :', text.substring(0, 500));
+            return;
+        }
+        if (res.success) {
             showToast('success', res.message || 'Opération réussie');
             if (typeof onSuccess === 'function') onSuccess(res);
         } else {
-            showToast('danger', (res && res.message) || 'Une erreur est survenue');
+            showToast('danger', res.message || 'Une erreur est survenue');
         }
     })
     .fail(function(xhr) {
         hideLoader();
         let msg = 'Erreur de connexion';
-        try {
-            const r = JSON.parse(xhr.responseText);
-            if (r && r.message) msg = r.message;
-        } catch(e) {
-            // réponse non-JSON (ex: page HTML d'erreur)
-            if (xhr.status === 403) msg = 'Session expirée – veuillez vous reconnecter.';
+        const res = parseJsonSafe(xhr.responseText || '');
+        if (res && res.message) {
+            msg = res.message;
+        } else {
+            if (xhr.status === 403) msg = 'Accès refusé (403) – token CSRF invalide ou session expirée.';
             else if (xhr.status === 0)  msg = 'Impossible de joindre le serveur.';
             else msg = 'Erreur serveur (' + xhr.status + ')';
         }
         showToast('danger', msg);
+        console.error('ajaxPost fail', xhr.status, xhr.responseText?.substring(0, 300));
     });
 }
