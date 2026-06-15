@@ -23,7 +23,7 @@ if (file_exists($envFile)) {
 define('APP_NAME',    $_ENV['APP_NAME']    ?? 'Système CSI');
 define('APP_VERSION', '1.0');
 define('APP_ENV',     $_ENV['APP_ENV']     ?? 'development');
-define('APP_URL',     rtrim($_ENV['APP_URL'] ?? 'http://localhost:8182/csi_ama_maradi', '/'));
+define('APP_URL',     rtrim($_ENV['APP_URL'] ?? 'http://localhost:8085/csi_ama_maradi', '/'));
 
 // ── Sous-répertoire web (détection automatique) ───────────────────────────────
 // Ex : http://localhost/csi_ama_maradi → APP_SUBDIR = /csi_ama_maradi
@@ -35,7 +35,7 @@ define('APP_SUBDIR', $_appPath);   // ex: "/csi_ama_maradi"  ou ""
 // ── Base de données ────────────────────────────────────────────────────────────
 define('DB_HOST',    $_ENV['DB_HOST']    ?? '127.0.0.1');
 define('DB_PORT',    $_ENV['DB_PORT']    ?? '3306');
-define('DB_NAME',    $_ENV['DB_NAME']    ?? 'csi_ama');
+define('DB_NAME',    $_ENV['DB_NAME']    ?? 'directaid');
 define('DB_USER',    $_ENV['DB_USER']    ?? 'root');
 define('DB_PASS',    $_ENV['DB_PASS']    ?? '');
 define('DB_CHARSET', 'utf8mb4');

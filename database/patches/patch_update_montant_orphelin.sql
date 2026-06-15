@@ -1,0 +1,1 @@
+UPDATE `recus` SET `montant_total`=0,`montant_encaisse`=0 WHERE  `type_recu` ='consultation' and type_patient = 'orphelin';

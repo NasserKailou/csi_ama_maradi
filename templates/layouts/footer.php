@@ -1,6 +1,5 @@
 </main>
 
-<!-- ── Footer ───────────────────────────────────────────────────────────────── -->
 <footer class="footer bg-light border-top py-2 mt-4">
     <div class="container-fluid px-4">
         <div class="d-flex justify-content-between align-items-center small text-muted">
@@ -10,12 +9,21 @@
     </div>
 </footer>
 
-<!-- Scripts – ordre obligatoire : jQuery → Bootstrap → DataTables → app.js -->
-<script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
-<script src="https://cdn.datatables.net/1.13.8/js/dataTables.bootstrap5.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+<!-- Scripts locaux : jQuery → Bootstrap → DataTables → Chart.js → app.js -->
+<script src="<?= asset('assets/vendor/jquery/jquery.min.js') ?>"></script>
+<script src="<?= asset('bootstrap/js/bootstrap.bundle.min.js') ?>"></script>
+
+<!-- Vérification visuelle : si Bootstrap n'est pas chargé, fallback CDN -->
+<script>
+if (typeof bootstrap === 'undefined') {
+    console.warn('Bootstrap local non chargé, fallback CDN');
+    document.write('<scr' + 'ipt src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"><\/scr' + 'ipt>');
+}
+</script>
+
+<script src="<?= asset('assets/vendor/datatables/js/jquery.dataTables.min.js') ?>"></script>
+<script src="<?= asset('assets/vendor/datatables/js/dataTables.bootstrap5.min.js') ?>"></script>
+<script src="<?= asset('assets/vendor/chartjs/chart.umd.min.js') ?>"></script>
 <script src="<?= asset('assets/js/app.js') ?>"></script>
 <?php if (isset($extraJs)) echo $extraJs; ?>
 

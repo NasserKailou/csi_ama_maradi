@@ -3,12 +3,12 @@
  * Module Paramétrage – Admin & Comptable
  * Sections : actes, examens, pharmacie, config, inventaire, etat_labo
  */
-requireRole('admin', 'comptable');
+requireRole('admin', 'comptable', 'major');
 
 $pdo     = Database::getInstance();
 $userId  = Session::getUserId();
 $section = $_GET['section'] ?? 'actes';
-$allowed = ['actes','examens','pharmacie','config','inventaire','etat_labo'];
+$allowed = ['actes','examens','pharmacie','config','inventaire','etat_labo','carnets','fiches_ag'];
 if (!in_array($section, $allowed)) $section = 'actes';
 
 // ── Actions POST ──────────────────────────────────────────────────────────────
@@ -112,12 +112,224 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $com   = trim($_POST['commentaire'] ?? '');
                 if (!$pid) jsonError('Produit invalide.');
                 $pdo->beginTransaction();
+                // Stock avant
+                $stBefore = (int)$pdo->query("SELECT stock_actuel FROM produits_pharmacie WHERE id={$pid}")->fetchColumn();
                 $pdo->prepare("INSERT INTO approvisionnements_pharmacie (produit_id, quantite, date_appro, commentaire, whodone) VALUES (:p,:q,:d,:c,:w)")
                     ->execute([':p'=>$pid,':q'=>$qty,':d'=>$date,':c'=>$com,':w'=>$userId]);
                 $pdo->prepare("UPDATE produits_pharmacie SET stock_actuel = stock_actuel + :qty WHERE id = :id")
                     ->execute([':qty'=>$qty, ':id'=>$pid]);
+                // Enregistrer mouvement si table existe
+                try {
+                    $pdo->prepare("INSERT INTO mouvements_stock_pharmacie
+                        (produit_id, type_mvt, quantite, stock_avant, stock_apres, commentaire, whodone)
+                        VALUES (:p,'entree',:q,:sb,:sa,:c,:w)")
+                        ->execute([':p'=>$pid,':q'=>$qty,':sb'=>$stBefore,':sa'=>$stBefore+$qty,':c'=>$com,':w'=>$userId]);
+                } catch (Exception $ignored) {}
                 $pdo->commit();
                 jsonSuccess('Stock approvisionné (+' . $qty . ' unités).');
+                break;
+
+            case 'diminuer_stock':
+                // Correction/diminution manuelle stock
+                $pid = (int)($_POST['produit_id'] ?? 0);
+                $qty = max(1, (int)($_POST['quantite'] ?? 0));
+                $com = trim($_POST['commentaire'] ?? 'Correction manuelle stock');
+                if (!$pid) jsonError('Produit invalide.');
+                $stBefore = (int)$pdo->query("SELECT stock_actuel FROM produits_pharmacie WHERE id={$pid}")->fetchColumn();
+                if ($qty > $stBefore) jsonError("Impossible : stock actuel = {$stBefore}, quantité à retirer = {$qty}.");
+                $pdo->beginTransaction();
+                $pdo->prepare("UPDATE produits_pharmacie SET stock_actuel = stock_actuel - :qty, whodone=:w WHERE id=:id")
+                    ->execute([':qty'=>$qty, ':w'=>$userId, ':id'=>$pid]);
+                try {
+                    $pdo->prepare("INSERT INTO mouvements_stock_pharmacie
+                        (produit_id, type_mvt, quantite, stock_avant, stock_apres, commentaire, whodone)
+                        VALUES (:p,'correction',:q,:sb,:sa,:c,:w)")
+                        ->execute([':p'=>$pid,':q'=>-$qty,':sb'=>$stBefore,':sa'=>$stBefore-$qty,':c'=>$com,':w'=>$userId]);
+                } catch (Exception $ignored) {}
+                $pdo->commit();
+                jsonSuccess('Stock diminué de ' . $qty . ' unités. Nouveau stock : ' . ($stBefore - $qty) . '.');
+                break;
+
+            case 'get_historique_stock':
+                // Retourne l'historique des mouvements d'un produit
+                $pid = (int)($_POST['produit_id'] ?? 0);
+                if (!$pid) jsonError('Produit invalide.');
+                header('Content-Type: application/json');
+                try {
+                    $rows = $pdo->prepare("
+                        SELECT m.type_mvt, m.quantite, m.stock_avant, m.stock_apres,
+                               m.commentaire, m.whendone,
+                               u.nom AS user_nom, u.prenom AS user_prenom
+                        FROM mouvements_stock_pharmacie m
+                        LEFT JOIN utilisateurs u ON u.id = m.whodone
+                        WHERE m.produit_id = :pid AND m.isDeleted=0
+                        ORDER BY m.whendone DESC
+                        LIMIT 50
+                    ");
+                    $rows->execute([':pid'=>$pid]);
+                    echo json_encode(['success'=>true,'data'=>$rows->fetchAll()]);
+                } catch (Exception $e) {
+                    echo json_encode(['success'=>false,'message'=>'Table mouvements_stock_pharmacie non trouvée. Exécutez la migration 002.']);
+                }
+                exit;
+
+            case 'save_stock_carnets':
+                // Initialisation / rechargement du stock carnets
+                $qtyAdd    = max(0, (int)($_POST['quantite'] ?? 0));
+                $seuilAlrt = max(0, (int)($_POST['seuil_alerte'] ?? 10));
+                $commentaireCarnet = trim($_POST['commentaire_carnet'] ?? 'Réapprovisionnement carnets');
+                if ($commentaireCarnet === '') $commentaireCarnet = 'Réapprovisionnement carnets';
+                $pdo->beginTransaction();
+                // Stock actuel
+                $stCarnets = (int)$pdo->query("SELECT valeur FROM config_systeme WHERE cle='stock_carnets'")->fetchColumn();
+                $newStock  = $stCarnets + $qtyAdd;
+                $pdo->prepare("INSERT INTO config_systeme (cle, valeur, whodone) VALUES ('stock_carnets',:v1,:w1)
+                               ON DUPLICATE KEY UPDATE valeur=:v2, whodone=:w2")
+                    ->execute([':v1'=>$newStock,':w1'=>$userId,':v2'=>$newStock,':w2'=>$userId]);
+                $pdo->prepare("INSERT INTO config_systeme (cle, valeur, whodone) VALUES ('seuil_alerte_carnets',:v1,:w1)
+                               ON DUPLICATE KEY UPDATE valeur=:v2, whodone=:w2")
+                    ->execute([':v1'=>$seuilAlrt,':w1'=>$userId,':v2'=>$seuilAlrt,':w2'=>$userId]);
+                // Enregistrer mouvement carnet (uniquement si on ajoute des carnets)
+                if ($qtyAdd > 0) {
+                    try {
+                        $pdo->prepare("INSERT INTO mouvements_carnets
+                            (type_mvt, quantite, stock_avant, stock_apres, commentaire, whodone)
+                            VALUES ('initialisation',:q,:sb,:sa,:c,:w)")
+                            ->execute([':q'=>$qtyAdd,':sb'=>$stCarnets,':sa'=>$newStock,':c'=>$commentaireCarnet,':w'=>$userId]);
+                    } catch (Exception $ignored) {}
+                }
+                $pdo->commit();
+                jsonSuccess('Stock carnets mis à jour. Stock actuel : ' . $newStock . ' carnets.');
+                break;
+
+            case 'edit_mouvement_carnet':
+                // Modifier le commentaire et/ou la quantité d'un mouvement d'ajout (type initialisation)
+                requireRole('admin');
+                $mvtId      = (int)($_POST['mvt_id']    ?? 0);
+                $newQty     = (int)($_POST['quantite']   ?? 0);
+                $newComment = trim($_POST['commentaire'] ?? '');
+                if (!$mvtId) jsonError('ID mouvement manquant.');
+                if ($newQty <= 0) jsonError('La quantité doit être > 0.');
+                // Récupérer le mouvement existant
+                $mvt = $pdo->prepare("SELECT * FROM mouvements_carnets WHERE id=:id LIMIT 1");
+                $mvt->execute([':id'=>$mvtId]);
+                $mvtRow = $mvt->fetch();
+                if (!$mvtRow) jsonError('Mouvement introuvable.');
+                if ($mvtRow['type_mvt'] !== 'initialisation') jsonError('Seuls les ajouts peuvent être modifiés.');
+                // Recalcul : diff de quantité pour ajuster le stock
+                $diffQty  = $newQty - (int)$mvtRow['quantite'];
+                $pdo->beginTransaction();
+                $pdo->prepare("UPDATE mouvements_carnets SET quantite=:q, stock_apres=stock_avant+:q2, commentaire=:c WHERE id=:id")
+                    ->execute([':q'=>$newQty, ':q2'=>$newQty, ':c'=>($newComment ?: $mvtRow['commentaire']), ':id'=>$mvtId]);
+                // Mettre à jour le stock actuel en appliquant la différence
+                if ($diffQty !== 0) {
+                    $curStock = (int)$pdo->query("SELECT valeur FROM config_systeme WHERE cle='stock_carnets'")->fetchColumn();
+                    $adjStock = max(0, $curStock + $diffQty);
+                    $pdo->prepare("INSERT INTO config_systeme (cle,valeur,whodone) VALUES ('stock_carnets',:v,:w)
+                                   ON DUPLICATE KEY UPDATE valeur=:v2,whodone=:w2")
+                        ->execute([':v'=>$adjStock,':w'=>$userId,':v2'=>$adjStock,':w2'=>$userId]);
+                }
+                $pdo->commit();
+                jsonSuccess('Mouvement modifié.');
+                break;
+
+            case 'delete_mouvement_carnet':
+                // Supprimer un mouvement d'ajout et soustraire la quantité du stock actuel
+                requireRole('admin');
+                $mvtId = (int)($_POST['mvt_id'] ?? 0);
+                if (!$mvtId) jsonError('ID mouvement manquant.');
+                $mvt = $pdo->prepare("SELECT * FROM mouvements_carnets WHERE id=:id LIMIT 1");
+                $mvt->execute([':id'=>$mvtId]);
+                $mvtRow = $mvt->fetch();
+                if (!$mvtRow) jsonError('Mouvement introuvable.');
+                if ($mvtRow['type_mvt'] !== 'initialisation') jsonError('Seuls les ajouts peuvent être supprimés.');
+                $pdo->beginTransaction();
+                $pdo->prepare("DELETE FROM mouvements_carnets WHERE id=:id")->execute([':id'=>$mvtId]);
+                // Soustraire la quantité du stock
+                $curStock = (int)$pdo->query("SELECT valeur FROM config_systeme WHERE cle='stock_carnets'")->fetchColumn();
+                $adjStock = max(0, $curStock - (int)$mvtRow['quantite']);
+                $pdo->prepare("INSERT INTO config_systeme (cle,valeur,whodone) VALUES ('stock_carnets',:v,:w)
+                               ON DUPLICATE KEY UPDATE valeur=:v2,whodone=:w2")
+                    ->execute([':v'=>$adjStock,':w'=>$userId,':v2'=>$adjStock,':w2'=>$userId]);
+                $pdo->commit();
+                jsonSuccess('Mouvement supprimé. Stock ajusté à ' . $adjStock . ' carnets.');
+                break;
+
+            // ── Fiches Actes Gratuits — stock ──────────────────────────────
+            case 'save_stock_fiches_ag':
+                $qtyAjout   = (int)($_POST['quantite']      ?? 0);
+                $newSeuil   = max(0, (int)($_POST['seuil_alerte'] ?? 10));
+                $commentFag = trim($_POST['commentaire_fiche_ag'] ?? '');
+                if ($qtyAjout < 0) jsonError('La quantité ne peut pas être négative.');
+                $pdo->beginTransaction();
+                // Mettre à jour le seuil d'alerte
+                $pdo->prepare("INSERT INTO config_systeme (cle,valeur,whodone) VALUES ('seuil_alerte_fiches_ag',:v,:w)
+                               ON DUPLICATE KEY UPDATE valeur=:v2,whodone=:w2")
+                    ->execute([':v'=>$newSeuil,':w'=>$userId,':v2'=>$newSeuil,':w2'=>$userId]);
+                if ($qtyAjout > 0) {
+                    // Lire le stock actuel
+                    $curFag = (int)$pdo->query("SELECT valeur FROM config_systeme WHERE cle='stock_fiches_ag'")->fetchColumn();
+                    $newFag = $curFag + $qtyAjout;
+                    // Enregistrer le mouvement
+                    $pdo->prepare("INSERT INTO mouvements_fiches_ag (type_mvt,quantite,stock_avant,stock_apres,commentaire,whodone)
+                                   VALUES ('initialisation',:qty,:avant,:apres,:cmt,:w)")
+                        ->execute([':qty'=>$qtyAjout,':avant'=>$curFag,':apres'=>$newFag,':cmt'=>$commentFag,':w'=>$userId]);
+                    // Mettre à jour le stock
+                    $pdo->prepare("INSERT INTO config_systeme (cle,valeur,whodone) VALUES ('stock_fiches_ag',:v,:w)
+                                   ON DUPLICATE KEY UPDATE valeur=:v2,whodone=:w2")
+                        ->execute([':v'=>$newFag,':w'=>$userId,':v2'=>$newFag,':w2'=>$userId]);
+                } else {
+                    $newFag = (int)$pdo->query("SELECT valeur FROM config_systeme WHERE cle='stock_fiches_ag'")->fetchColumn();
+                }
+                $pdo->commit();
+                jsonSuccess('Stock fiches AG mis à jour. Stock actuel : ' . $newFag . ' fiches.');
+                break;
+
+            case 'edit_mouvement_fiche_ag':
+                requireRole('admin');
+                $mvtId      = (int)($_POST['mvt_id']    ?? 0);
+                $newQty     = (int)($_POST['quantite']   ?? 0);
+                $newComment = trim($_POST['commentaire'] ?? '');
+                if (!$mvtId) jsonError('ID mouvement manquant.');
+                if ($newQty <= 0) jsonError('La quantité doit être > 0.');
+                $mvt = $pdo->prepare("SELECT * FROM mouvements_fiches_ag WHERE id=:id LIMIT 1");
+                $mvt->execute([':id'=>$mvtId]);
+                $mvtRow = $mvt->fetch();
+                if (!$mvtRow) jsonError('Mouvement introuvable.');
+                if ($mvtRow['type_mvt'] !== 'initialisation') jsonError('Seuls les ajouts peuvent être modifiés.');
+                $diffQty = $newQty - (int)$mvtRow['quantite'];
+                $pdo->beginTransaction();
+                $pdo->prepare("UPDATE mouvements_fiches_ag SET quantite=:q, stock_apres=stock_avant+:q2, commentaire=:c WHERE id=:id")
+                    ->execute([':q'=>$newQty, ':q2'=>$newQty, ':c'=>($newComment ?: $mvtRow['commentaire']), ':id'=>$mvtId]);
+                if ($diffQty !== 0) {
+                    $curFag = (int)$pdo->query("SELECT valeur FROM config_systeme WHERE cle='stock_fiches_ag'")->fetchColumn();
+                    $adjFag = max(0, $curFag + $diffQty);
+                    $pdo->prepare("INSERT INTO config_systeme (cle,valeur,whodone) VALUES ('stock_fiches_ag',:v,:w)
+                                   ON DUPLICATE KEY UPDATE valeur=:v2,whodone=:w2")
+                        ->execute([':v'=>$adjFag,':w'=>$userId,':v2'=>$adjFag,':w2'=>$userId]);
+                }
+                $pdo->commit();
+                jsonSuccess('Mouvement modifié.');
+                break;
+
+            case 'delete_mouvement_fiche_ag':
+                requireRole('admin');
+                $mvtId = (int)($_POST['mvt_id'] ?? 0);
+                if (!$mvtId) jsonError('ID mouvement manquant.');
+                $mvt = $pdo->prepare("SELECT * FROM mouvements_fiches_ag WHERE id=:id LIMIT 1");
+                $mvt->execute([':id'=>$mvtId]);
+                $mvtRow = $mvt->fetch();
+                if (!$mvtRow) jsonError('Mouvement introuvable.');
+                if ($mvtRow['type_mvt'] !== 'initialisation') jsonError('Seuls les ajouts peuvent être supprimés.');
+                $pdo->beginTransaction();
+                $pdo->prepare("DELETE FROM mouvements_fiches_ag WHERE id=:id")->execute([':id'=>$mvtId]);
+                $curFag = (int)$pdo->query("SELECT valeur FROM config_systeme WHERE cle='stock_fiches_ag'")->fetchColumn();
+                $adjFag = max(0, $curFag - (int)$mvtRow['quantite']);
+                $pdo->prepare("INSERT INTO config_systeme (cle,valeur,whodone) VALUES ('stock_fiches_ag',:v,:w)
+                               ON DUPLICATE KEY UPDATE valeur=:v2,whodone=:w2")
+                    ->execute([':v'=>$adjFag,':w'=>$userId,':v2'=>$adjFag,':w2'=>$userId]);
+                $pdo->commit();
+                jsonSuccess('Mouvement supprimé. Stock ajusté à ' . $adjFag . ' fiches.');
                 break;
 
             // ── Config système ─────────────────────────────────────────────
@@ -125,17 +337,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $keys = ['nom_centre','adresse','telephone','pied_de_page'];
                 foreach ($keys as $k) {
                     $v = trim($_POST[$k] ?? '');
-                    $pdo->prepare("INSERT INTO config_systeme (cle, valeur, whodone) VALUES (:k,:v,:w)
-                                   ON DUPLICATE KEY UPDATE valeur=:v, whodone=:w")
-                        ->execute([':k'=>$k,':v'=>$v,':w'=>$userId]);
+                    $pdo->prepare("INSERT INTO config_systeme (cle, valeur, whodone) VALUES (:k, :v1, :w1)
+                                   ON DUPLICATE KEY UPDATE valeur = :v2, whodone = :w2")
+                        ->execute([':k'=>$k, ':v1'=>$v, ':w1'=>$userId, ':v2'=>$v, ':w2'=>$userId]);
                 }
                 // Upload logo
                 if (!empty($_FILES['logo']['name'])) {
                     $logoFile = uploadLogo($_FILES['logo']);
                     if ($logoFile) {
-                        $pdo->prepare("INSERT INTO config_systeme (cle, valeur, whodone) VALUES ('logo_filename',:v,:w)
-                                       ON DUPLICATE KEY UPDATE valeur=:v, whodone=:w")
-                            ->execute([':v'=>$logoFile,':w'=>$userId]);
+                        $pdo->prepare("INSERT INTO config_systeme (cle, valeur, whodone) VALUES ('logo_filename', :v1, :w1)
+                                       ON DUPLICATE KEY UPDATE valeur = :v2, whodone = :w2")
+                            ->execute([':v1'=>$logoFile, ':w1'=>$userId, ':v2'=>$logoFile, ':w2'=>$userId]);
                     }
                 }
                 jsonSuccess('Configuration sauvegardée.');
@@ -158,6 +370,33 @@ $cfg      = [];
 foreach ($pdo->query("SELECT cle, valeur FROM config_systeme WHERE isDeleted=0")->fetchAll() as $r) {
     $cfg[$r['cle']] = $r['valeur'];
 }
+$stockCarnets      = (int)($cfg['stock_carnets'] ?? 0);
+$seuilAlerteCarnets = (int)($cfg['seuil_alerte_carnets'] ?? 10);
+
+// Historique des ajouts de carnets (mouvements de type initialisation = réapprovisionnements)
+$historiqueCarnets = $pdo->query("
+    SELECT mc.id, mc.type_mvt, mc.quantite, mc.stock_avant, mc.stock_apres,
+           mc.commentaire, mc.whendone,
+           u.nom AS user_nom, u.prenom AS user_prenom
+    FROM mouvements_carnets mc
+    LEFT JOIN utilisateurs u ON u.id = mc.whodone
+    WHERE mc.type_mvt = 'initialisation'
+    ORDER BY mc.whendone DESC
+")->fetchAll();
+
+$stockFichesAg       = (int)($cfg['stock_fiches_ag'] ?? 0);
+$seuilAlerteFichesAg = (int)($cfg['seuil_alerte_fiches_ag'] ?? 10);
+
+// Historique des ajouts de fiches AG
+$historiqueFichesAg = $pdo->query("
+    SELECT mf.id, mf.type_mvt, mf.quantite, mf.stock_avant, mf.stock_apres,
+           mf.commentaire, mf.whendone,
+           u.nom AS user_nom, u.prenom AS user_prenom
+    FROM mouvements_fiches_ag mf
+    LEFT JOIN utilisateurs u ON u.id = mf.whodone
+    WHERE mf.type_mvt = 'initialisation'
+    ORDER BY mf.whendone DESC
+")->fetchAll();
 
 $pageTitle = 'Paramétrage';
 include ROOT_PATH . '/templates/layouts/header.php';
@@ -196,6 +435,30 @@ include ROOT_PATH . '/templates/layouts/header.php';
             <a class="nav-link <?= $section === 'etat_labo' ? 'active' : '' ?>"
                href="?page=parametrage&section=etat_labo">
                 <i class="bi bi-file-earmark-pdf me-1"></i>État Labo
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link <?= $section === 'carnets' ? 'active' : '' ?>"
+               href="?page=parametrage&section=carnets"
+               title="Gestion stock des carnets de soins">
+                <i class="bi bi-journal-medical me-1"></i>Carnets
+                <?php if ($stockCarnets <= $seuilAlerteCarnets && $stockCarnets > 0): ?>
+                    <span class="badge bg-warning text-dark ms-1">⚠</span>
+                <?php elseif ($stockCarnets === 0): ?>
+                    <span class="badge bg-danger ms-1">0</span>
+                <?php endif; ?>
+            </a>
+        </li>
+        <li class="nav-item">
+            <a class="nav-link <?= $section === 'fiches_ag' ? 'active' : '' ?>"
+               href="?page=parametrage&section=fiches_ag"
+               title="Gestion stock des fiches actes gratuits">
+                <i class="bi bi-file-medical me-1"></i>Fiches AG
+                <?php if ($stockFichesAg <= $seuilAlerteFichesAg && $stockFichesAg > 0): ?>
+                    <span class="badge bg-warning text-dark ms-1">⚠</span>
+                <?php elseif ($stockFichesAg === 0): ?>
+                    <span class="badge bg-danger ms-1">0</span>
+                <?php endif; ?>
             </a>
         </li>
         <li class="nav-item">
@@ -430,6 +693,14 @@ include ROOT_PATH . '/templates/layouts/header.php';
                                     onclick="openApproModal(<?= $p['id'] ?>, '<?= h($p['nom']) ?>')">
                                 <i class="bi bi-plus-circle"></i>
                             </button>
+                            <button class="btn btn-sm btn-outline-warning me-1" title="Diminuer stock (correction)"
+                                    onclick="openDiminuerModal(<?= $p['id'] ?>, '<?= h($p['nom']) ?>', <?= (int)$p['stock_actuel'] ?>)">
+                                <i class="bi bi-dash-circle"></i>
+                            </button>
+                            <button class="btn btn-sm btn-outline-info me-1" title="Historique mouvements"
+                                    onclick="voirHistoriqueStock(<?= $p['id'] ?>, '<?= h($p['nom']) ?>')">
+                                <i class="bi bi-clock-history"></i>
+                            </button>
                             <button class="btn btn-sm btn-outline-primary me-1"
                                     onclick="openProduitModal(<?= htmlspecialchars(json_encode($p), ENT_QUOTES) ?>)">
                                 <i class="bi bi-pencil"></i>
@@ -543,6 +814,509 @@ include ROOT_PATH . '/templates/layouts/header.php';
         </div>
     </div>
 
+    <!-- Modal Diminuer Stock -->
+    <div class="modal fade" id="modalDiminuer" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header" style="background:#b71c1c;">
+                    <h5 class="modal-title text-white"><i class="bi bi-dash-circle me-2"></i>Diminuer le Stock</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-warning">
+                        <i class="bi bi-exclamation-triangle me-2"></i>
+                        <strong>Attention :</strong> cette opération diminue le stock actuel (correction d'inventaire).
+                    </div>
+                    <form id="formDiminuer">
+                        <input type="hidden" name="action" value="diminuer_stock">
+                        <input type="hidden" name="produit_id" id="dimProduitId">
+                        <div class="mb-3">
+                            <label class="form-label">Produit</label>
+                            <div class="fw-bold text-danger" id="dimProduitNom"></div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Stock actuel</label>
+                            <div class="fw-bold fs-5" id="dimStockActuel"></div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Quantité à retirer <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" name="quantite" id="dimQty" min="1" value="1" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Motif / Commentaire <span class="text-danger">*</span></label>
+                            <textarea class="form-control" name="commentaire" id="dimCommentaire" rows="2"
+                                      placeholder="Ex: Produits périmés retirés, décalage inventaire..." required></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn text-white" style="background:#b71c1c;"
+                            onclick="saveParam('formDiminuer', '/index.php?page=parametrage&section=pharmacie')">
+                        <i class="bi bi-dash-circle me-1"></i>Diminuer le stock
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Historique Mouvements Stock -->
+    <div class="modal fade" id="modalHistoriqueStock" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header" style="background:#1565c0;">
+                    <h5 class="modal-title text-white">
+                        <i class="bi bi-clock-history me-2"></i>
+                        Historique – <span id="histProduitNom"></span>
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body p-0">
+                    <div id="histLoading" class="text-center p-4">
+                        <div class="spinner-border text-primary"></div>
+                    </div>
+                    <div id="histContent" style="display:none;"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <?php elseif ($section === 'carnets'): ?>
+    <!-- ══════════════ SECTION CARNETS ══════════════ -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="card h-100" style="border-color:#1565c0;">
+                <div class="card-header" style="background:#e3f2fd;">
+                    <h6 class="mb-0" style="color:#1565c0;">
+                        <i class="bi bi-journal-medical me-2"></i>Stock Carnets de Soins
+                    </h6>
+                </div>
+                <div class="card-body text-center">
+                    <?php
+                    $alertCls = $stockCarnets === 0 ? 'danger' :
+                               ($stockCarnets <= $seuilAlerteCarnets ? 'warning' : 'success');
+                    $alertTxt = $stockCarnets === 0 ? 'RUPTURE – Plus de carnets !' :
+                               ($stockCarnets <= $seuilAlerteCarnets ? 'Stock faible !' : 'Stock suffisant');
+                    ?>
+                    <div class="display-4 fw-bold text-<?= $alertCls ?>"><?= $stockCarnets ?></div>
+                    <p class="text-muted mb-1">carnets disponibles</p>
+                    <span class="badge bg-<?= $alertCls ?>"><?= $alertTxt ?></span>
+                    <hr>
+                    <div class="text-muted small">Seuil d'alerte : <strong><?= $seuilAlerteCarnets ?> carnets</strong></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header bg-csi-light">
+                    <h6 class="mb-0"><i class="bi bi-plus-circle me-2"></i>Réapprovisionner / Configurer les Carnets</h6>
+                </div>
+                <div class="card-body">
+                    <form id="formStockCarnets">
+                        <input type="hidden" name="action" value="save_stock_carnets">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">
+                                    Quantité à ajouter
+                                    <small class="text-muted">(s'ajoute au stock actuel)</small>
+                                </label>
+                                <input type="number" class="form-control form-control-lg" name="quantite"
+                                       min="0" value="0" placeholder="Ex: 50" id="inputQtyCarnet">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">
+                                    Seuil d'alerte
+                                    <small class="text-muted">(notification en cas de baisse)</small>
+                                </label>
+                                <input type="number" class="form-control form-control-lg" name="seuil_alerte"
+                                       min="0" value="<?= $seuilAlerteCarnets ?>" placeholder="Ex: 10">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Commentaire / Note</label>
+                                <input type="text" class="form-control" name="commentaire_carnet"
+                                       placeholder="Ex: Livraison du 16/05/2026" id="inputCommentaireCarnet">
+                            </div>
+                            <div class="col-md-6 d-flex align-items-end">
+                                <div class="alert alert-info py-2 mb-0 w-100 small">
+                                    <i class="bi bi-info-circle me-1"></i>
+                                    Stock actuel : <strong><?= $stockCarnets ?></strong>.
+                                    Nouveau : <strong id="previewNewStock"><?= $stockCarnets ?></strong>
+                                    (+<span id="previewQtyCarnet">0</span>)
+                                </div>
+                            </div>
+                            <div class="col-12">
+                                <button type="button" class="btn text-white w-100"
+                                        style="background:var(--csi-green);"
+                                        onclick="saveParam('formStockCarnets', '/index.php?page=parametrage&section=carnets')">
+                                    <i class="bi bi-save me-2"></i>Enregistrer l'approvisionnement
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Historique des ajouts ──────────────────────────────────────────── -->
+    <div class="card">
+        <div class="card-header bg-csi-light d-flex justify-content-between align-items-center">
+            <h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Historique des ajouts de carnets</h6>
+            <small class="text-muted"><?= count($historiqueCarnets) ?> entrée(s)</small>
+        </div>
+        <div class="card-body p-0">
+            <?php if (empty($historiqueCarnets)): ?>
+                <div class="p-4 text-center text-muted">
+                    <i class="bi bi-inbox fs-3 d-block mb-2"></i>
+                    Aucun approvisionnement enregistré.
+                </div>
+            <?php else: ?>
+            <table class="table table-hover align-middle mb-0 small" id="tblHistoriqueCarnets">
+                <thead class="table-light">
+                    <tr>
+                        <th class="text-center" style="width:60px;">#</th>
+                        <th>Date</th>
+                        <th class="text-center">Qté ajoutée</th>
+                        <th class="text-center">Stock avant</th>
+                        <th class="text-center">Stock après</th>
+                        <th>Commentaire</th>
+                        <th>Par</th>
+                        <th class="text-center" style="width:100px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($historiqueCarnets as $mv): ?>
+                <tr id="mvt-row-<?= (int)$mv['id'] ?>">
+                    <td class="text-center text-muted"><?= (int)$mv['id'] ?></td>
+                    <td><?= date('d/m/Y H:i', strtotime($mv['whendone'])) ?></td>
+                    <td class="text-center">
+                        <span class="badge bg-success">+<?= (int)$mv['quantite'] ?></span>
+                    </td>
+                    <td class="text-center text-muted"><?= (int)$mv['stock_avant'] ?></td>
+                    <td class="text-center fw-bold"><?= (int)$mv['stock_apres'] ?></td>
+                    <td class="mvt-commentaire"><?= h($mv['commentaire'] ?? '—') ?></td>
+                    <td>
+                        <small class="text-muted">
+                            <?= h(trim(($mv['user_nom'] ?? '') . ' ' . ($mv['user_prenom'] ?? ''))) ?: '—' ?>
+                        </small>
+                    </td>
+                    <td class="text-center">
+                        <button class="btn btn-sm btn-outline-primary me-1" title="Modifier"
+                                onclick="ouvrirEditMvtCarnet(<?= (int)$mv['id'] ?>, <?= (int)$mv['quantite'] ?>, '<?= addslashes(h($mv['commentaire'] ?? '')) ?>')">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" title="Supprimer"
+                                onclick="supprimerMvtCarnet(<?= (int)$mv['id'] ?>, <?= (int)$mv['quantite'] ?>)">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <!-- Modal édition mouvement carnet -->
+    <div class="modal fade" id="modalEditMvtCarnet" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header" style="background:#1565c0;">
+                    <h5 class="modal-title text-white"><i class="bi bi-pencil me-2"></i>Modifier l'ajout</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="formEditMvtCarnet">
+                        <input type="hidden" id="editMvtId" name="mvt_id">
+                        <input type="hidden" name="action" value="edit_mouvement_carnet">
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Quantité ajoutée <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" id="editMvtQty" name="quantite" min="1" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Commentaire</label>
+                            <input type="text" class="form-control" id="editMvtComment" name="commentaire">
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn text-white" style="background:var(--csi-green);"
+                            onclick="enregistrerEditMvtCarnet()">
+                        <i class="bi bi-save me-1"></i>Enregistrer
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // Preview stock
+    document.getElementById('inputQtyCarnet')?.addEventListener('input', function() {
+        const qty = parseInt(this.value) || 0;
+        const current = <?= $stockCarnets ?>;
+        document.getElementById('previewQtyCarnet').textContent = qty;
+        document.getElementById('previewNewStock').textContent  = current + qty;
+    });
+
+    const EDIT_MVT_CARNET_URL   = '<?= url('index.php?page=parametrage') ?>';
+    const DELETE_MVT_CARNET_URL = '<?= url('index.php?page=parametrage') ?>';
+
+    window.ouvrirEditMvtCarnet = function(id, qty, commentaire) {
+        document.getElementById('editMvtId').value      = id;
+        document.getElementById('editMvtQty').value     = qty;
+        document.getElementById('editMvtComment').value = commentaire;
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalEditMvtCarnet')).show();
+    };
+
+    window.enregistrerEditMvtCarnet = function() {
+        const id      = document.getElementById('editMvtId').value;
+        const qty     = document.getElementById('editMvtQty').value;
+        const comment = document.getElementById('editMvtComment').value;
+        if (!qty || parseInt(qty) <= 0) { showToast('danger', 'La quantité doit être > 0.'); return; }
+        ajaxPost(EDIT_MVT_CARNET_URL, {
+            action: 'edit_mouvement_carnet',
+            mvt_id: id,
+            quantite: qty,
+            commentaire: comment
+        }, function(data) {
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('modalEditMvtCarnet')).hide();
+            showToast('success', data.message || 'Mouvement modifié.');
+            setTimeout(() => location.reload(), 800);
+        });
+    };
+
+    window.supprimerMvtCarnet = function(id, qty) {
+        if (!confirm('Supprimer cet ajout de ' + qty + ' carnet(s) ?\nLe stock sera réduit en conséquence.')) return;
+        ajaxPost(DELETE_MVT_CARNET_URL, {
+            action: 'delete_mouvement_carnet',
+            mvt_id: id
+        }, function(data) {
+            showToast('success', data.message || 'Supprimé.');
+            setTimeout(() => location.reload(), 800);
+        });
+    };
+    </script>
+
+    <?php elseif ($section === 'fiches_ag'): ?>
+    <!-- ══════════════ SECTION FICHES AG ══════════════ -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-4">
+            <div class="card h-100" style="border-color:#00695c;">
+                <div class="card-header" style="background:#e0f2f1;">
+                    <h6 class="mb-0" style="color:#00695c;">
+                        <i class="bi bi-file-medical me-2"></i>Stock Fiches Actes Gratuits
+                    </h6>
+                </div>
+                <div class="card-body text-center">
+                    <?php
+                    $alertClsFag = $stockFichesAg === 0 ? 'danger' :
+                                  ($stockFichesAg <= $seuilAlerteFichesAg ? 'warning' : 'success');
+                    $alertTxtFag = $stockFichesAg === 0 ? 'RUPTURE – Plus de fiches !' :
+                                  ($stockFichesAg <= $seuilAlerteFichesAg ? 'Stock faible !' : 'Stock suffisant');
+                    ?>
+                    <div class="display-4 fw-bold text-<?= $alertClsFag ?>"><?= $stockFichesAg ?></div>
+                    <p class="text-muted mb-1">fiches disponibles</p>
+                    <span class="badge bg-<?= $alertClsFag ?>"><?= $alertTxtFag ?></span>
+                    <hr>
+                    <div class="text-muted small">Seuil d'alerte : <strong><?= $seuilAlerteFichesAg ?> fiches</strong></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header bg-csi-light">
+                    <h6 class="mb-0"><i class="bi bi-plus-circle me-2"></i>Réapprovisionner / Configurer les Fiches AG</h6>
+                </div>
+                <div class="card-body">
+                    <form id="formStockFichesAg">
+                        <input type="hidden" name="action" value="save_stock_fiches_ag">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">
+                                    Quantité à ajouter
+                                    <small class="text-muted">(s'ajoute au stock actuel)</small>
+                                </label>
+                                <input type="number" class="form-control form-control-lg" name="quantite"
+                                       min="0" value="0" placeholder="Ex: 100" id="inputQtyFicheAg">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">
+                                    Seuil d'alerte
+                                    <small class="text-muted">(notification en cas de baisse)</small>
+                                </label>
+                                <input type="number" class="form-control form-control-lg" name="seuil_alerte"
+                                       min="0" value="<?= $seuilAlerteFichesAg ?>" placeholder="Ex: 20">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Commentaire / Note</label>
+                                <input type="text" class="form-control" name="commentaire_fiche_ag"
+                                       placeholder="Ex: Réception du 16/05/2026" id="inputCommentaireFicheAg">
+                            </div>
+                            <div class="col-md-6 d-flex align-items-end">
+                                <div class="alert alert-info py-2 mb-0 w-100 small">
+                                    <i class="bi bi-info-circle me-1"></i>
+                                    Stock actuel : <strong><?= $stockFichesAg ?></strong>.
+                                    Nouveau : <strong id="previewNewStockFag"><?= $stockFichesAg ?></strong>
+                                    (+<span id="previewQtyFicheAg">0</span>)
+                                </div>
+                            </div>
+                            <div class="col-12">
+                                <button type="button" class="btn text-white w-100"
+                                        style="background:var(--csi-green);"
+                                        onclick="saveParam('formStockFichesAg', '/index.php?page=parametrage&section=fiches_ag')">
+                                    <i class="bi bi-save me-2"></i>Enregistrer l'approvisionnement
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Historique des ajouts fiches AG ────────────────────────────────── -->
+    <div class="card">
+        <div class="card-header bg-csi-light d-flex justify-content-between align-items-center">
+            <h6 class="mb-0"><i class="bi bi-clock-history me-2"></i>Historique des ajouts de fiches AG</h6>
+            <small class="text-muted"><?= count($historiqueFichesAg) ?> entrée(s)</small>
+        </div>
+        <div class="card-body p-0">
+            <?php if (empty($historiqueFichesAg)): ?>
+                <div class="p-4 text-center text-muted">
+                    <i class="bi bi-inbox fs-3 d-block mb-2"></i>
+                    Aucun approvisionnement enregistré.
+                </div>
+            <?php else: ?>
+            <table class="table table-hover align-middle mb-0 small" id="tblHistoriqueFichesAg">
+                <thead class="table-light">
+                    <tr>
+                        <th class="text-center" style="width:60px;">#</th>
+                        <th>Date</th>
+                        <th class="text-center">Qté ajoutée</th>
+                        <th class="text-center">Stock avant</th>
+                        <th class="text-center">Stock après</th>
+                        <th>Commentaire</th>
+                        <th>Par</th>
+                        <th class="text-center" style="width:100px;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($historiqueFichesAg as $mf): ?>
+                <tr id="mvtfag-row-<?= (int)$mf['id'] ?>">
+                    <td class="text-center text-muted"><?= (int)$mf['id'] ?></td>
+                    <td><?= date('d/m/Y H:i', strtotime($mf['whendone'])) ?></td>
+                    <td class="text-center">
+                        <span class="badge bg-success">+<?= (int)$mf['quantite'] ?></span>
+                    </td>
+                    <td class="text-center text-muted"><?= (int)$mf['stock_avant'] ?></td>
+                    <td class="text-center fw-bold"><?= (int)$mf['stock_apres'] ?></td>
+                    <td class="mvtfag-commentaire"><?= h($mf['commentaire'] ?? '—') ?></td>
+                    <td>
+                        <small class="text-muted">
+                            <?= h(trim(($mf['user_nom'] ?? '') . ' ' . ($mf['user_prenom'] ?? ''))) ?: '—' ?>
+                        </small>
+                    </td>
+                    <td class="text-center">
+                        <button class="btn btn-sm btn-outline-primary me-1" title="Modifier"
+                                onclick="ouvrirEditMvtFicheAg(<?= (int)$mf['id'] ?>, <?= (int)$mf['quantite'] ?>, '<?= addslashes(h($mf['commentaire'] ?? '')) ?>')">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger" title="Supprimer"
+                                onclick="supprimerMvtFicheAg(<?= (int)$mf['id'] ?>, <?= (int)$mf['quantite'] ?>)">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <!-- Modal édition mouvement fiche AG -->
+    <div class="modal fade" id="modalEditMvtFicheAg" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header" style="background:#00695c;">
+                    <h5 class="modal-title text-white"><i class="bi bi-pencil me-2"></i>Modifier l'ajout</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="formEditMvtFicheAg">
+                        <input type="hidden" id="editMvtFagId" name="mvt_id">
+                        <input type="hidden" name="action" value="edit_mouvement_fiche_ag">
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Quantité ajoutée <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" id="editMvtFagQty" name="quantite" min="1" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Commentaire</label>
+                            <input type="text" class="form-control" id="editMvtFagComment" name="commentaire">
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Annuler</button>
+                    <button type="button" class="btn text-white" style="background:var(--csi-green);"
+                            onclick="enregistrerEditMvtFicheAg()">
+                        <i class="bi bi-save me-1"></i>Enregistrer
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // Preview stock fiches AG
+    document.getElementById('inputQtyFicheAg')?.addEventListener('input', function() {
+        const qty     = parseInt(this.value) || 0;
+        const current = <?= $stockFichesAg ?>;
+        document.getElementById('previewQtyFicheAg').textContent  = qty;
+        document.getElementById('previewNewStockFag').textContent = current + qty;
+    });
+
+    const EDIT_MVT_FAG_URL   = '<?= url('index.php?page=parametrage') ?>';
+    const DELETE_MVT_FAG_URL = '<?= url('index.php?page=parametrage') ?>';
+
+    window.ouvrirEditMvtFicheAg = function(id, qty, commentaire) {
+        document.getElementById('editMvtFagId').value      = id;
+        document.getElementById('editMvtFagQty').value     = qty;
+        document.getElementById('editMvtFagComment').value = commentaire;
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('modalEditMvtFicheAg')).show();
+    };
+
+    window.enregistrerEditMvtFicheAg = function() {
+        const id      = document.getElementById('editMvtFagId').value;
+        const qty     = document.getElementById('editMvtFagQty').value;
+        const comment = document.getElementById('editMvtFagComment').value;
+        if (!qty || parseInt(qty) <= 0) { showToast('danger', 'La quantité doit être > 0.'); return; }
+        ajaxPost(EDIT_MVT_FAG_URL, {
+            action: 'edit_mouvement_fiche_ag',
+            mvt_id: id,
+            quantite: qty,
+            commentaire: comment
+        }, function(data) {
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('modalEditMvtFicheAg')).hide();
+            showToast('success', data.message || 'Mouvement modifié.');
+            setTimeout(() => location.reload(), 800);
+        });
+    };
+
+    window.supprimerMvtFicheAg = function(id, qty) {
+        if (!confirm('Supprimer cet ajout de ' + qty + ' fiche(s) AG ?\nLe stock sera réduit en conséquence.')) return;
+        ajaxPost(DELETE_MVT_FAG_URL, {
+            action: 'delete_mouvement_fiche_ag',
+            mvt_id: id
+        }, function(data) {
+            showToast('success', data.message || 'Supprimé.');
+            setTimeout(() => location.reload(), 800);
+        });
+    };
+    </script>
+
     <?php elseif ($section === 'inventaire'): ?>
     <!-- ══════════════ SECTION INVENTAIRE ══════════════ -->
     <div class="card">
@@ -557,7 +1331,6 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         <th class="text-center">Stock initial</th>
                         <th class="text-center">Approvisionnements</th>
                         <th class="text-center">Ventes</th>
-                        <th class="text-center">Stock théorique</th>
                         <th class="text-center">Stock actuel</th>
                         <th>Statut</th>
                     </tr>
@@ -568,9 +1341,9 @@ include ROOT_PATH . '/templates/layouts/header.php';
                     // Calcul approvisionnements
                     $appro = (int)$pdo->prepare("SELECT COALESCE(SUM(quantite),0) FROM approvisionnements_pharmacie WHERE produit_id=:id AND isDeleted=0")->execute([':id'=>$p['id']]) ? $pdo->query("SELECT COALESCE(SUM(quantite),0) FROM approvisionnements_pharmacie WHERE produit_id={$p['id']} AND isDeleted=0")->fetchColumn() : 0;
                     // Calcul ventes
-                    $ventes = (int)$pdo->query("SELECT COALESCE(SUM(lp.quantite),0) FROM lignes_pharmacie lp JOIN recus r ON r.id=lp.recu_id WHERE lp.produit_id={$p['id']} AND lp.isDeleted=0 AND r.isDeleted=0")->fetchColumn();
+                    $ventes    = (int)$pdo->query("SELECT COALESCE(SUM(lp.quantite),0) FROM lignes_pharmacie lp JOIN recus r ON r.id=lp.recu_id WHERE lp.produit_id={$p['id']} AND lp.isDeleted=0 AND r.isDeleted=0")->fetchColumn();
                     $theorique = $p['stock_initial'] + $appro - $ventes;
-                    $ecart = $p['stock_actuel'] - $theorique;
+                    $ecart     = $p['stock_actuel'] - $theorique;
                 ?>
                     <tr>
                         <td><strong><?= h($p['nom']) ?></strong></td>
@@ -578,7 +1351,6 @@ include ROOT_PATH . '/templates/layouts/header.php';
                         <td class="text-center"><?= $p['stock_initial'] ?></td>
                         <td class="text-center text-success">+<?= $appro ?></td>
                         <td class="text-center text-danger">-<?= $ventes ?></td>
-                        <td class="text-center fw-bold"><?= $theorique ?></td>
                         <td class="text-center fw-bold <?= $p['stock_actuel'] <= $p['seuil_alerte'] ? 'text-warning' : '' ?>">
                             <?= $p['stock_actuel'] ?>
                         </td>
@@ -768,6 +1540,76 @@ function openApproModal(id, nom) {
     document.getElementById('approProduitNom').textContent = nom;
     document.getElementById('approQty').value = 1;
     new bootstrap.Modal(document.getElementById('modalAppro')).show();
+}
+
+// ── Diminuer Stock ───────────────────────────────────────────────────────────
+function openDiminuerModal(id, nom, stockActuel) {
+    document.getElementById('dimProduitId').value      = id;
+    document.getElementById('dimProduitNom').textContent = nom;
+    document.getElementById('dimStockActuel').textContent = stockActuel + ' unités';
+    document.getElementById('dimQty').max         = stockActuel;
+    document.getElementById('dimQty').value       = 1;
+    document.getElementById('dimCommentaire').value = '';
+    new bootstrap.Modal(document.getElementById('modalDiminuer')).show();
+}
+
+// ── Historique Mouvements Stock ──────────────────────────────────────────────
+function voirHistoriqueStock(produitId, produitNom) {
+    document.getElementById('histProduitNom').textContent = produitNom;
+    document.getElementById('histLoading').style.display  = 'block';
+    document.getElementById('histContent').style.display  = 'none';
+    new bootstrap.Modal(document.getElementById('modalHistoriqueStock')).show();
+
+    const fd = new FormData();
+    fd.append('action', 'get_historique_stock');
+    fd.append('produit_id', produitId);
+    fd.append('csrf_token', CSRF_TOKEN);
+    fetch(PARAM_BASE_URL + '&section=pharmacie', {
+        method: 'POST',
+        headers: { 'X-CSRF-TOKEN': CSRF_TOKEN },
+        body: fd
+    })
+    .then(r => r.json())
+    .then(res => {
+        document.getElementById('histLoading').style.display = 'none';
+        const cont = document.getElementById('histContent');
+        if (!res.success) {
+            cont.innerHTML = '<div class="alert alert-warning m-3">' + res.message + '</div>';
+            cont.style.display = 'block';
+            return;
+        }
+        const rows = res.data;
+        const typeLabels = {'entree':'<span class="badge bg-success">Entrée</span>',
+                            'sortie':'<span class="badge bg-danger">Sortie vente</span>',
+                            'correction':'<span class="badge bg-warning text-dark">Correction</span>'};
+        let html = '<table class="table table-sm table-hover align-middle mb-0">'
+            + '<thead class="table-light"><tr><th>Date</th><th>Type</th><th>Quantité</th>'
+            + '<th>Stock avant</th><th>Stock après</th><th>Commentaire</th><th>Par</th></tr></thead><tbody>';
+        if (!rows.length) {
+            html += '<tr><td colspan="7" class="text-center text-muted p-4">Aucun mouvement enregistré.</td></tr>';
+        }
+        rows.forEach(r => {
+            const qSign = r.quantite > 0 ? '+' + r.quantite : r.quantite;
+            const qColor = r.quantite > 0 ? 'color:#2e7d32;' : 'color:#d32f2f;';
+            html += '<tr>'
+                + '<td><small>' + r.whendone + '</small></td>'
+                + '<td>' + (typeLabels[r.type_mvt] || r.type_mvt) + '</td>'
+                + '<td style="font-weight:bold;' + qColor + '">' + qSign + '</td>'
+                + '<td class="text-center">' + r.stock_avant + '</td>'
+                + '<td class="text-center fw-bold">' + r.stock_apres + '</td>'
+                + '<td><small class="text-muted">' + (r.commentaire || '—') + '</small></td>'
+                + '<td><small>' + ((r.user_nom || '') + ' ' + (r.user_prenom || '')).trim() + '</small></td>'
+                + '</tr>';
+        });
+        html += '</tbody></table>';
+        cont.innerHTML = html;
+        cont.style.display = 'block';
+    })
+    .catch(() => {
+        document.getElementById('histLoading').style.display = 'none';
+        document.getElementById('histContent').innerHTML = '<div class="alert alert-danger m-3">Erreur réseau.</div>';
+        document.getElementById('histContent').style.display = 'block';
+    });
 }
 
 // ── Config ──────────────────────────────────────────────────────────────────
